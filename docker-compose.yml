@@ -1,0 +1,35 @@
+# ============================================================
+# 입찰 공고 대시보드 - Docker Compose
+#
+# 사용법:
+#   최초 실행: docker compose up -d
+#   업데이트:  docker compose pull && docker compose up -d --build
+#   중지:      docker compose down
+#   로그:      docker compose logs -f
+# ============================================================
+services:
+  tender-dashboard:
+    build: .
+    image: tender-dashboard:latest
+    container_name: tender-dashboard
+
+    ports:
+      - "5002:5002"
+
+    volumes:
+      # 개인 데이터 (API 키, 필터, 크롤링 DB) 는 호스트 로컬에 유지
+      - ./data:/app/data
+      - ./logs:/app/logs
+
+    environment:
+      - TZ=Asia/Seoul
+      - PYTHONUNBUFFERED=1
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

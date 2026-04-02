@@ -1,0 +1,57 @@
+# ============================================================
+# Docker 빌드 컨텍스트에서 제외
+# (Dockerfile COPY . . 시 포함되지 않음)
+# ============================================================
+
+# 개인 데이터 (볼륨으로 마운트됨)
+data/tenders.db
+data/settings.json
+data/settings.json.*
+data/logs/
+data/*.db
+
+# Git
+.git/
+.gitignore
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 가상환경
+venv/
+env/
+.venv/
+
+# 로그
+logs/
+*.log
+
+# 개발 도구
+.vscode/
+.idea/
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 임시 파일
+tmpclaude-*
+*.tmp
+tmp/
+
+# 테스트/분석 스크립트 (앱 실행에 불필요)
+test_*.py
+check_*.py
+debug_*.py
+analyze_*.py
+backfill_*.py
+
+# 샘플 파일
+*.html
+*_response.xml
+api3_content.txt

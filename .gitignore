@@ -98,6 +98,7 @@ tmpclaude-*
 
 # 분석/테스트 출력물
 *.txt
+!requirements.txt
 *_rendered.html
 *_sample.html
 *_page.html

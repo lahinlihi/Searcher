@@ -71,12 +71,41 @@ class CrawlScheduler:
         self.scheduler.shutdown()
         print("[스케줄러] 스케줄러가 중지되었습니다.")
 
+    def _git_pull(self):
+        """
+        Git pull 실행 — 최신 코드 반영
+        실패해도 크롤링은 계속 진행
+        """
+        import subprocess, os
+        try:
+            repo_dir = os.path.dirname(os.path.abspath(__file__))
+            result = subprocess.run(
+                ['git', 'pull', '--ff-only'],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            if result.returncode == 0:
+                msg = result.stdout.strip()
+                if 'Already up to date' in msg:
+                    print("[스케줄러] git pull: 이미 최신 버전")
+                else:
+                    print(f"[스케줄러] git pull: 업데이트됨\n{msg}")
+            else:
+                print(f"[스케줄러] git pull 실패 (무시하고 계속): {result.stderr.strip()}")
+        except Exception as e:
+            print(f"[스케줄러] git pull 오류 (무시하고 계속): {e}")
+
     def run_crawl_job(self):
         """
         크롤링 작업 실행
         모든 사이트를 크롤링하고 결과를 DB에 저장
         """
         print(f"\n[스케줄러] 자동 크롤링 시작: {datetime.now()}")
+
+        # 크롤링 전 최신 코드 반영
+        self._git_pull()
 
         with self.app.app_context():
             # 크롤링 로그 생성
