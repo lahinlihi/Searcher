@@ -76,7 +76,7 @@ class CrawlScheduler:
         Git pull 실행 — 최신 코드 반영
         실패해도 크롤링은 계속 진행
         """
-        import subprocess, os
+        import subprocess, os  # noqa: E401
         try:
             repo_dir = os.path.dirname(os.path.abspath(__file__))
             result = subprocess.run(
@@ -96,6 +96,60 @@ class CrawlScheduler:
                 print(f"[스케줄러] git pull 실패 (무시하고 계속): {result.stderr.strip()}")
         except Exception as e:
             print(f"[스케줄러] git pull 오류 (무시하고 계속): {e}")
+
+    def _git_push(self):
+        """
+        Claude Code 등으로 수정된 코드를 자동 commit + push
+        - data/ 는 .gitignore 로 제외되므로 API 키·DB는 절대 올라가지 않음
+        - 변경사항이 없으면 아무것도 하지 않음
+        - 실패해도 크롤링 결과에 영향 없음
+        """
+        import subprocess, os  # noqa: E401
+        try:
+            repo_dir = os.path.dirname(os.path.abspath(__file__))
+
+            # 변경된 추적 파일 확인 (data/ 제외는 .gitignore 가 보장)
+            status = subprocess.run(
+                ['git', 'status', '--porcelain'],
+                cwd=repo_dir, capture_output=True, text=True, timeout=15
+            )
+            changed = status.stdout.strip()
+            if not changed:
+                print("[스케줄러] git push: 변경사항 없음 — 스킵")
+                return
+
+            # 변경 파일 목록 출력
+            lines = changed.splitlines()
+            print(f"[스케줄러] git push: 변경파일 {len(lines)}개 감지")
+            for line in lines[:10]:
+                print(f"  {line}")
+
+            # add → commit → push
+            subprocess.run(['git', 'add', '-A'], cwd=repo_dir, timeout=15)
+
+            commit_msg = (
+                f"auto: Claude Code 수정 반영 "
+                f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}]"
+            )
+            commit_result = subprocess.run(
+                ['git', 'commit', '-m', commit_msg],
+                cwd=repo_dir, capture_output=True, text=True, timeout=15
+            )
+            if commit_result.returncode != 0:
+                print(f"[스케줄러] git commit 실패: {commit_result.stderr.strip()}")
+                return
+
+            push_result = subprocess.run(
+                ['git', 'push'],
+                cwd=repo_dir, capture_output=True, text=True, timeout=60
+            )
+            if push_result.returncode == 0:
+                print("[스케줄러] git push: GitHub 업로드 완료")
+            else:
+                print(f"[스케줄러] git push 실패 (무시하고 계속): {push_result.stderr.strip()}")
+
+        except Exception as e:
+            print(f"[스케줄러] git push 오류 (무시하고 계속): {e}")
 
     def run_crawl_job(self):
         """
@@ -197,6 +251,9 @@ class CrawlScheduler:
                 print(f"  - 총 수집: {len(all_tenders)}건")
                 print(f"  - 새 공고: {new_count}건")
                 print(f"  - 중복 제거: {duplicate_count}건")
+
+                # 크롤링 후 코드 변경사항 자동 push (data/는 .gitignore 제외)
+                self._git_push()
 
             except Exception as e:
                 # 크롤링 실패
