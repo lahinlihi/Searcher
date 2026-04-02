@@ -89,5 +89,14 @@
     "exclude_keywords": ["철거", "폐기물", "청소"],
     "default_filter_id": null
   },
-  "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE"
+  "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE",
+
+  "_sync_comment": "=== 팀원 모드 설정 (크롤러 없이 중앙 서버에서 공고 수신) ===",
+  "sync": {
+    "_comment": "enabled를 true로 설정하면 크롤링 대신 server_url 에서 공고를 가져옵니다.",
+    "enabled": false,
+    "server_url": "https://YOUR-TUNNEL-URL.trycloudflare.com",
+    "token": "SHARED_TOKEN_FROM_ADMIN",
+    "interval_minutes": 60
+  }
 }

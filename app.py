@@ -1641,6 +1641,56 @@ def internal_error(error):
     return jsonify({'error': 'Internal server error'}), 500
 
 
+# =============================================================
+# Sync API — 팀원 인스턴스가 공고 데이터를 가져가는 엔드포인트
+# =============================================================
+
+@app.route('/api/sync/tenders')
+def api_sync_tenders():
+    """
+    팀원 앱이 호출하여 최신 공고 데이터를 가져가는 엔드포인트.
+    settings.json 의 sync.token 과 일치하는 요청만 허용.
+
+    Query params:
+        token   : 인증 토큰 (필수)
+        since   : ISO datetime — 이 시각 이후 생성된 공고만 반환 (선택)
+        limit   : 최대 건수 (기본 500, 최대 2000)
+    """
+    # ── 인증 ──────────────────────────────────────────────────
+    expected = settings_manager.get('sync.token', '')
+    if not expected:
+        return jsonify({'error': 'Sync not enabled on this server'}), 403
+
+    token = request.args.get('token') or request.headers.get('X-Sync-Token', '')
+    if token != expected:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    # ── 파라미터 ───────────────────────────────────────────────
+    since_str = request.args.get('since')
+    try:
+        since = datetime.fromisoformat(since_str) if since_str else datetime.now() - timedelta(days=30)
+    except ValueError:
+        since = datetime.now() - timedelta(days=30)
+
+    limit = min(int(request.args.get('limit', 500)), 2000)
+
+    # ── 쿼리 ───────────────────────────────────────────────────
+    tenders = (
+        Tender.query
+        .filter(Tender.created_at >= since)
+        .order_by(Tender.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return jsonify({
+        'count': len(tenders),
+        'since': since.isoformat(),
+        'synced_at': datetime.now().isoformat(),
+        'tenders': [t.to_dict() for t in tenders]
+    })
+
+
 # ============= 포트 정리 =============
 
 def _free_port(port: int) -> None:

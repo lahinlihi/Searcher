@@ -33,18 +33,45 @@ class CrawlScheduler:
         self.app = app
         self.scheduler = BackgroundScheduler(timezone='Asia/Seoul')
 
-        # 레거시 크롤러 (하드코딩)
-        self.legacy_crawlers = {
-            'sung-dong-gu': SungDongGuCrawler()
-        }
-
-        # 동적 크롤러는 설정에서 로드
-        self.crawlers = {}
-        self._load_crawlers()
+        # 원격 sync 모드 여부 (팀원 인스턴스)
+        self._remote_sync = None
+        sync_cfg = settings_manager.get('sync', {})
+        if sync_cfg.get('enabled') and sync_cfg.get('server_url') and sync_cfg.get('token'):
+            from remote_sync import RemoteSync
+            self._remote_sync = RemoteSync(
+                server_url=sync_cfg['server_url'],
+                token=sync_cfg['token']
+            )
+            print(f"[스케줄러] 원격 Sync 모드: {sync_cfg['server_url']}")
+        else:
+            # 레거시 크롤러 (하드코딩)
+            self.legacy_crawlers = {
+                'sung-dong-gu': SungDongGuCrawler()
+            }
+            # 동적 크롤러는 설정에서 로드
+            self.crawlers = {}
+            self._load_crawlers()
 
     def start(self):
         """스케줄러 시작"""
-        # 크롤링 작업 스케줄 추가 (예: 매일 09:00, 17:00)
+        if self._remote_sync:
+            # 팀원 모드: 원격 서버에서 공고 동기화
+            sync_cfg = settings_manager.get('sync', {})
+            interval = int(sync_cfg.get('interval_minutes', 60))
+            self.scheduler.add_job(
+                func=self.run_remote_sync_job,
+                trigger='interval',
+                minutes=interval,
+                id='remote_sync',
+                name=f'원격 공고 동기화 (매 {interval}분)',
+                replace_existing=True,
+                next_run_time=datetime.now()  # 시작하자마자 1회 실행
+            )
+            self.scheduler.start()
+            print(f"[스케줄러] 원격 Sync 스케줄러 시작 (매 {interval}분)")
+            return
+
+        # 크롤러 모드: 매일 09:00, 17:00
         self.scheduler.add_job(
             func=self.run_crawl_job,
             trigger=CronTrigger(hour=9, minute=0),
@@ -70,6 +97,28 @@ class CrawlScheduler:
         """스케줄러 중지"""
         self.scheduler.shutdown()
         print("[스케줄러] 스케줄러가 중지되었습니다.")
+
+    def run_remote_sync_job(self):
+        """
+        팀원 인스턴스용 — 중앙 서버에서 공고 데이터를 동기화.
+        크롤링 없이 원격 API를 호출하여 로컬 DB를 최신 상태로 유지.
+        """
+        print(f"\n[RemoteSync] 동기화 시작: {datetime.now()}")
+        self._git_pull()  # 최신 코드도 반영
+
+        with self.app.app_context():
+            try:
+                result = self._remote_sync.sync(days_back=30)
+                if result['errors']:
+                    print(f"[RemoteSync] 오류 {len(result['errors'])}건:")
+                    for e in result['errors'][:5]:
+                        print(f"  - {e}")
+                print(
+                    f"[RemoteSync] 완료 — "
+                    f"신규: {result['new']}건, 업데이트: {result['updated']}건"
+                )
+            except Exception as e:
+                print(f"[RemoteSync] 실패: {e}")
 
     def _git_pull(self):
         """
