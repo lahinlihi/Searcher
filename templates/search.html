@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}검색 - 입찰공고 통합 검색 시스템{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <h2 class="text-2xl font-bold text-gray-900">공고 검색</h2>
+
+    <!-- 검색 조건 -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">검색 조건</h3>
+        </div>
+        <div class="card-body">
+            <div class="space-y-4">
+                <!-- 필터 프리셋 -->
+                <div class="form-group">
+                    <label class="form-label">필터 프리셋</label>
+                    <div class="flex gap-2">
+                        <select id="filter-preset" class="form-input flex-1">
+                            <option value="">선택하세요</option>
+                        </select>
+                        <button onclick="applyPreset()" class="btn-primary">적용</button>
+                    </div>
+                </div>
+
+                <!-- 포함 키워드 -->
+                <div class="form-group">
+                    <label class="form-label">포함 키워드</label>
+                    <input type="text" id="include-keywords" class="form-input" placeholder="예: AI+교육, 시스템 (+는 AND, 쉼표는 OR)">
+                    <p class="mt-1 text-sm text-gray-600">
+                        💡 <strong>+</strong>로 연결하면 모두 포함, <strong>쉼표</strong>로 구분하면 하나만 포함<br>
+                        예: "AI+교육, 시스템" → (AI <strong>그리고</strong> 교육) <strong>또는</strong> 시스템
+                    </p>
+                </div>
+
+                <!-- 제외 키워드 -->
+                <div class="form-group">
+                    <label class="form-label">제외 키워드 (쉼표로 구분)</label>
+                    <input type="text" id="exclude-keywords" class="form-input" placeholder="예: 철거, 폐기물, 청소">
+                </div>
+
+                <!-- 상태 필터 -->
+                <div class="form-group">
+                    <label class="form-label">공고 상태</label>
+                    <select id="status-filter" class="form-input">
+                        <option value="">전체</option>
+                        <option value="사전규격">사전규격만</option>
+                        <option value="일반">일반만</option>
+                    </select>
+                </div>
+
+                <!-- 날짜 필터 -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- 공고일 범위 -->
+                    <div class="form-group">
+                        <label class="form-label">공고일 범위</label>
+                        <div class="flex gap-2 items-center">
+                            <input type="date" id="announced-date-from" class="form-input">
+                            <span class="text-gray-500">~</span>
+                            <input type="date" id="announced-date-to" class="form-input">
+                        </div>
+                    </div>
+
+                    <!-- 마감일 범위 -->
+                    <div class="form-group">
+                        <label class="form-label">마감일 범위</label>
+                        <div class="flex gap-2 items-center">
+                            <input type="date" id="deadline-date-from" class="form-input">
+                            <span class="text-gray-500">~</span>
+                            <input type="date" id="deadline-date-to" class="form-input">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 검색 버튼 -->
+                <div class="flex gap-2">
+                    <button onclick="searchTenders()" class="btn-primary">검색</button>
+                    <button onclick="startCrawling()" class="btn-success">실시간 크롤링 시작</button>
+                    <button onclick="resetFilters()" class="btn-secondary">초기화</button>
+                </div>
+
+                <!-- 크롤링 상태 -->
+                <div id="crawl-status" class="hidden mt-4 p-4 bg-blue-50 border border-blue-200 rounded">
+                    <p class="text-blue-700 font-medium">크롤링 진행 중...</p>
+                    <p class="text-sm text-blue-600 mt-1">잠시만 기다려주세요. 완료되면 자동으로 결과가 표시됩니다.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 현재 적용된 필터 -->
+    <div id="active-filters-container" class="hidden">
+        <div class="card">
+            <div class="card-body">
+                <div class="flex items-start gap-2">
+                    <span class="text-sm font-medium text-gray-700 mt-1">적용된 필터:</span>
+                    <div id="active-filters" class="flex flex-wrap gap-2"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 검색 결과 -->
+    <div class="card">
+        <div class="card-header">
+            <div class="flex justify-between items-center">
+                <div>
+                    <h3 class="card-title">검색 결과 (<span id="result-count">0</span>건)</h3>
+                    <p id="keyword-info" class="text-xs text-gray-500 mt-1"></p>
+                </div>
+                <button onclick="exportExcel()" class="btn-success">Excel 다운로드</button>
+            </div>
+        </div>
+        <div class="card-body p-0">
+            <div id="results-wrapper" class="scrollable-results">
+                <div id="results-container" class="p-6">
+                    <p class="text-gray-500 text-sm">검색 버튼을 눌러주세요.</p>
+                </div>
+
+                <!-- 페이징 -->
+                <div id="pagination" class="hidden sticky bottom-0 bg-white border-t p-4 flex justify-center gap-2"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/search.js') }}"></script>
+{% endblock %}

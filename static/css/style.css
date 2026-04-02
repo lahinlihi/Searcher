@@ -1,0 +1,415 @@
+/* 커스텀 스타일 */
+
+/* 네비게이션 링크 */
+.nav-link {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    border-bottom: 2px solid transparent;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #6B7280;
+    transition: all 0.2s;
+}
+
+.nav-link:hover {
+    color: #2563EB;
+    border-bottom-color: #2563EB;
+}
+
+.nav-link.active {
+    color: #2563EB;
+    border-bottom-color: #2563EB;
+}
+
+/* 버튼 스타일 */
+.btn-primary {
+    padding: 0.5rem 1rem;
+    background-color: #2563EB;
+    color: white;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.btn-primary:hover {
+    background-color: #1D4ED8;
+}
+
+.btn-secondary {
+    padding: 0.5rem 1rem;
+    background-color: #6B7280;
+    color: white;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+    background-color: #4B5563;
+}
+
+.btn-success {
+    padding: 0.5rem 1rem;
+    background-color: #10B981;
+    color: white;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.btn-success:hover {
+    background-color: #059669;
+}
+
+.btn-danger {
+    padding: 0.5rem 1rem;
+    background-color: #EF4444;
+    color: white;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.btn-danger:hover {
+    background-color: #DC2626;
+}
+
+/* 카드 스타일 */
+.card {
+    background-color: white;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+}
+
+.card-header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #E5E7EB;
+}
+
+.card-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #111827;
+}
+
+.card-body {
+    padding: 1.5rem;
+}
+
+/* 통계 카드 */
+.stat-card {
+    background-color: white;
+    padding: 1.5rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.stat-icon {
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.stat-label {
+    font-size: 0.875rem;
+    color: #6B7280;
+    margin-bottom: 0.25rem;
+}
+
+.stat-value {
+    font-size: 1.875rem;
+    font-weight: 700;
+    color: #111827;
+}
+
+/* 공고 아이템 */
+.tender-item {
+    padding: 1rem;
+    border: 1px solid #E5E7EB;
+    border-radius: 0.5rem;
+    transition: all 0.2s;
+}
+
+.tender-item:hover {
+    border-color: #2563EB;
+    box-shadow: 0 2px 4px rgba(37, 99, 235, 0.1);
+}
+
+.tender-status-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.tender-status-pre {
+    background-color: #DBEAFE;
+    color: #1E40AF;
+}
+
+.tender-status-normal {
+    background-color: #F3F4F6;
+    color: #4B5563;
+}
+
+.tender-deadline-urgent {
+    color: #EF4444;
+}
+
+.tender-deadline-soon {
+    color: #F59E0B;
+}
+
+.tender-deadline-normal {
+    color: #10B981;
+}
+
+/* 테이블 스타일 */
+.table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.table thead {
+    background-color: #F9FAFB;
+}
+
+.table th {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #374151;
+    border-bottom: 2px solid #E5E7EB;
+}
+
+.table td {
+    padding: 0.75rem 1rem;
+    font-size: 0.875rem;
+    color: #6B7280;
+    border-bottom: 1px solid #E5E7EB;
+}
+
+.table tbody tr:hover {
+    background-color: #F9FAFB;
+}
+
+/* 폼 스타일 */
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #374151;
+    margin-bottom: 0.5rem;
+}
+
+.form-input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #D1D5DB;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    transition: all 0.2s;
+}
+
+.form-input:focus {
+    outline: none;
+    border-color: #2563EB;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.form-checkbox {
+    width: 1rem;
+    height: 1rem;
+    border: 1px solid #D1D5DB;
+    border-radius: 0.25rem;
+    color: #2563EB;
+}
+
+/* 배지 */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.625rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.badge-success {
+    background-color: #D1FAE5;
+    color: #065F46;
+}
+
+.badge-warning {
+    background-color: #FEF3C7;
+    color: #92400E;
+}
+
+.badge-danger {
+    background-color: #FEE2E2;
+    color: #991B1B;
+}
+
+.badge-info {
+    background-color: #DBEAFE;
+    color: #1E40AF;
+}
+
+/* 로딩 스피너 */
+.spinner {
+    border: 2px solid #F3F4F6;
+    border-top-color: #2563EB;
+    border-radius: 50%;
+    width: 1.5rem;
+    height: 1.5rem;
+    animation: spin 0.6s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* 스크롤 가능한 결과 컨테이너 */
+.scrollable-results {
+    max-height: 800px;
+    overflow-y: auto;
+    overflow-x: auto;
+}
+
+/* 검색 결과 테이블 전용 스타일 */
+.table-compact {
+    table-layout: fixed;
+    width: 100%;
+    min-width: 1200px;
+}
+
+.table-compact td.tender-title {
+    max-width: 500px;
+    white-space: normal;
+    line-height: 1.4;
+    font-size: 0.875rem;
+}
+
+.table-compact td {
+    font-size: 0.8125rem;
+    padding: 0.625rem 0.75rem;
+}
+
+.table-compact th {
+    font-size: 0.8125rem;
+    padding: 0.625rem 0.75rem;
+    white-space: nowrap;
+}
+
+/* 키워드 강조 스타일 */
+mark.keyword-highlight {
+    background-color: #FEF08A;
+    color: #854D0E;
+    font-weight: 600;
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+}
+
+/* 키워드 매칭 배지 */
+.keyword-match-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background-color: #FEF3C7;
+    color: #92400E;
+    margin-left: 0.5rem;
+}
+
+/* 텍스트 말줄임 (필요한 경우) */
+.truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 스크롤바 스타일링 (Webkit 브라우저) */
+.scrollable-results::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.scrollable-results::-webkit-scrollbar-track {
+    background-color: #F3F4F6;
+    border-radius: 5px;
+}
+
+.scrollable-results::-webkit-scrollbar-thumb {
+    background-color: #9CA3AF;
+    border-radius: 5px;
+    border: 2px solid #F3F4F6;
+}
+
+.scrollable-results::-webkit-scrollbar-thumb:hover {
+    background-color: #6B7280;
+}
+
+.scrollable-results::-webkit-scrollbar-corner {
+    background-color: #F3F4F6;
+}
+
+/* 대시보드 리스트용 스크롤 */
+.scrollable-list {
+    max-height: 400px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.scrollable-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.scrollable-list::-webkit-scrollbar-track {
+    background-color: #F3F4F6;
+    border-radius: 3px;
+}
+
+.scrollable-list::-webkit-scrollbar-thumb {
+    background-color: #9CA3AF;
+    border-radius: 3px;
+}
+
+.scrollable-list::-webkit-scrollbar-thumb:hover {
+    background-color: #6B7280;
+}
+
+/* 반응형 */
+@media (max-width: 640px) {
+    .stat-card {
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .card-body {
+        padding: 1rem;
+    }
+
+    .scrollable-results {
+        max-height: 400px;
+    }
+
+    .scrollable-list {
+        max-height: 300px;
+    }
+}

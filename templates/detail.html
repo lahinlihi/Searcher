@@ -1,0 +1,1298 @@
+{% extends "base.html" %}
+
+{% block title %}공고 상세 - 입찰공고 통합 검색 시스템{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- 뒤로 가기 버튼 -->
+    <div>
+        <button onclick="history.back()" class="btn-secondary">
+            ← 목록으로 돌아가기
+        </button>
+    </div>
+
+    <!-- 공고 제목 -->
+    <div class="card">
+        <div class="card-header">
+            <h2 class="text-2xl font-bold text-gray-900">{{ tender.title }}</h2>
+            <div class="flex gap-2 mt-2">
+                {% if tender.status == '사전규격' %}
+                <span class="badge badge-info">사전규격</span>
+                {% else %}
+                <span class="badge">일반</span>
+                {% endif %}
+
+                {% if tender.is_sme_only %}
+                <span class="badge badge-warning">중소기업 전용</span>
+                {% endif %}
+
+                {% if is_expired %}
+                {# 일반입찰이고 마감일이 지난 경우 #}
+                <span class="badge bg-gray-400 text-white">마감기한 지남</span>
+                {% elif days_left <= 2 %}
+                <span class="badge bg-red-600 text-white">마감 임박 (D-{{ days_left }})</span>
+                {% elif days_left <= 5 %}
+                <span class="badge bg-orange-500 text-white">D-{{ days_left }}</span>
+                {% else %}
+                <span class="badge bg-green-600 text-white">D-{{ days_left }}</span>
+                {% endif %}
+
+                {% if tender.bid_method == '수의계약' %}
+                <span class="badge bg-purple-500 text-white">수의계약</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- 기본 정보 -->
+                <div class="space-y-3">
+                    <h3 class="font-semibold text-lg border-b pb-2">기본 정보</h3>
+
+                    <div class="flex items-center">
+                        <span class="text-gray-600 w-32 flex-shrink-0">공고번호</span>
+                        <span class="font-medium" id="tender-number">{{ tender.tender_number }}</span>
+                        <button onclick="copyTenderNumber()" class="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-600 rounded hover:bg-blue-200">
+                            복사
+                        </button>
+                    </div>
+
+                    {% if tender.demand_agency and tender.demand_agency != tender.agency %}
+                    <div class="flex items-start">
+                        <span class="text-gray-600 w-32 flex-shrink-0">수요기관</span>
+                        <span class="font-semibold text-blue-700 flex items-center gap-1">
+                            {{ tender.demand_agency }}
+                            <span class="text-xs font-normal bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">실수요</span>
+                        </span>
+                    </div>
+                    {% endif %}
+
+                    <div class="flex">
+                        <span class="text-gray-600 w-32 flex-shrink-0">발주기관</span>
+                        <span class="font-medium {% if tender.demand_agency and tender.demand_agency != tender.agency %}text-gray-500{% endif %}">{{ tender.agency }}</span>
+                    </div>
+
+                    <div class="flex">
+                        <span class="text-gray-600 w-32 flex-shrink-0">출처</span>
+                        <span class="font-medium">{{ tender.source_site }}</span>
+                    </div>
+
+                    {% if tender.bid_method %}
+                    <div class="flex">
+                        <span class="text-gray-600 w-32 flex-shrink-0">입찰방식</span>
+                        <span class="font-medium">{{ tender.bid_method }}</span>
+                    </div>
+                    {% endif %}
+
+                    {% if tender.estimated_price %}
+                    <div class="flex">
+                        <span class="text-gray-600 w-32 flex-shrink-0">추정가격</span>
+                        <span class="font-medium text-blue-600">{{ tender.estimated_price | format_price }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- 일정 정보 -->
+                <div class="space-y-3">
+                    <h3 class="font-semibold text-lg border-b pb-2">일정 정보</h3>
+
+                    {% if tender.announced_date %}
+                    <div class="flex">
+                        <span class="text-gray-600 w-32 flex-shrink-0">공고일시</span>
+                        <span class="font-medium">{{ tender.announced_date.strftime('%Y-%m-%d %H:%M') if tender.announced_date else '-' }}</span>
+                    </div>
+                    {% endif %}
+
+                    {% if tender.deadline_date %}
+                    <div class="flex">
+                        <span class="text-gray-600 w-32 flex-shrink-0">마감일시</span>
+                        <span class="font-medium {% if days_left <= 2 %}text-red-600{% elif days_left <= 5 %}text-orange-600{% endif %}">
+                            {{ tender.deadline_date.strftime('%Y-%m-%d %H:%M') if tender.deadline_date else '-' }}
+                        </span>
+                    </div>
+                    {% endif %}
+
+                    {% if tender.opening_date %}
+                    <div class="flex">
+                        <span class="text-gray-600 w-32 flex-shrink-0">개찰일시</span>
+                        <span class="font-medium">{{ tender.opening_date.strftime('%Y-%m-%d %H:%M') if tender.opening_date else '-' }}</span>
+                    </div>
+                    {% endif %}
+
+                    <div class="flex">
+                        <span class="text-gray-600 w-32 flex-shrink-0">등록일</span>
+                        <span class="text-sm text-gray-500">{{ tender.created_at.strftime('%Y-%m-%d %H:%M') if tender.created_at else '-' }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 외부 링크 -->
+            {% if tender.url %}
+            <div class="mt-6 pt-6 border-t">
+                {% if '나라장터' in tender.source_site %}
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                    <p class="text-sm text-gray-700">
+                        ✓ 아래 버튼을 클릭하면 나라장터 공고 페이지로 이동합니다.
+                        <span class="text-gray-600">(공고번호: <strong>{{ tender.tender_number }}</strong>)</span>
+                    </p>
+                </div>
+                <a href="{{ tender.url }}" target="_blank" class="btn-primary inline-block">
+                    나라장터에서 공고 보기 →
+                </a>
+                {% else %}
+                <a href="{{ tender.url }}" target="_blank" class="btn-primary inline-block">
+                    원본 공고 보기 →
+                </a>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 추가 정보 -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">추가 정보</h3>
+        </div>
+        <div class="card-body">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div>
+                    <span class="text-gray-600">중소기업 전용</span>
+                    <p class="font-medium mt-1">{{ '예' if tender.is_sme_only else '아니오' }}</p>
+                </div>
+                <div>
+                    <span class="text-gray-600">중복 여부</span>
+                    <p class="font-medium mt-1">{{ '중복' if tender.is_duplicate else '정상' }}</p>
+                </div>
+                <div>
+                    <span class="text-gray-600">공고 상태</span>
+                    <p class="font-medium mt-1">{{ tender.status }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 연관 공고 (같은 사업의 사전규격 ↔ 일반입찰 연결) -->
+    <div id="related-card" class="card hidden">
+        <div class="card-header">
+            <h3 class="card-title">🔗 연관 공고</h3>
+            <p class="text-xs text-gray-400 mt-0.5">같은 사업의 사전규격 또는 본 공고입니다.</p>
+        </div>
+        <div class="card-body" id="related-list">
+            <!-- JS로 채워짐 -->
+        </div>
+    </div>
+
+    <!-- AI 분석 패널 -->
+    {% if tender.url %}
+    <div class="card" id="ai-analysis-card">
+        <div class="card-header">
+            <div class="flex justify-between items-center flex-wrap gap-2">
+                <div>
+                    <h3 class="card-title">제안요청서(RFP) AI 분석</h3>
+                    <p class="text-xs text-gray-400 mt-0.5">첨부파일(HWP/PDF)을 자동으로 찾아 전체요약 · KPI · 제안요건 · 특이사항으로 분석합니다.</p>
+                </div>
+                <button id="analyze-btn" onclick="runAnalysis({{ tender.id }})"
+                    class="btn-primary text-sm px-4 py-2 shrink-0">
+                    ✦ AI 분석 시작
+                </button>
+            </div>
+        </div>
+        <div class="card-body" id="analysis-body" style="padding:0">
+            <!-- 로딩 -->
+            <div id="analysis-loading" class="hidden text-center py-12">
+                <div class="inline-block animate-spin rounded-full h-9 w-9 border-b-2 border-blue-500 mb-4"></div>
+                <p class="text-sm text-gray-600 font-medium">첨부파일을 다운로드하고 분석 중입니다…</p>
+                <p class="text-xs text-gray-400 mt-1">파일 크기에 따라 1~3분 소요될 수 있습니다. 페이지를 닫지 마세요.</p>
+                <div class="mt-3 flex justify-center gap-1.5">
+                    <span class="inline-block w-2 h-2 rounded-full bg-blue-400 animate-bounce" style="animation-delay:0s"></span>
+                    <span class="inline-block w-2 h-2 rounded-full bg-blue-400 animate-bounce" style="animation-delay:0.2s"></span>
+                    <span class="inline-block w-2 h-2 rounded-full bg-blue-400 animate-bounce" style="animation-delay:0.4s"></span>
+                </div>
+            </div>
+
+            <!-- 오류 -->
+            <div id="analysis-error" class="hidden p-4">
+                <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <p class="text-sm font-semibold text-red-700 mb-1">⚠ 분석 오류</p>
+                    <p class="text-sm text-red-600 whitespace-pre-line" id="analysis-error-msg"></p>
+                </div>
+            </div>
+
+            <!-- 분석 결과 -->
+            <div id="analysis-result" class="hidden p-4 space-y-3">
+                <!-- 메타 정보 행 -->
+                <div class="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                    <div id="files-section" class="hidden flex items-center gap-1 flex-wrap">
+                        <span class="font-semibold text-gray-400">📎 분석파일:</span>
+                        <div id="files-list" class="flex flex-wrap gap-1"></div>
+                    </div>
+                    <span id="cache-badge" class="hidden ai-cache-badge">⚡ 캐시됨</span>
+                    <span id="model-badge" class="hidden ai-model-badge"></span>
+                </div>
+
+                <!-- 계약기간 / 예산 하이라이트 바 -->
+                <div id="key-info-bar" class="hidden flex flex-wrap gap-3 mb-1">
+                    <div id="key-contract" class="hidden ai-key-card ai-key-contract">
+                        <div class="ai-key-card-label">📅 계약기간</div>
+                        <div class="ai-key-card-value" id="key-contract-val"></div>
+                    </div>
+                    <div id="key-budget" class="hidden ai-key-card ai-key-budget">
+                        <div class="ai-key-card-label">💰 예산 규모</div>
+                        <div class="ai-key-card-value" id="key-budget-val"></div>
+                    </div>
+                </div>
+
+                <!-- Gemini 없을 때 안내 -->
+                <div id="no-gemini-notice" class="hidden bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <p class="text-sm text-amber-800">
+                        💡 Gemini API 키를 <a href="/settings" class="underline font-medium text-blue-700">설정</a>하면 AI 분석을 이용할 수 있습니다.
+                    </p>
+                </div>
+
+                <!-- 탭 영역 -->
+                <div id="gemini-tabs" class="hidden">
+                    <!-- 탭 헤더 -->
+                    <div class="flex border-b border-gray-200 gap-0.5 flex-wrap" id="tab-headers">
+                        <button onclick="switchTab('summary')"  id="tab-btn-summary"  class="ai-tab ai-tab-summary ai-tab-active">
+                            <span class="ai-tab-icon">📋</span> 전체 요약
+                        </button>
+                        <button onclick="switchTab('kpi')"      id="tab-btn-kpi"      class="ai-tab ai-tab-kpi">
+                            <span class="ai-tab-icon">📊</span> KPI / 수치
+                        </button>
+                        <button onclick="switchTab('proposal')" id="tab-btn-proposal" class="ai-tab ai-tab-proposal">
+                            <span class="ai-tab-icon">✅</span> 제안 요건
+                        </button>
+                        <button onclick="switchTab('special')"  id="tab-btn-special"  class="ai-tab ai-tab-special">
+                            <span class="ai-tab-icon">📌</span> 특이사항
+                        </button>
+                    </div>
+                    <!-- 탭 콘텐츠 -->
+                    <div id="tab-summary"  class="ai-panel ai-panel-summary"></div>
+                    <div id="tab-kpi"      class="ai-panel ai-panel-kpi hidden"></div>
+                    <div id="tab-proposal" class="ai-panel ai-panel-proposal hidden"></div>
+                    <div id="tab-special"  class="ai-panel ai-panel-special hidden"></div>
+                </div>
+
+                <!-- 규칙 기반 추출 (보조) -->
+                <div id="rule-section" class="hidden">
+                    <details class="mt-2">
+                        <summary class="text-xs font-semibold text-gray-400 uppercase tracking-wide cursor-pointer select-none hover:text-gray-600">
+                            ▶ 규칙 기반 추출 결과 (보조)
+                        </summary>
+                        <div id="rule-extract" class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3"></div>
+                    </details>
+                </div>
+            </div>
+
+            <!-- 초기 빈 상태 -->
+            <div id="analysis-placeholder"></div>
+        </div>
+    </div>
+
+    <style>
+    /* ─── 탭 버튼 ──────────────────────────────────────────── */
+    .ai-tab {
+        display: inline-flex; align-items: center; gap: 0.3rem;
+        padding: 0.45rem 1rem; font-size: 0.8rem; font-weight: 500;
+        border-radius: 8px 8px 0 0; border: 1px solid #e5e7eb;
+        border-bottom: 3px solid transparent;
+        color: #6b7280; background: #f9fafb;
+        cursor: pointer; transition: all 0.15s; white-space: nowrap;
+    }
+    .ai-tab:hover { background: #f3f4f6; color: #374151; }
+    .ai-tab-icon { font-size: 0.85rem; }
+
+    .ai-tab-active.ai-tab-summary  { color:#1d4ed8; border-bottom-color:#3b82f6; background:#eff6ff; font-weight:700; }
+    .ai-tab-active.ai-tab-kpi      { color:#065f46; border-bottom-color:#10b981; background:#ecfdf5; font-weight:700; }
+    .ai-tab-active.ai-tab-proposal { color:#92400e; border-bottom-color:#f59e0b; background:#fffbeb; font-weight:700; }
+    .ai-tab-active.ai-tab-special  { color:#4c1d95; border-bottom-color:#8b5cf6; background:#f5f3ff; font-weight:700; }
+
+    /* ─── 탭 콘텐츠 패널 ───────────────────────────────────── */
+    .ai-panel {
+        border: 1px solid #e5e7eb; border-top: 3px solid #e5e7eb;
+        border-radius: 0 8px 8px 8px;
+        padding: 1.4rem 1.6rem; min-height: 180px; background: #fff;
+        font-size: 0.875rem; line-height: 1.8; color: #1e293b;
+    }
+    .ai-panel-summary  { border-top-color: #3b82f6; }
+    .ai-panel-kpi      { border-top-color: #10b981; }
+    .ai-panel-proposal { border-top-color: #f59e0b; }
+    .ai-panel-special  { border-top-color: #8b5cf6; }
+
+    /* ─── 분석 내용 공통 ────────────────────────────────────── */
+    .ai-h2 {
+        font-size: 0.95rem; font-weight: 700; color: #0f172a;
+        padding: 0.45rem 0.85rem;
+        background: linear-gradient(90deg, #eff6ff 0%, #f8fafc 100%);
+        border-left: 4px solid #3b82f6;
+        border-radius: 0 6px 6px 0;
+        margin: 0 0 1rem 0;
+    }
+    .ai-panel-kpi      .ai-h2 { background: linear-gradient(90deg, #ecfdf5, #f8fafc); border-left-color: #10b981; }
+    .ai-panel-proposal .ai-h2 { background: linear-gradient(90deg, #fffbeb, #f8fafc); border-left-color: #f59e0b; }
+    .ai-panel-special  .ai-h2 { background: linear-gradient(90deg, #f5f3ff, #f8fafc); border-left-color: #8b5cf6; }
+
+    .ai-h3 {
+        display: flex; align-items: center; gap: 0.4rem;
+        font-size: 0.75rem; font-weight: 700; color: #374151;
+        text-transform: uppercase; letter-spacing: 0.06em;
+        padding: 0.2rem 0; border-bottom: 1px dashed #cbd5e1;
+        margin: 1.1rem 0 0.6rem 0;
+    }
+    .ai-h3::before { content: '▸'; color: #3b82f6; font-size: 0.7rem; }
+    .ai-panel-kpi      .ai-h3::before { color: #10b981; }
+    .ai-panel-proposal .ai-h3::before { color: #f59e0b; }
+    .ai-panel-special  .ai-h3::before { color: #8b5cf6; }
+
+    /* ─── 정보 행 (key: value) ──────────────────────────────── */
+    .ai-info-list { list-style: none; padding: 0; margin: 0 0 0.5rem 0; }
+    .ai-info-row {
+        display: flex; align-items: baseline; gap: 0.6rem;
+        padding: 0.3rem 0.5rem; border-bottom: 1px solid #f1f5f9;
+        border-radius: 4px;
+    }
+    .ai-info-row:hover { background: #f8fafc; }
+    .ai-info-key { flex-shrink: 0; min-width: 9rem; max-width: 12rem; font-size: 0.72rem; font-weight: 600; color: #64748b; }
+    .ai-info-val { color: #0f172a; font-weight: 500; flex: 1; word-break: break-all; }
+
+    /* ─── 일반 불릿 리스트 ──────────────────────────────────── */
+    .ai-ul { padding-left: 1.3rem; margin: 0 0 0.75rem 0; }
+    .ai-ul li { padding: 0.15rem 0; color: #374151; }
+
+    /* ─── KPI 카드 그리드 ───────────────────────────────────── */
+    .ai-kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.7rem; margin: 0.75rem 0 1rem 0; }
+    /* KPI 카드 — kpi 탭 에메랄드 계열로 통일 */
+    .ai-kpi-card {
+        background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+        border: 1px solid #6ee7b7; border-radius: 10px;
+        padding: 0.8rem 0.9rem; text-align: center;
+        transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .ai-kpi-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(16,185,129,0.18); }
+    .ai-kpi-label { font-size: 0.68rem; color: #065f46; line-height: 1.4; margin-bottom: 0.4rem; font-weight: 600; }
+    .ai-kpi-value { font-size: 1.2rem; font-weight: 800; color: #047857; }
+
+    /* ─── 표 ─────────────────────────────────────────────────── */
+    .ai-table-wrap { overflow-x: auto; margin: 0.75rem 0; }
+    .ai-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+    .ai-table th {
+        background: #1e40af; color: #fff; padding: 0.5rem 0.75rem;
+        font-weight: 600; text-align: left; border: 1px solid #1d4ed8;
+        white-space: nowrap;
+    }
+    .ai-panel-kpi      .ai-table th { background: #065f46; border-color: #047857; }
+    .ai-panel-proposal .ai-table th { background: #92400e; border-color: #b45309; }
+    .ai-panel-special  .ai-table th { background: #4c1d95; border-color: #6d28d9; }
+    .ai-table td { padding: 0.4rem 0.75rem; border: 1px solid #e2e8f0; color: #1e293b; vertical-align: top; }
+    .ai-table tr:nth-child(even) td { background: #f8fafc; }
+    .ai-table tr:hover td { background: #f0f9ff; }
+    /* 탭별 호버 색상 */
+    .ai-panel-kpi      .ai-table tr:hover td { background: #ecfdf5; }
+    .ai-panel-proposal .ai-table tr:hover td { background: #fef3c7; }
+    .ai-panel-special  .ai-table tr:hover td { background: #f5f3ff; }
+    /* 제안요건 탭 체크 아이콘 — 앰버 계열 */
+    .ai-panel-proposal .ai-qual-icon { color: #b45309; }
+
+    /* ─── 문의처 / 일정 카드 ─────────────────────────────────── */
+    .ai-contact-card {
+        background: #f0fdf4; border: 1px solid #86efac;
+        border-radius: 8px; padding: 0.75rem 1rem; margin: 0.5rem 0;
+        display: grid; gap: 0.3rem;
+    }
+    .ai-contact-row { display: flex; gap: 0.5rem; font-size: 0.8rem; }
+    .ai-contact-key { font-weight: 600; color: #166534; min-width: 5rem; }
+    .ai-contact-val { color: #1e293b; }
+
+    /* ─── 계약기간 / 예산 하이라이트 카드 ──────────────────────── */
+    .ai-key-card {
+        display: flex; flex-direction: column; gap: 0.2rem;
+        padding: 0.65rem 1.1rem; border-radius: 10px; border: 1px solid;
+        flex: 1; min-width: 200px; max-width: 420px;
+    }
+    .ai-key-contract { background: linear-gradient(135deg,#f5f3ff,#ede9fe); border-color: #c4b5fd; }
+    .ai-key-budget   { background: linear-gradient(135deg,#f0fdf4,#dcfce7); border-color: #86efac; }
+    .ai-key-card-label {
+        font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em;
+        text-transform: uppercase;
+    }
+    .ai-key-contract .ai-key-card-label { color: #6d28d9; }
+    .ai-key-budget   .ai-key-card-label { color: #166534; }
+    .ai-key-card-value {
+        font-size: 1rem; font-weight: 700; color: #0f172a; line-height: 1.45;
+    }
+
+    /* ─── 메타 배지 ───────────────────────────────────────────── */
+    .ai-cache-badge {
+        display: inline-flex; align-items: center; gap: 0.25rem;
+        font-size: 0.65rem; background: #f1f5f9; color: #64748b;
+        border: 1px solid #e2e8f0; border-radius: 20px; padding: 0.1rem 0.55rem;
+    }
+    .ai-model-badge {
+        display: inline-flex; align-items: center;
+        font-size: 0.65rem; background: #eff6ff; color: #3b82f6;
+        border: 1px solid #bfdbfe; border-radius: 20px; padding: 0.1rem 0.55rem;
+    }
+
+    /* ─── 특이사항 [태그] 컬러 배지 ────────────────────────────── */
+    .ai-tag { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 4px;
+              font-size: 0.68rem; font-weight: 800; margin-right: 4px;
+              letter-spacing: 0.02em; vertical-align: middle; white-space: nowrap; }
+    .ai-tag-제출 { background:#dbeafe; color:#1e40af; border:1px solid #93c5fd; }
+    .ai-tag-발표 { background:#f3e8ff; color:#6d28d9; border:1px solid #c4b5fd; }
+    .ai-tag-주의 { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
+    .ai-tag-운영 { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+
+    /* ─── 사업 목적 카드 그리드 ─────────────────────────────────── */
+    .ai-purpose-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+                       gap:0.65rem; margin:0.5rem 0 1rem 0; }
+    .ai-purpose-card { border-radius:10px; padding:0.8rem 1rem; border:1px solid; }
+    .ai-purpose-label { font-size:0.67rem; font-weight:800; letter-spacing:0.06em;
+                        text-transform:uppercase; margin-bottom:0.4rem;
+                        display:flex; align-items:center; gap:0.3rem; }
+    .ai-purpose-text { font-size:0.82rem; color:#1e293b; line-height:1.65; }
+    /* 사업목적 3개 카드 — summary 탭 블루 계열로 통일 */
+    .ai-purpose-req  { background:linear-gradient(135deg,#eff6ff,#dbeafe); border-color:#93c5fd; }
+    .ai-purpose-req  .ai-purpose-label { color:#1d4ed8; }
+    .ai-purpose-tgt  { background:linear-gradient(135deg,#dbeafe,#bfdbfe); border-color:#60a5fa; }
+    .ai-purpose-tgt  .ai-purpose-label { color:#1e40af; }
+    .ai-purpose-role { background:linear-gradient(135deg,#e0f2fe,#bae6fd); border-color:#7dd3fc; }
+    .ai-purpose-role .ai-purpose-label { color:#0369a1; }
+
+    /* ─── 사업 구조 특이점 그리드 ───────────────────────────────── */
+    .ai-struct-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(155px,1fr));
+                      gap:0.45rem; margin:0.4rem 0 0.8rem 0; }
+    .ai-struct-item { display:flex; flex-direction:column; gap:0.2rem;
+                      padding:0.55rem 0.8rem; background:#f8fafc;
+                      border-radius:8px; border:1px solid #e2e8f0; }
+    .ai-struct-key  { font-size:0.67rem; font-weight:700; color:#64748b; letter-spacing:0.03em; }
+    .ai-struct-val  { font-size:0.8rem; color:#0f172a; font-weight:500; }
+    .ai-struct-none { color:#94a3b8 !important; font-style:italic; }
+
+    /* ─── 주요 일정 목록 ─────────────────────────────────────────── */
+    .ai-schedule-list { list-style:none; padding:0; margin:0 0 0.5rem 0;
+                        background:#f8fafc; border-radius:8px;
+                        overflow:hidden; border:1px solid #e2e8f0; }
+    .ai-schedule-row { display:flex; gap:1rem; padding:0.4rem 0.75rem;
+                       border-bottom:1px solid #e2e8f0; align-items:baseline; }
+    .ai-schedule-row:last-child { border-bottom:none; }
+    .ai-schedule-key { font-size:0.72rem; font-weight:700; color:#6d28d9;
+                       min-width:8rem; flex-shrink:0; }
+    .ai-schedule-val { font-size:0.8rem; color:#1e293b; }
+
+    /* ─── 참가 자격 요건 체크 리스트 ───────────────────────────── */
+    .ai-qual-list { list-style:none; padding:0; margin:0 0 0.5rem 0; }
+    .ai-qual-item { display:flex; gap:0.5rem; padding:0.4rem 0.5rem;
+                    border-bottom:1px solid #f1f5f9; align-items:flex-start;
+                    border-radius:4px; }
+    .ai-qual-item:hover { background:#f8fafc; }
+    .ai-qual-icon { flex-shrink:0; font-size:0.8rem; margin-top:1px; color:#64748b; }
+    .ai-qual-text { font-size:0.8rem; color:#1e293b; line-height:1.5; flex:1; }
+
+    /* ─── 주요 과업 범위 계층형 목록 ─────────────────────────────── */
+    .ai-scope-wrap { margin:0.5rem 0 1rem 0; }
+    .ai-scope-major { margin-bottom:0.65rem; border:1px solid #e2e8f0; border-radius:8px; overflow:hidden; }
+    .ai-scope-major-title {
+        display:flex; align-items:center; gap:0.55rem;
+        font-size:0.88rem; font-weight:700; color:#1e3a5f;
+        background:linear-gradient(90deg,#dbeafe,#eff6ff);
+        padding:0.5rem 0.85rem; border-bottom:1px solid #bfdbfe;
+    }
+    .ai-scope-num {
+        display:inline-flex; align-items:center; justify-content:center;
+        width:1.5rem; height:1.5rem; border-radius:50%;
+        background:#3b82f6; color:#fff; font-size:0.72rem; font-weight:800; flex-shrink:0;
+    }
+    .ai-scope-subs { padding:0.25rem 0; background:#fff; }
+    .ai-scope-sub {
+        display:flex; align-items:baseline; flex-wrap:wrap; gap:0.3rem;
+        padding:0.3rem 0.85rem; font-size:0.82rem;
+        border-bottom:1px solid #f8fafc;
+    }
+    .ai-scope-sub:last-child { border-bottom:none; }
+    .ai-scope-sub-num { font-size:0.68rem; font-weight:700; color:#93c5fd; min-width:2.4rem; flex-shrink:0; }
+    .ai-scope-sub-name { font-weight:600; color:#374151; min-width:7rem; flex-shrink:0; }
+    .ai-scope-sep { color:#9ca3af; }
+    .ai-scope-sub-content { color:#4b5563; flex:1; min-width:0; }
+
+    /* ─── 자동 다열 표 (반복 패턴 감지) ─────────────────────────────── */
+    .ai-auto-table thead th { white-space: nowrap; }
+    .ai-auto-table tbody td { vertical-align: top; }
+    /* 첫 번째 열: 굵게 + 색상 테두리 (inline style로 적용) */
+    .ai-auto-table tbody tr:hover td { filter: brightness(0.96); }
+
+    /* ─── 정량 평가 배점 그룹핑 셀 ───────────────────────────────── */
+    .ai-score-major-cell {
+        font-weight:700; color:#1e40af; background:#eff6ff;
+        vertical-align:middle; text-align:center;
+        border-right:2px solid #bfdbfe !important;
+    }
+    .ai-panel-proposal .ai-score-major-cell { color:#92400e; background:#fffbeb; border-right-color:#fde68a !important; }
+    </style>
+    {% endif %}
+
+    <!-- 액션 버튼들 -->
+    <div class="flex gap-3">
+        <button onclick="history.back()" class="btn-secondary">
+            ← 목록으로 돌아가기
+        </button>
+        {% if tender.url %}
+        <a href="{{ tender.url }}" target="_blank" class="btn-primary">
+            원본 공고 보기 →
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+// ── 연관 공고 로드 ────────────────────────────────────────────────────────────
+(async function loadRelated() {
+    const tenderId = {{ tender.id }};
+    try {
+        const resp = await fetch(`/api/tender/${tenderId}/related`);
+        const list = await resp.json();
+        if (!list || list.length === 0) return;  // 연관 공고 없으면 숨김 유지
+
+        const container = document.getElementById('related-list');
+        const card      = document.getElementById('related-card');
+
+        // 각 연관 공고를 행으로 표시
+        container.innerHTML = list.map(t => {
+            // 남은 일수 배지 색상 결정
+            let badge = '';
+            if (t.days_left === null) {
+                badge = '';
+            } else if (t.days_left < 0) {
+                badge = '<span class="text-xs px-2 py-0.5 rounded-full bg-gray-200 text-gray-600 ml-2">마감기한 지남</span>';
+            } else if (t.days_left <= 2) {
+                badge = `<span class="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 ml-2">D-${t.days_left}</span>`;
+            } else if (t.days_left <= 5) {
+                badge = `<span class="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 ml-2">D-${t.days_left}</span>`;
+            } else {
+                badge = `<span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 ml-2">D-${t.days_left}</span>`;
+            }
+
+            const statusBadge = t.status === '사전규격'
+                ? '<span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 mr-2">사전규격</span>'
+                : '<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 mr-2">일반</span>';
+
+            const deadline = t.deadline_date
+                ? `<span class="text-xs text-gray-400 ml-auto">${t.deadline_date} 마감</span>`
+                : '';
+
+            return `
+            <a href="/tender/${t.id}"
+               class="flex items-center gap-1 px-3 py-2.5 rounded-lg border border-gray-100
+                      hover:bg-blue-50 hover:border-blue-200 transition-colors text-sm">
+                ${statusBadge}
+                <span class="font-medium text-gray-800 flex-1">${t.title}</span>
+                ${badge}
+                ${deadline}
+            </a>`;
+        }).join('');
+
+        card.classList.remove('hidden');  // 공고가 있으면 카드 표시
+    } catch (e) {
+        console.debug('연관 공고 로드 실패:', e);
+    }
+})();
+
+function copyTenderNumber() {
+    const tenderNumber = document.getElementById('tender-number').textContent;
+    navigator.clipboard.writeText(tenderNumber).then(() => {
+        const button = event.target;
+        const originalText = button.textContent;
+        button.textContent = '✓ 복사됨';
+        button.classList.remove('bg-blue-100', 'text-blue-600');
+        button.classList.add('bg-green-100', 'text-green-600');
+        setTimeout(() => {
+            button.textContent = originalText;
+            button.classList.remove('bg-green-100', 'text-green-600');
+            button.classList.add('bg-blue-100', 'text-blue-600');
+        }, 2000);
+    }).catch(err => {
+        alert('복사 실패: ' + err);
+    });
+}
+
+// ── 탭 전환 ──────────────────────────────────────────────────────────────────
+const TABS = ['summary','kpi','proposal','special'];
+
+function switchTab(key) {
+    TABS.forEach(k => {
+        const panel = document.getElementById('tab-' + k);
+        const btn   = document.getElementById('tab-btn-' + k);
+        if (k === key) {
+            panel.classList.remove('hidden');
+            btn.classList.add('ai-tab-active');
+        } else {
+            panel.classList.add('hidden');
+            btn.classList.remove('ai-tab-active');
+        }
+    });
+}
+
+// ── 계약기간 / 예산 정규화 헬퍼 ──────────────────────────────────────────────
+
+/** Gemini summary 마크다운에서 특정 레이블 뒤 값 추출
+ *  **계약 기간** / 계약기간 형태 모두 처리 */
+function extractKeyFromSummary(md) {
+    if (!md) return { contract: '', budget: '' };
+    const result = {};
+    // "**계약 기간**\n값" 또는 "계약 기간: 값" 형태
+    const cMatch = md.match(/\*\*계약\s*기간\*\*\s*\n?\s*[-·]?\s*([^\n*#\[]{5,120})/);
+    if (cMatch) result.contract = cMatch[1].trim();
+    // "**예산 규모**\n값" 형태
+    const bMatch = md.match(/\*\*예산\s*규모\*\*\s*\n?\s*[-·]?\s*([^\n*#\[]{3,120})/);
+    if (bMatch) result.budget = bMatch[1].trim();
+    return result;
+}
+
+/** 원화 금액(정수)을 한글로 읽기: 300000000 → "3억원" */
+function toKoreanAmount(won) {
+    const uk  = Math.floor(won / 100000000);
+    const man = Math.floor((won % 100000000) / 10000);
+    const parts = [];
+    if (uk  > 0) parts.push(uk.toLocaleString('ko-KR')  + '억');
+    if (man > 0) parts.push(man.toLocaleString('ko-KR') + '만');
+    return parts.length ? parts.join(' ') + '원' : '';
+}
+
+/** 계약기간 정규화: 한글 날짜 → 숫자 날짜, 조사 정리 */
+function normalizeContract(text) {
+    if (!text) return text;
+    // HWP 인코딩 오류로 생성되는 CJK 한자 제거 (예: "湯湷", "乶乺" 등)
+    text = text.replace(/[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]+\s*/g, '');
+    // 한국어 날짜 → 숫자 (2026년 12월 31일 → 2026.12.31)
+    text = text.replace(/(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일?/g,
+        (_, y, m, d) => `${y}.${String(m).padStart(2,'0')}.${String(d).padStart(2,'0')}`);
+    // "계약체결일로부터" / "계약체결일부터" → "계약체결일 ~"
+    text = text.replace(/계약\s*체결\s*일?\s*(?:로부터|부터)/g, '계약체결일 ~');
+    // "로부터" 단독으로 남은 경우
+    text = text.replace(/로부터\s*/g, ' ~ ');
+    // "까지" 제거
+    text = text.replace(/\s*까지\s*$/, '');
+    return text.replace(/\s{2,}/g, ' ').trim();
+}
+
+/** 예산 정규화: 한글(억·만원) 우선 표시 + 숫자 원 단위 병기 */
+function normalizeBudget(text) {
+    if (!text) return text;
+    // 천원 단위: "1,610,055천원"
+    const chonM = text.match(/([\d,]+)\s*천원/);
+    if (chonM) {
+        const n   = parseInt(chonM[1].replace(/,/g, ''));
+        const won = n * 1000;
+        const kor = toKoreanAmount(won);
+        return kor
+            ? `${kor} (${won.toLocaleString('ko-KR')}원)`
+            : `${n.toLocaleString('ko-KR')}천원`;
+    }
+    // 원 단위: "금300,000,000원" / "300,000,000원"
+    const wonM = text.match(/금?\s*([\d,]+)\s*원/);
+    if (wonM) {
+        const n   = parseInt(wonM[1].replace(/,/g, ''));
+        const kor = toKoreanAmount(n);
+        return kor
+            ? `${kor} (${n.toLocaleString('ko-KR')}원)`
+            : `${n.toLocaleString('ko-KR')}원`;
+    }
+    // 억원 단위: 이미 한글 — 그대로 유지하되 '원' 단위 확인
+    const ukM = text.match(/(\d[\d,]*)\s*억\s*(?:([\d,]+)\s*만)?\s*원?/);
+    if (ukM) {
+        const uk  = parseInt(ukM[1].replace(/,/g,''));
+        const man = ukM[2] ? parseInt(ukM[2].replace(/,/g,'')) : 0;
+        const won = uk * 100000000 + man * 10000;
+        return `${ukM[0].replace(/\s+/g,'').replace(/원?$/, '')}원 (${won.toLocaleString('ko-KR')}원)`;
+    }
+    // 단위 없는 순수 숫자 (AI가 단위 생략한 경우) → 원 단위로 간주
+    const bareM = text.trim().match(/^[\d,]+$/);
+    if (bareM) {
+        const n = parseInt(text.replace(/,/g, ''));
+        if (n >= 10000) {
+            const kor = toKoreanAmount(n);
+            return kor ? `${kor} (${n.toLocaleString('ko-KR')}원)` : `${n.toLocaleString('ko-KR')}원`;
+        }
+    }
+    return text;
+}
+
+// ── 마크다운 → HTML (개선 버전) ───────────────────────────────────────────────
+const KPI_VAL_RE = /[\d,]+\s*(시간|명|개소|팀|점|천원|만원|억원|원|%|개|건|회)/;
+
+function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function inlineMd(text) {
+    return escHtml(text)
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/_/g, ' ')
+        // [태그] → 컬러 배지 (제출/발표/주의/운영)
+        .replace(/\[(제출|발표|주의|운영)\]/g,
+            (_, t) => `<span class="ai-tag ai-tag-${t}">[${t}]</span>`);
+}
+
+/**
+ * 반복 key 패턴을 감지해 다열 표로 변환.
+ * ex) [과정명, 교육기간, 교육방식, 과정명, 교육기간, 교육방식, ...]
+ *     → 열: 과정명 | 교육기간 | 교육방식  /  행: 각 과정
+ */
+/**
+ * 마침표로 구분된 긴 문장을 개별 항목 배열로 분리.
+ * "문장1. 문장2. 문장3." → ["문장1", "문장2", "문장3"]
+ * 짧거나 단일 문장이면 원본 배열 그대로 반환.
+ */
+function splitSentences(text) {
+    if (!text || text.length < 25) return [text];
+    // '. '(마침표+공백) 또는 '.\n' 기준 분리
+    // 단, 숫자.숫자 (소수점), 숫자. (순번) 는 제외
+    const parts = text
+        .split(/(?<![0-9])\.(?:\s+|\n)(?=[^\s])/)
+        .map(s => s.trim().replace(/\.$/, ''))
+        .filter(s => s.length > 5);
+    return parts.length >= 2 ? parts : [text];
+}
+
+function buildAutoTable(items, tabType) {
+    if (!items.length || !items.every(i => i.type === 'info')) return null;
+    const firstKey = items[0].key;
+    let groupSize = -1;
+    for (let i = 1; i < items.length; i++) {
+        if (items[i].key === firstKey) { groupSize = i; break; }
+    }
+    if (groupSize < 2) return null;
+    const headers = items.slice(0, groupSize).map(i => i.key);
+    const rows = [];
+    for (let s = 0; s < items.length; s += groupSize) {
+        rows.push(items.slice(s, s + groupSize).map(i => i.val));
+    }
+    if (rows.length < 1) return null;
+    // 탭별 동일 계열 색상 (명도·채도만 변화)
+    const PALETTES = {
+        summary:  { c:['#1e40af','#1d4ed8','#2563eb','#3b82f6','#60a5fa'], bg:['#dbeafe','#eff6ff','#e0f2fe','#f0f9ff','#bfdbfe'] },
+        kpi:      { c:['#065f46','#047857','#10b981','#34d399','#6ee7b7'], bg:['#d1fae5','#ecfdf5','#a7f3d0','#f0fdf4','#e6fffa'] },
+        proposal: { c:['#92400e','#b45309','#d97706','#f59e0b','#fbbf24'], bg:['#fde68a','#fef3c7','#fffbeb','#fff7ed','#fef9c3'] },
+        special:  { c:['#4c1d95','#6d28d9','#7c3aed','#8b5cf6','#a78bfa'], bg:['#ede9fe','#f5f3ff','#f3e8ff','#e9d5ff','#ddd6fe'] },
+    };
+    const pal = PALETTES[tabType] || PALETTES.summary;
+    let t = `<div class="ai-table-wrap"><table class="ai-table ai-auto-table"><thead><tr>`;
+    t += headers.map(h => `<th>${escHtml(h.replace(/_/g,' '))}</th>`).join('');
+    t += `</tr></thead><tbody>`;
+    rows.forEach((row, ri) => {
+        const ci = ri % pal.c.length;
+        t += `<tr>`;
+        row.forEach((v, vi) => {
+            const style = vi === 0
+                ? `style="border-left:4px solid ${pal.c[ci]};background:${pal.bg[ci]};font-weight:700"`
+                : `style="background:${pal.bg[ci]}"`;
+            t += `<td ${style}>${inlineMd(v)}</td>`;
+        });
+        t += `</tr>`;
+    });
+    t += `</tbody></table></div>`;
+    return t;
+}
+
+function mdToHtml(md, tabType) {
+    if (!md || md.trim() === '해당 없음' || md.trim() === '') {
+        return '<p class="text-sm text-gray-400 italic py-4 text-center">해당 없음</p>';
+    }
+
+    const isKpi = tabType === 'kpi';
+    const lines = md.split('\n');
+    let html = '';
+    let tableRows = [];
+    let listItems = [];
+    let currentH3 = '';  // 현재 h3 섹션 제목 추적 (섹션별 특별 렌더링용)
+
+    function flushTable() {
+        if (!tableRows.length) return;
+        const [header, ...rawBody] = tableRows;
+        tableRows = [];
+        // 열 수가 헤더보다 적은 행 → '-' 로 패딩 (최저기준 없는 행 등)
+        const body = rawBody.map(row => {
+            if (row.length >= header.length) return row;
+            return [...row, ...Array(header.length - row.length).fill('-')];
+        });
+
+        // ── 주요 과업 범위: 계층형 번호 목록 (대주제 → 소주제: 핵심내용) ──
+        if (tabType === 'summary' && currentH3 === '주요 과업 범위') {
+            const groups = [], groupMap = new Map();
+            body.forEach(row => {
+                const major = (row[0] || '').trim();
+                if (!major) return;
+                if (!groupMap.has(major)) {
+                    const g = { name: major, subs: [] };
+                    groupMap.set(major, g);
+                    groups.push(g);
+                }
+                const sub = (row[1] || '').trim();
+                const content = (row[2] || '').trim();
+                if (sub) groupMap.get(major).subs.push({ sub, content });
+            });
+            let t = '<div class="ai-scope-wrap">';
+            groups.forEach((group, gi) => {
+                t += `<div class="ai-scope-major">
+                    <div class="ai-scope-major-title">
+                        <span class="ai-scope-num">${gi + 1}</span>
+                        <span>${escHtml(group.name)}</span>
+                    </div>
+                    <div class="ai-scope-subs">`;
+                group.subs.forEach((sub, si) => {
+                    t += `<div class="ai-scope-sub">
+                        <span class="ai-scope-sub-num">${gi + 1}-${si + 1}.</span>
+                        <span class="ai-scope-sub-name">${escHtml(sub.sub)}</span>
+                        ${sub.content ? `<span class="ai-scope-sep"> · </span><span class="ai-scope-sub-content">${inlineMd(sub.content)}</span>` : ''}
+                    </div>`;
+                });
+                t += '</div></div>';
+            });
+            t += '</div>';
+            html += t;
+            return;
+        }
+
+        // ── 정량 평가 세부 배점: 첫 번째 열 rowspan 그룹핑 ──
+        if (tabType === 'proposal' && currentH3 === '정량 평가 세부 배점') {
+            let t = `<div class="ai-table-wrap"><table class="ai-table"><thead><tr>`;
+            t += header.map(c => `<th>${inlineMd(c)}</th>`).join('');
+            t += `</tr></thead><tbody>`;
+            // 빈 첫 번째 열은 이전 그룹에 포함 (rowspan 확장)
+            const groups = [];
+            body.forEach(row => {
+                const label = (row[0] || '').trim();
+                if (label && (groups.length === 0 || label !== (groups[groups.length-1].label))) {
+                    groups.push({ label, rows: [row] });
+                } else if (!label && groups.length > 0) {
+                    groups[groups.length-1].rows.push(row);
+                } else {
+                    groups.push({ label, rows: [row] });
+                }
+            });
+            groups.forEach(group => {
+                const span = group.rows.length;
+                group.rows.forEach((row, idx) => {
+                    const isEmpty = (v) => !v || v === '-';
+                    if (idx === 0) {
+                        t += `<tr><td rowspan="${span}" class="ai-score-major-cell">${inlineMd(group.label)}</td>`;
+                        t += row.slice(1).map(c => `<td>${isEmpty(c) ? '<span class="text-gray-300">-</span>' : inlineMd(c)}</td>`).join('');
+                        t += `</tr>`;
+                    } else {
+                        t += `<tr>${row.slice(1).map(c => `<td>${isEmpty(c) ? '<span class="text-gray-300">-</span>' : inlineMd(c)}</td>`).join('')}</tr>`;
+                    }
+                });
+            });
+            t += `</tbody></table></div>`;
+            html += t;
+            return;
+        }
+
+        let t = `<div class="ai-table-wrap"><table class="ai-table"><thead><tr>`;
+        t += header.map(c => `<th>${inlineMd(c)}</th>`).join('');
+        t += `</tr></thead><tbody>`;
+        body.forEach(row => {
+            t += `<tr>${row.map(c => `<td>${inlineMd(c)}</td>`).join('')}</tr>`;
+        });
+        t += `</tbody></table></div>`;
+        html += t;
+    }
+
+    function flushList() {
+        if (!listItems.length) return;
+        const items = listItems;
+        listItems = [];
+
+        // summary 탭: 계약 기간·예산 규모는 상단 하이라이트 바에 표시됨 → 생략
+        if (tabType === 'summary' && (currentH3 === '계약 기간' || currentH3 === '예산 규모')) return;
+
+        // ── [1] 사업 목적 callout 카드 (summary 탭) ──────────────────
+        if (tabType === 'summary' && currentH3 === '사업 목적') {
+            const configs = [
+                { cls:'ai-purpose-req',  icon:'🎯', label:'본질적 요구사항' },
+                { cls:'ai-purpose-tgt',  icon:'👥', label:'대상자 및 기대 결과' },
+                { cls:'ai-purpose-role', icon:'💼', label:'수행기관에 바라는 역할' },
+            ];
+            html += '<div class="ai-purpose-grid">';
+            items.forEach((item, i) => {
+                const cfg = configs[i] || configs[0];
+                const lbl = item.type === 'info' ? item.key : cfg.label;
+                const val = item.type === 'info' ? item.val : item.text;
+                html += `<div class="ai-purpose-card ${cfg.cls}">
+                    <div class="ai-purpose-label">${cfg.icon} ${escHtml(lbl)}</div>
+                    <div class="ai-purpose-text">${inlineMd(val)}</div>
+                </div>`;
+            });
+            html += '</div>';
+            return;
+        }
+
+        // ── [2] 사업 구조 특이점 → 표 형식 (special 탭) ─────────────────
+        if (tabType === 'special' && currentH3 === '사업 구조 특이점') {
+            html += `<div class="ai-table-wrap"><table class="ai-table">
+                <thead><tr><th style="width:9rem">항목</th><th>내용</th></tr></thead><tbody>`;
+            items.forEach(item => {
+                const key = item.type === 'info' ? item.key : '기타';
+                const val = item.type === 'info' ? item.val : item.text;
+                const isNone = /해당\s*없음/.test(val);
+                // 마침표로 구분된 문장은 불릿으로 분리
+                const sentences = isNone ? [val] : splitSentences(val);
+                const cellHtml = sentences.length >= 2
+                    ? `<ul class="ai-ul" style="margin:0;padding-left:1.1rem">${sentences.map(s => `<li>${inlineMd(s)}</li>`).join('')}</ul>`
+                    : inlineMd(val);
+                html += `<tr>
+                    <td class="font-semibold text-gray-700 whitespace-nowrap">${escHtml(key)}</td>
+                    <td class="${isNone ? 'ai-struct-none' : ''}">${cellHtml}</td>
+                </tr>`;
+            });
+            html += '</tbody></table></div>';
+            return;
+        }
+
+        // ── [3] 주요 일정 행 (special 탭) ────────────────────────────
+        if (tabType === 'special' && currentH3 === '주요 일정') {
+            html += '<ul class="ai-schedule-list">';
+            items.forEach(item => {
+                const key = item.type === 'info' ? item.key : '';
+                const val = item.type === 'info' ? item.val : item.text;
+                html += `<li class="ai-schedule-row">
+                    <span class="ai-schedule-key">${escHtml(key)}</span>
+                    <span class="ai-schedule-val">${inlineMd(val)}</span>
+                </li>`;
+            });
+            html += '</ul>';
+            return;
+        }
+
+        // ── [4-a] 참가 자격 요건 → 표 형식 (proposal 탭) ──────────────
+        if (tabType === 'proposal' && currentH3 === '참가 자격 요건') {
+            if (items.some(i => i.type === 'info')) {
+                html += `<div class="ai-table-wrap"><table class="ai-table">
+                    <thead><tr><th style="width:7rem">구분</th><th>내용</th></tr></thead><tbody>`;
+                items.forEach(item => {
+                    const key = item.type === 'info' ? item.key : '';
+                    const val = item.type === 'info' ? item.val : item.text;
+                    const isNone = /해당\s*없음/.test(val);
+                    html += `<tr>
+                        <td class="font-semibold whitespace-nowrap">${escHtml(key)}</td>
+                        <td class="${isNone ? 'text-gray-400 italic' : ''}">${inlineMd(val)}</td>
+                    </tr>`;
+                });
+                html += '</tbody></table></div>';
+            } else {
+                html += '<ul class="ai-qual-list">';
+                items.forEach(item => {
+                    html += `<li class="ai-qual-item">
+                        <span class="ai-qual-icon">✓</span>
+                        <span class="ai-qual-text">${inlineMd(item.text)}</span>
+                    </li>`;
+                });
+                html += '</ul>';
+            }
+            return;
+        }
+
+        // ── [4-b] 실적/인력 요건 체크 리스트 (proposal 탭) ──────────────
+        if (tabType === 'proposal' &&
+            (currentH3 === '일반 자격' || currentH3 === '실적 요건' || currentH3 === '인력 요건')) {
+            html += '<ul class="ai-qual-list">';
+            items.forEach(item => {
+                const text = item.type === 'info'
+                    ? `<strong>${escHtml(item.key)}</strong>: ${inlineMd(item.val)}`
+                    : inlineMd(item.text);
+                html += `<li class="ai-qual-item">
+                    <span class="ai-qual-icon">✓</span>
+                    <span class="ai-qual-text">${text}</span>
+                </li>`;
+            });
+            html += '</ul>';
+            return;
+        }
+
+        // ── [5] KPI 카드 그리드 (kpi 탭) ─────────────────────────────
+        const kpiItems    = items.filter(i => i.isKpi);
+        const nonKpiItems = items.filter(i => !i.isKpi);
+        if (isKpi && kpiItems.length) {
+            html += '<div class="ai-kpi-grid">';
+            kpiItems.forEach(({key, val}) => {
+                html += `<div class="ai-kpi-card">
+                    <div class="ai-kpi-label">${escHtml(key.replace(/_/g,' '))}</div>
+                    <div class="ai-kpi-value">${escHtml(val)}</div>
+                </div>`;
+            });
+            html += '</div>';
+        }
+
+        // ── [6] 일반 info 행 / 불릿 리스트 (기본 렌더링) ─────────────
+        const renderItems = isKpi ? nonKpiItems : items;
+        if (!renderItems.length) return;
+
+        const allInfo = renderItems.every(i => i.type === 'info');
+        if (allInfo) {
+            // 반복 key 패턴 감지 → 다열 표로 자동 변환 (교육 과정 목록, 평가 배점 등)
+            const autoTbl = buildAutoTable(renderItems, tabType);
+            if (autoTbl) { html += autoTbl; return; }
+
+            html += '<ul class="ai-info-list">';
+            renderItems.forEach(({key, val}) => {
+                html += `<li class="ai-info-row">
+                    <span class="ai-info-key">${escHtml(key.replace(/_/g,' '))}</span>
+                    <span class="ai-info-val">${inlineMd(val)}</span>
+                </li>`;
+            });
+            html += '</ul>';
+        } else {
+            html += '<ul class="ai-ul">';
+            renderItems.forEach(item => {
+                if (item.type === 'info') {
+                    html += `<li><strong>${escHtml(item.key.replace(/_/g,' '))}</strong>: ${inlineMd(item.val)}</li>`;
+                } else {
+                    // special 탭: 마침표로 구분된 문장을 개별 불릿으로 분리
+                    if (tabType === 'special') {
+                        const sentences = splitSentences(item.text);
+                        sentences.forEach(s => { html += `<li>${inlineMd(s)}</li>`; });
+                    } else {
+                        html += `<li>${inlineMd(item.text)}</li>`;
+                    }
+                }
+            });
+            html += '</ul>';
+        }
+    }
+
+    for (const line of lines) {
+        // 표 행
+        if (/^\s*\|/.test(line)) {
+            flushList();
+            const cells = line.split('|').slice(1,-1).map(c => c.trim());
+            if (!cells.every(c => /^[-:\s]+$/.test(c))) tableRows.push(cells);
+            continue;
+        }
+        if (tableRows.length && !/^\s*\|/.test(line)) flushTable();
+
+        // ## 헤더
+        const h2m = line.match(/^##\s+(.+)/);
+        if (h2m) { flushList(); currentH3 = ''; html += `<div class="ai-h2">${inlineMd(h2m[1])}</div>`; continue; }
+
+        // **subsection** 단독 줄 → h3 + 섹션 추적
+        const h3m = line.match(/^\*\*([^*]+)\*\*\s*$/);
+        if (h3m) {
+            flushList();
+            currentH3 = h3m[1].trim();
+            // summary 탭: 계약 기간·예산 규모는 상단 하이라이트 바에 이미 표시됨 → 헤더 생략
+            const skipHeader = tabType === 'summary' && (currentH3 === '계약 기간' || currentH3 === '예산 규모');
+            if (!skipHeader) {
+                html += `<div class="ai-h3">${escHtml(currentH3.replace(/_/g,' '))}</div>`;
+            }
+            continue;
+        }
+
+        // - 리스트 항목
+        if (/^-\s+/.test(line)) {
+            const content = line.slice(2).trim();
+            const kv = content.match(/^\*\*([^*]+)\*\*[:：]\s*(.+)/);
+            if (kv) {
+                const val = kv[2].trim();
+                listItems.push({ type:'info', key:kv[1], val, isKpi: isKpi && KPI_VAL_RE.test(val) });
+            } else {
+                // "키: 값" 형식 (볼드 없이) → info로 파싱
+                const kvPlain = content.match(/^([^:：]+)[:：]\s*(.+)/);
+                if (kvPlain && kvPlain[1].length < 20) {
+                    listItems.push({ type:'info', key:kvPlain[1].trim(), val:kvPlain[2].trim(), isKpi:false });
+                } else {
+                    listItems.push({ type:'bullet', text: content });
+                }
+            }
+            continue;
+        }
+
+        // 그 외
+        flushList();
+        if (!line.trim()) continue;
+        html += `<p class="mb-1">${inlineMd(line)}</p>`;
+    }
+
+    flushTable();
+    flushList();
+    return html;
+}
+
+// ── AI 분석 실행 (비동기 폴링) ────────────────────────────────────────────────
+let _pollTimer = null;
+let _pollCount = 0;
+const _POLL_INTERVAL = 3000;   // 3초마다 상태 확인
+const _POLL_MAX      = 120;    // 최대 6분 대기
+
+function _showLoading(msg) {
+    document.querySelector('#analysis-loading p.font-medium').textContent = msg || '첨부파일을 다운로드하고 분석 중입니다…';
+    document.getElementById('analysis-loading').classList.remove('hidden');
+    document.getElementById('analysis-result').classList.add('hidden');
+    document.getElementById('analysis-error').classList.add('hidden');
+}
+
+async function _pollResult(tenderId) {
+    try {
+        const resp = await fetch(`/api/tender/${tenderId}/analyze`);
+        const data = await resp.json();
+
+        if (data.status === 'processing') {
+            _pollCount++;
+            const elapsed = Math.round(_pollCount * _POLL_INTERVAL / 1000);
+            _showLoading(`분석 중… (${elapsed}초 경과, 자동으로 결과를 불러옵니다)`);
+            if (_pollCount < _POLL_MAX) {
+                _pollTimer = setTimeout(() => _pollResult(tenderId), _POLL_INTERVAL);
+            } else {
+                document.getElementById('analysis-loading').classList.add('hidden');
+                document.getElementById('analysis-error-msg').textContent = '분석 시간이 초과됐습니다. 잠시 후 페이지를 새로고침하거나 다시 분석을 눌러주세요.';
+                document.getElementById('analysis-error').classList.remove('hidden');
+                _resetBtn(tenderId);
+            }
+            return;
+        }
+
+        // 결과 수신 완료
+        clearTimeout(_pollTimer);
+        document.getElementById('analysis-loading').classList.add('hidden');
+        _renderResult(data, tenderId);
+
+    } catch (err) {
+        clearTimeout(_pollTimer);
+        document.getElementById('analysis-loading').classList.add('hidden');
+        document.getElementById('analysis-error-msg').textContent = '결과 확인 중 오류: ' + err.message;
+        document.getElementById('analysis-error').classList.remove('hidden');
+        _resetBtn(tenderId);
+    }
+}
+
+function _resetBtn(tenderId) {
+    const btn = document.getElementById('analyze-btn');
+    btn.disabled = false;
+    btn.textContent = '다시 분석';
+    btn.onclick = () => runAnalysis(tenderId, true);
+}
+
+async function runAnalysis(tenderId, force = false) {
+    const btn         = document.getElementById('analyze-btn');
+    const placeholder = document.getElementById('analysis-placeholder');
+
+    clearTimeout(_pollTimer);
+    _pollCount = 0;
+
+    btn.disabled = true;
+    btn.textContent = force ? '재분석 요청 중…' : '분석 요청 중…';
+    document.getElementById('analysis-body').style.padding = '';
+    placeholder.classList.add('hidden');
+    _showLoading('분석 요청을 보내는 중입니다…');
+
+    try {
+        const url = `/api/tender/${tenderId}/analyze` + (force ? '?force=1' : '');
+        const resp = await fetch(url);
+        const data = await resp.json();
+
+        if (data.status === 'processing') {
+            // 백그라운드 분석 시작됨 → 폴링 개시
+            btn.textContent = '분석 중…';
+            _showLoading(data.message || '분석 중입니다. 자동으로 결과를 불러옵니다…');
+            _pollTimer = setTimeout(() => _pollResult(tenderId), _POLL_INTERVAL);
+            return;
+        }
+
+        // 즉시 결과 반환 (캐시 hit)
+        document.getElementById('analysis-loading').classList.add('hidden');
+
+        if (data.error) {
+            document.getElementById('analysis-error-msg').textContent = data.error;
+            document.getElementById('analysis-error').classList.remove('hidden');
+            _resetBtn(tenderId);
+            return;
+        }
+
+        _renderResult(data, tenderId);
+
+    } catch (err) {
+        document.getElementById('analysis-loading').classList.add('hidden');
+        document.getElementById('analysis-error-msg').textContent = '분석 요청 중 오류: ' + err.message;
+        document.getElementById('analysis-error').classList.remove('hidden');
+        _resetBtn(tenderId);
+    }
+}
+
+function _renderResult(data, tenderId) {
+    const resultDiv = document.getElementById('analysis-result');
+
+        // 발견 파일
+        if (data.files_found && data.files_found.length > 0) {
+            document.getElementById('files-list').innerHTML = data.files_found
+                .map(n => `<span class="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded border">${n}</span>`)
+                .join('');
+            document.getElementById('files-section').classList.remove('hidden');
+        }
+
+        // 캐시 / 모델 배지
+        if (data.cached) {
+            const cb = document.getElementById('cache-badge');
+            cb.classList.remove('hidden');
+            if (data.cached_at) cb.title = '캐시일시: ' + data.cached_at;
+        }
+
+        // Gemini 4개 섹션 탭
+        const gs = data.gemini_sections;
+        if (gs && !gs.error) {
+            if (gs._model) {
+                const mb = document.getElementById('model-badge');
+                mb.textContent = '🤖 ' + gs._model;
+                mb.classList.remove('hidden');
+            }
+            document.getElementById('tab-summary').innerHTML  = mdToHtml(gs.summary  || '', 'summary');
+            document.getElementById('tab-kpi').innerHTML      = mdToHtml(gs.kpi      || '', 'kpi');
+            document.getElementById('tab-proposal').innerHTML = mdToHtml(gs.proposal_requirements || '', 'proposal');
+            document.getElementById('tab-special').innerHTML  = mdToHtml(gs.special_notes || '', 'special');
+            document.getElementById('gemini-tabs').classList.remove('hidden');
+            switchTab('summary');
+        } else if (gs && gs.error) {
+            document.getElementById('analysis-error-msg').textContent = gs.error;
+            document.getElementById('analysis-error').classList.remove('hidden');
+        } else {
+            document.getElementById('no-gemini-notice').classList.remove('hidden');
+        }
+
+        // 계약기간 / 예산 하이라이트 카드
+        {
+            const re = data.rule_extract || {};
+            const fromSummary = extractKeyFromSummary(gs?.summary);
+            let showBar = false;
+
+            const contractRaw = re['계약기간'] || fromSummary.contract;
+            if (contractRaw) {
+                document.getElementById('key-contract-val').textContent = normalizeContract(contractRaw);
+                document.getElementById('key-contract').classList.remove('hidden');
+                showBar = true;
+            }
+
+            const reBudget = re['예산'];
+            const budgetRaw = (reBudget && /\d/.test(reBudget)) ? reBudget : fromSummary.budget;
+            if (budgetRaw) {
+                document.getElementById('key-budget-val').textContent = normalizeBudget(budgetRaw);
+                document.getElementById('key-budget').classList.remove('hidden');
+                showBar = true;
+            }
+
+            if (showBar) document.getElementById('key-info-bar').classList.remove('hidden');
+
+            const labels = { '사업목적': '사업 목적', '과업범위': '과업 범위', '참가자격': '참가 자격' };
+            const rest = Object.entries(re).filter(([k]) => k !== '계약기간' && k !== '예산');
+            if (rest.length > 0) {
+                document.getElementById('rule-extract').innerHTML = rest
+                    .map(([k, v]) =>
+                        `<div class="bg-white rounded-lg p-3 border">
+                            <p class="text-xs font-semibold text-gray-400 mb-1">${labels[k] || k}</p>
+                            <p class="text-sm text-gray-800">${v}</p>
+                        </div>`)
+                    .join('');
+                document.getElementById('rule-section').classList.remove('hidden');
+            }
+        }
+
+        resultDiv.classList.remove('hidden');
+        _resetBtn(tenderId);
+}
+</script>
+{% endblock %}

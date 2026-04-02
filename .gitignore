@@ -1,0 +1,152 @@
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ============================================================
+# Virtual Environment
+# ============================================================
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# ============================================================
+# 개인 데이터 (절대 Git에 올리지 않음)
+# ============================================================
+# 크롤링 DB
+data/tenders.db
+data/*.db
+
+# 개인 설정 (API 키, 필터, 키워드 포함)
+data/settings.json
+
+# 분석 캐시
+data/analysis_cache/
+
+# 로그
+data/logs/
+logs/
+*.log
+
+# ============================================================
+# IDE / OS
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================
+# Node / JS (혹시 프론트엔드 도구 사용 시)
+# ============================================================
+node_modules/
+package-lock.json
+yarn.lock
+
+# ============================================================
+# Selenium / WebDriver
+# ============================================================
+chromedriver
+chromedriver.exe
+geckodriver
+geckodriver.exe
+*.crx
+
+# ============================================================
+# 환경변수
+# ============================================================
+.env
+.env.local
+.env.production
+
+# ============================================================
+# 임시 파일 / 테스트 출력
+# ============================================================
+tmp/
+temp/
+*.tmp
+test_output/
+
+# Claude Code 임시 파일
+tmpclaude-*
+
+# 분석/테스트 출력물
+*.txt
+*_rendered.html
+*_sample.html
+*_page.html
+*_response.xml
+*_http_response.xml
+data/site_check_results.json
+data/crawler_validation_result.json
+
+# 설정 백업 파일
+data/settings.json.backup
+data/settings.json.current_*
+data/settings.json.*
+
+# 루트 레벨 DB (data/ 외부)
+*.db
+
+# Windows Task Scheduler XML
+TenderDashboard_Task*.xml
+
+# 테스트 배치 파일
+test_*.bat
+test_*.ps1
+
+# 백업 크롤러
+*_old.py
+
+# ============================================================
+# 개발/디버깅용 스크립트 (소스 관리에서 제외)
+# ============================================================
+check_*.py
+test_*.py
+debug_*.py
+analyze_*.py
+deep_analyze_*.py
+advanced_*.py
+quick_*.py
+simple_*.py
+direct_*.py
+manual_*.py
+find_*.py
+fix_*.py
+add_sample_*.py
+delete_*.py
+clean_*.py
+remove_*.py
+reset_*.py
+recrawl_*.py
+run_*.py
+save_*.py
+update_site_*.py
+validate_*.py
+backfill_*.py

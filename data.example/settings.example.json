@@ -1,0 +1,93 @@
+{
+  "_comment": "이 파일을 data/settings.json 으로 복사한 후 본인 API 키와 설정을 입력하세요.",
+  "crawl": {
+    "auto_enabled": true,
+    "times": ["09:00", "17:00"],
+    "sites": {
+      "g2b_api": {
+        "crawler_type": "api",
+        "bid_type": "servc",
+        "days_range": 7,
+        "num_of_rows": 100,
+        "enabled": true,
+        "name": "나라장터 API (용역)",
+        "description": "나라장터 공공데이터 입찰공고 API (용역)",
+        "url": "https://www.g2b.go.kr",
+        "service_key": "YOUR_G2B_SERVICE_KEY_HERE"
+      },
+      "g2b_pre_spec": {
+        "crawler_type": "pre_spec",
+        "bid_type": "servc",
+        "days_range": 7,
+        "num_of_rows": 100,
+        "enabled": true,
+        "name": "나라장터 사전규격 (용역)",
+        "description": "나라장터 공공데이터 사전규격 API (용역)",
+        "url": "https://www.g2b.go.kr",
+        "service_key": "YOUR_G2B_SERVICE_KEY_HERE"
+      },
+      "gwangjin-gu": {
+        "crawler_type": "rss",
+        "enabled": false,
+        "name": "광진구",
+        "description": "광진구청 RSS 피드",
+        "url": "https://www.gwangjin.go.kr",
+        "rss_url": "https://www.gwangjin.go.kr/portal/bbs/B0000003/rssService.do?viewType=CONTBODY&bbsId=B03",
+        "max_items": 20
+      },
+      "hrdkorea": {
+        "crawl_type": "list",
+        "crawl_url": "https://www.hrdkorea.or.kr/3/1/1",
+        "base_url": "https://www.hrdkorea.or.kr",
+        "enabled": true,
+        "encoding": "euc-kr",
+        "name": "한국산업인력공단",
+        "selectors": {
+          "item": "table tbody tr",
+          "link": "a",
+          "title": "td:nth-child(2)"
+        },
+        "url": "https://www.hrdkorea.or.kr"
+      },
+      "iris": {
+        "crawler_type": "iris",
+        "crawl_url": "https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituListView.do",
+        "enabled": true,
+        "use_selenium": true,
+        "name": "과학기술정보통신부연구개발사업시스템",
+        "description": "과학기술처 R&D 과제 (사전공고, 일반·재공고)",
+        "url": "https://www.iris.go.kr"
+      },
+      "smb24": {
+        "crawler_type": "smb24_api",
+        "enabled": false,
+        "name": "중소벤처 24",
+        "url": "https://www.smb.go.kr",
+        "service_key": "YOUR_SMB_SERVICE_KEY_HERE"
+      }
+    }
+  },
+  "notification": {
+    "email_enabled": false,
+    "email_address": "",
+    "smtp_server": "",
+    "smtp_port": 587,
+    "smtp_user": "",
+    "smtp_password": ""
+  },
+  "data": {
+    "retention_days": 30,
+    "items_per_page": 20
+  },
+  "display": {
+    "items_per_page": 20,
+    "default_sort": "announced_date",
+    "default_order": "desc"
+  },
+  "user_preferences": {
+    "interest_keywords": ["AI", "소프트웨어", "시스템"],
+    "exclude_keywords": ["철거", "폐기물", "청소"],
+    "default_filter_id": null
+  },
+  "gemini_api_key": "YOUR_GEMINI_API_KEY_HERE"
+}

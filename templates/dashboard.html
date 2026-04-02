@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% block title %}대시보드 - 입찰공고 통합 검색 시스템{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- 페이지 헤더 -->
+    <div class="flex justify-between items-center">
+        <h2 class="text-2xl font-bold text-gray-900">대시보드</h2>
+        <button onclick="refreshDashboard()" class="btn-primary">
+            새로고침
+        </button>
+    </div>
+
+    <!-- 오늘의 요약 -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="stat-card">
+            <div class="stat-icon bg-green-100 text-green-600">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                </svg>
+            </div>
+            <div>
+                <p class="stat-label">신규 공고</p>
+                <p class="stat-value" id="new-today">0</p>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon bg-blue-100 text-blue-600">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                </svg>
+            </div>
+            <div>
+                <p class="stat-label">사전규격</p>
+                <p class="stat-value" id="pre-announcement">0</p>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon bg-red-100 text-red-600">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+            </div>
+            <div>
+                <p class="stat-label">마감 임박</p>
+                <p class="stat-value" id="deadline-soon">0</p>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-icon bg-purple-100 text-purple-600">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                </svg>
+            </div>
+            <div>
+                <p class="stat-label">총 공고</p>
+                <p class="stat-value" id="total-tenders">0</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 관심 키워드 -->
+    <div class="card bg-blue-50 border border-blue-200">
+        <div class="card-body py-3">
+            <div class="flex items-center justify-between">
+                <div class="flex-1">
+                    <div class="flex items-center gap-3 mb-1">
+                        <h4 class="text-sm font-semibold text-blue-900">관심 공고 필터</h4>
+                        <span id="keyword-match-count" class="text-sm font-semibold text-blue-700 bg-blue-200 px-2 py-0.5 rounded-full" title="최근 7일 · 금액·제외 키워드 필터 적용">0건</span>
+                    </div>
+                    <div id="active-keywords" class="flex flex-wrap gap-2">
+                        <!-- JavaScript로 동적 생성 -->
+                    </div>
+                </div>
+                <a href="/settings" class="btn-secondary text-sm whitespace-nowrap ml-4">키워드 수정</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- 오늘 사전규격 -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">사전규격 (나라장터)</h3>
+            <p class="text-sm text-gray-600 mt-1">관심 키워드 · 금액 범위 · 제외 키워드 필터 적용 (마감 전, 키워드 매칭 순)</p>
+        </div>
+        <div class="card-body">
+            <div id="pre-tenders-list" class="scrollable-list space-y-3">
+                <!-- 동적으로 채워짐 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 신규공고 (나라장터) -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">신규공고 (나라장터 API)</h3>
+            <p class="text-sm text-gray-600 mt-1">관심 키워드 · 금액 범위 · 제외 키워드 필터 적용 (최근 7일, 키워드 매칭 순)</p>
+        </div>
+        <div class="card-body">
+            <div id="urgent-tenders-list" class="scrollable-list space-y-3">
+                <!-- 동적으로 채워짐 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 신규공고 -->
+    <div class="card">
+        <div class="card-header">
+            <div class="flex justify-between items-center">
+                <div>
+                    <h3 class="card-title">신규공고 (기타 채널)</h3>
+                    <p class="text-sm text-gray-600 mt-1">나라장터 외 크롤링 채널 (금~오늘, 키워드 매칭 순)</p>
+                </div>
+                <a href="/search" class="text-blue-600 hover:underline text-sm">전체 보기 →</a>
+            </div>
+        </div>
+        <div class="card-body">
+            <div id="recent-tenders-list" class="scrollable-list space-y-3">
+                <!-- 동적으로 채워짐 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 통계 차트 -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">수집 채널별 공고 수</h3>
+            </div>
+            <div class="card-body">
+                <canvas id="source-chart"></canvas>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">최근 7일 공고 추이</h3>
+            </div>
+            <div class="card-body">
+                <canvas id="daily-chart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}
