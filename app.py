@@ -1098,15 +1098,19 @@ def api_stats():
 
 @app.route('/api/bookmarks', methods=['GET'])
 def api_bookmarks():
-    """관심공고 목록 조회 (공고 상세 포함)"""
+    """관심공고 목록 조회 (공고 상세 + 적합도 점수 포함)"""
     try:
+        include_keywords = load_interest_keywords()
         bookmarks = Bookmark.query.order_by(Bookmark.created_at.desc()).all()
         result = []
         for b in bookmarks:
             tender = b.tender
             if not tender:
                 continue
-            d = tender.to_dict()
+            score, btype = _score_and_type(tender, include_keywords)
+            d = tender.to_dict(interest_keywords=include_keywords)
+            d['relevance_score'] = score
+            d['business_type'] = btype
             d['bookmark_id'] = b.id
             d['bookmark_note'] = b.user_note or ''
             d['bookmarked_at'] = b.created_at.isoformat()

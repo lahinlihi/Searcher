@@ -29,10 +29,26 @@ async function loadBookmarks() {
     }
 }
 
+function buildScoreBadge(score, businessType) {
+    if (score === 0) return '';
+    let bg, label;
+    if (score >= 70) { bg = 'bg-green-100 text-green-800 border border-green-300'; label = '높음'; }
+    else if (score >= 40) { bg = 'bg-yellow-100 text-yellow-800 border border-yellow-300'; label = '보통'; }
+    else { bg = 'bg-gray-100 text-gray-600 border border-gray-300'; label = '낮음'; }
+    const typeText = businessType && businessType !== '기타' ? ` · ${businessType}` : '';
+    const displayScore = Number.isInteger(score) ? score : score.toFixed(1);
+    return `<span class="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded ${bg}"
+                  title="적합도 점수: 키워드 매칭(45점) + 사업유형(45점) + 긴급도·규모(10점)">
+        <span class="font-bold">${displayScore}점</span><span class="font-normal opacity-70">${label}${typeText}</span>
+    </span>`;
+}
+
 function renderBookmarkCard(tender) {
     const statusBadge = tender.status === '사전규격'
         ? '<span class="tender-status-badge tender-status-pre">사전규격</span>'
         : '<span class="tender-status-badge tender-status-normal">일반</span>';
+
+    const scoreBadge = buildScoreBadge(tender.relevance_score ?? 0, tender.business_type || '기타');
 
     const daysLeft = tender.days_left;
     let deadlineClass = 'tender-deadline-normal';
@@ -49,6 +65,7 @@ function renderBookmarkCard(tender) {
             <div class="flex justify-between items-start mb-1">
                 <div class="flex flex-wrap items-center gap-1">
                     ${statusBadge}
+                    ${scoreBadge}
                     ${bookmarkedAt ? `<span class="text-xs text-yellow-600 bg-yellow-50 border border-yellow-200 px-2 py-0.5 rounded">★ ${bookmarkedAt} 스크랩</span>` : ''}
                 </div>
                 <div class="flex items-center gap-2 ml-2 shrink-0">
