@@ -14,7 +14,12 @@
     <!-- 공고 제목 -->
     <div class="card">
         <div class="card-header">
-            <h2 class="text-2xl font-bold text-gray-900">{{ tender.title }}</h2>
+            <div class="flex justify-between items-start gap-3">
+                <h2 class="text-2xl font-bold text-gray-900">{{ tender.title }}</h2>
+                <button id="bookmark-btn" onclick="toggleBookmark()"
+                        class="shrink-0 text-3xl leading-none transition-colors"
+                        title="관심공고 추가">☆</button>
+            </div>
             <div class="flex gap-2 mt-2">
                 {% if tender.status == '사전규격' %}
                 <span class="badge badge-info">사전규격</span>
@@ -128,21 +133,9 @@
             <!-- 외부 링크 -->
             {% if tender.url %}
             <div class="mt-6 pt-6 border-t">
-                {% if '나라장터' in tender.source_site %}
-                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                    <p class="text-sm text-gray-700">
-                        ✓ 아래 버튼을 클릭하면 나라장터 공고 페이지로 이동합니다.
-                        <span class="text-gray-600">(공고번호: <strong>{{ tender.tender_number }}</strong>)</span>
-                    </p>
-                </div>
                 <a href="{{ tender.url }}" target="_blank" class="btn-primary inline-block">
-                    나라장터에서 공고 보기 →
+                    공고 원문 보기 →
                 </a>
-                {% else %}
-                <a href="{{ tender.url }}" target="_blank" class="btn-primary inline-block">
-                    원본 공고 보기 →
-                </a>
-                {% endif %}
             </div>
             {% endif %}
         </div>
@@ -537,13 +530,59 @@
         </button>
         {% if tender.url %}
         <a href="{{ tender.url }}" target="_blank" class="btn-primary">
-            원본 공고 보기 →
+            공고 원문 보기 →
         </a>
         {% endif %}
     </div>
 </div>
 
 <script>
+// ── 관심공고 (북마크) ─────────────────────────────────────────────────────────
+(async function initBookmark() {
+    const tenderId = {{ tender.id }};
+    const btn = document.getElementById('bookmark-btn');
+    try {
+        const res = await fetch('/api/bookmarks/ids');
+        const ids = await res.json();
+        if (ids.includes(tenderId)) {
+            btn.textContent = '★';
+            btn.classList.add('text-yellow-400');
+            btn.title = '관심공고 해제';
+        } else {
+            btn.textContent = '☆';
+            btn.classList.add('text-gray-300');
+            btn.title = '관심공고 추가';
+        }
+    } catch (e) {
+        btn.textContent = '☆';
+        btn.classList.add('text-gray-300');
+    }
+})();
+
+async function toggleBookmark() {
+    const tenderId = {{ tender.id }};
+    const btn = document.getElementById('bookmark-btn');
+    try {
+        const res = await fetch('/api/bookmarks/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tender_id: tenderId })
+        });
+        const data = await res.json();
+        if (data.bookmarked) {
+            btn.textContent = '★';
+            btn.classList.remove('text-gray-300');
+            btn.classList.add('text-yellow-400');
+            btn.title = '관심공고 해제';
+        } else {
+            btn.textContent = '☆';
+            btn.classList.remove('text-yellow-400');
+            btn.classList.add('text-gray-300');
+            btn.title = '관심공고 추가';
+        }
+    } catch (e) { console.error(e); }
+}
+
 // ── 연관 공고 로드 ────────────────────────────────────────────────────────────
 (async function loadRelated() {
     const tenderId = {{ tender.id }};
