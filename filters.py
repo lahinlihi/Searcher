@@ -216,8 +216,7 @@ def sort_tenders(tenders, priority_pre_announcement=True, sort_by='deadline'):
         def key_func(x): return (
             0 if (
                 priority_pre_announcement and x.get('status') == '사전규격') else 1, -(
-                x.get(
-                    'announced_date', datetime.min).timestamp() if isinstance(
+                x.get('announced_date').toordinal() if isinstance(
                     x.get('announced_date'), datetime) else 0))
     else:
         def key_func(x): return x.get('deadline_date', datetime.max)

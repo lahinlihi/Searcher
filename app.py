@@ -471,9 +471,15 @@ def smart_sort_tenders_by_keyword_count(tenders, include_keywords):
     """
     def sort_key(tender):
         score = calculate_relevance_score(tender, include_keywords)
-        announced_date = tender.announced_date if tender.announced_date else datetime.min
+        if tender.announced_date:
+            try:
+                date_ord = tender.announced_date.toordinal()
+            except Exception:
+                date_ord = 0
+        else:
+            date_ord = 0
         price = tender.estimated_price if tender.estimated_price else 0
-        return (-score, -announced_date.timestamp(), -price)
+        return (-score, -date_ord, -price)
 
     return sorted(tenders, key=sort_key)
 
@@ -505,10 +511,16 @@ def smart_sort_tenders(tenders, interest_keywords=None):
                     keyword_score += 1
         keyword_score = -keyword_score  # 내림차순을 위해 음수로
 
-        # 3. 공고일 (최신순)
-        announced_date = tender.announced_date if tender.announced_date else datetime.min
+        # 3. 공고일 (최신순) — timestamp() 대신 ordinal 사용 (Windows 호환, 연도 3000+ 안전)
+        if tender.announced_date:
+            try:
+                date_ord = tender.announced_date.toordinal()
+            except Exception:
+                date_ord = 0
+        else:
+            date_ord = 0
 
-        return (is_expired, keyword_score, -announced_date.timestamp())
+        return (is_expired, keyword_score, -date_ord)
 
     return sorted(tenders, key=sort_key)
 
