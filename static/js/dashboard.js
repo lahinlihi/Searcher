@@ -3,12 +3,58 @@
 let agencyChart = null;
 let dailyChart = null;
 let includeKeywords = [];
+let bookmarkedIds = new Set();
 
 // 페이지 로드 시 실행
 document.addEventListener('DOMContentLoaded', function() {
-    loadDashboardData();
-    loadStats();
+    loadBookmarkedIds().then(() => {
+        loadDashboardData();
+        loadStats();
+    });
 });
+
+// 북마크 ID 목록 로드
+async function loadBookmarkedIds() {
+    try {
+        const res = await fetch('/api/bookmarks/ids');
+        const ids = await res.json();
+        bookmarkedIds = new Set(ids);
+    } catch (e) { /* 조용히 무시 */ }
+}
+
+// 북마크 토글
+async function toggleBookmark(tenderId, btn) {
+    try {
+        const res = await fetch('/api/bookmarks/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tender_id: tenderId })
+        });
+        const data = await res.json();
+        if (data.bookmarked) {
+            bookmarkedIds.add(tenderId);
+            btn.textContent = '★';
+            btn.classList.replace('text-gray-300', 'text-yellow-400');
+            btn.title = '관심공고 해제';
+        } else {
+            bookmarkedIds.delete(tenderId);
+            btn.textContent = '☆';
+            btn.classList.replace('text-yellow-400', 'text-gray-300');
+            btn.title = '관심공고 추가';
+        }
+    } catch (e) { console.error(e); }
+}
+
+// 별 버튼 HTML 생성
+function starButton(tenderId) {
+    const isBookmarked = bookmarkedIds.has(tenderId);
+    const cls = isBookmarked ? 'text-yellow-400' : 'text-gray-300';
+    const icon = isBookmarked ? '★' : '☆';
+    const title = isBookmarked ? '관심공고 해제' : '관심공고 추가';
+    return `<button onclick="toggleBookmark(${tenderId}, this)"
+                class="${cls} hover:text-yellow-400 transition-colors text-lg leading-none shrink-0"
+                title="${title}">${icon}</button>`;
+}
 
 // 대시보드 데이터 로드
 async function loadDashboardData() {
@@ -157,7 +203,10 @@ function renderKeywordTenders(elementId, tenders, keywords) {
                         ${statusBadge}
                         ${scoreBadge}
                     </div>
-                    <span class="font-semibold ${deadlineClass} ml-2 shrink-0">${deadlineText}</span>
+                    <div class="flex items-center gap-2 ml-2 shrink-0">
+                        <span class="font-semibold ${deadlineClass}">${deadlineText}</span>
+                        ${starButton(tender.id)}
+                    </div>
                 </div>
                 <h4 class="font-medium text-gray-900 mt-1">
                     <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
@@ -241,7 +290,10 @@ function renderTenderList(elementId, tenders) {
                             </a>
                         </h4>
                     </div>
-                    <span class="font-semibold ${deadlineClass} ml-2">${deadlineText}</span>
+                    <div class="flex items-center gap-2 ml-2 shrink-0">
+                        <span class="font-semibold ${deadlineClass}">${deadlineText}</span>
+                        ${starButton(tender.id)}
+                    </div>
                 </div>
                 <div class="flex justify-between items-center text-sm text-gray-600">
                     <div class="flex items-center gap-2">

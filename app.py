@@ -563,6 +563,12 @@ def settings_page():
     return render_template('settings.html')
 
 
+@app.route('/bookmarks')
+def bookmarks_page():
+    """관심공고 페이지"""
+    return render_template('bookmarks.html')
+
+
 @app.route('/logs')
 def logs_page():
     """로그 페이지"""
@@ -1090,26 +1096,58 @@ def api_stats():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/bookmarks', methods=['GET', 'POST'])
+@app.route('/api/bookmarks', methods=['GET'])
 def api_bookmarks():
-    """즐겨찾기 조회 또는 추가"""
-    if request.method == 'GET':
-        bookmarks = Bookmark.query.all()
-        return jsonify([b.to_dict() for b in bookmarks])
+    """관심공고 목록 조회 (공고 상세 포함)"""
+    try:
+        bookmarks = Bookmark.query.order_by(Bookmark.created_at.desc()).all()
+        result = []
+        for b in bookmarks:
+            tender = b.tender
+            if not tender:
+                continue
+            d = tender.to_dict()
+            d['bookmark_id'] = b.id
+            d['bookmark_note'] = b.user_note or ''
+            d['bookmarked_at'] = b.created_at.isoformat()
+            result.append(d)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-    elif request.method == 'POST':
-        try:
-            data = request.json
-            bookmark = Bookmark(
-                tender_id=data['tender_id'],
-                user_note=data.get('user_note', '')
-            )
+
+@app.route('/api/bookmarks/toggle', methods=['POST'])
+def api_bookmark_toggle():
+    """관심공고 토글 (추가/삭제)"""
+    try:
+        data = request.json or {}
+        tender_id = data.get('tender_id')
+        if not tender_id:
+            return jsonify({'error': 'tender_id 필요'}), 400
+
+        existing = Bookmark.query.filter_by(tender_id=tender_id).first()
+        if existing:
+            db.session.delete(existing)
+            db.session.commit()
+            return jsonify({'bookmarked': False})
+        else:
+            bookmark = Bookmark(tender_id=tender_id, user_note='')
             db.session.add(bookmark)
             db.session.commit()
-            return jsonify(bookmark.to_dict()), 201
-        except Exception as e:
-            db.session.rollback()
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'bookmarked': True, 'bookmark_id': bookmark.id})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/bookmarks/ids', methods=['GET'])
+def api_bookmark_ids():
+    """북마크된 tender_id 목록"""
+    try:
+        ids = [b.tender_id for b in Bookmark.query.with_entities(Bookmark.tender_id).all()]
+        return jsonify(ids)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/search', methods=['POST'])

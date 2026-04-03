@@ -3,11 +3,52 @@
 let currentPage = 1;
 let currentFilters = {};
 let currentKeywords = []; // 현재 검색한 키워드들
+let bookmarkedIds = new Set();
 
 // 페이지 로드 시 실행
 document.addEventListener('DOMContentLoaded', function() {
     loadFilterPresets();
+    loadBookmarkedIds();
 });
+
+async function loadBookmarkedIds() {
+    try {
+        const res = await fetch('/api/bookmarks/ids');
+        bookmarkedIds = new Set(await res.json());
+    } catch (e) {}
+}
+
+async function toggleBookmark(tenderId, btn) {
+    try {
+        const res = await fetch('/api/bookmarks/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tender_id: tenderId })
+        });
+        const data = await res.json();
+        if (data.bookmarked) {
+            bookmarkedIds.add(tenderId);
+            btn.textContent = '★';
+            btn.classList.replace('text-gray-300', 'text-yellow-500');
+            btn.title = '관심공고 해제';
+        } else {
+            bookmarkedIds.delete(tenderId);
+            btn.textContent = '☆';
+            btn.classList.replace('text-yellow-500', 'text-gray-300');
+            btn.title = '관심공고 추가';
+        }
+    } catch (e) { console.error(e); }
+}
+
+function starButton(tenderId) {
+    const isBookmarked = bookmarkedIds.has(tenderId);
+    const cls = isBookmarked ? 'text-yellow-500' : 'text-gray-300';
+    const icon = isBookmarked ? '★' : '☆';
+    const title = isBookmarked ? '관심공고 해제' : '관심공고 추가';
+    return `<button onclick="toggleBookmark(${tenderId}, this)"
+                class="${cls} hover:text-yellow-500 transition-colors text-base"
+                title="${title}">${icon}</button>`;
+}
 
 // 필터 프리셋 로드
 async function loadFilterPresets() {
@@ -230,7 +271,8 @@ function renderResults(tenders) {
                             <td class="text-right whitespace-nowrap">${price}</td>
                             <td class="text-center ${deadlineClass}">${deadlineText}</td>
                             <td class="text-center">
-                                <div class="flex gap-2 justify-center">
+                                <div class="flex gap-2 justify-center items-center">
+                                    ${starButton(tender.id)}
                                     <a href="/tender/${tender.id}" class="text-blue-600 hover:underline text-sm">상세</a>
                                     ${tender.url
                                         ? `<a href="${tender.url}" target="_blank" class="text-gray-600 hover:underline text-sm">원본</a>`

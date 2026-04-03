@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}관심공고 - 입찰공고 통합 검색 시스템{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- 페이지 헤더 -->
+    <div class="flex justify-between items-center">
+        <div>
+            <h2 class="text-2xl font-bold text-gray-900">관심공고</h2>
+            <p class="text-sm text-gray-500 mt-1">스크랩한 공고를 한곳에서 확인하세요</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <span id="bookmark-count" class="text-sm text-gray-500">불러오는 중...</span>
+            <button onclick="loadBookmarks()" class="btn-secondary text-sm">새로고침</button>
+        </div>
+    </div>
+
+    <!-- 공고 목록 -->
+    <div class="card">
+        <div class="card-body">
+            <div id="bookmarks-list" class="space-y-3">
+                <p class="text-gray-400 text-sm text-center py-8">불러오는 중...</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/bookmarks.js') }}"></script>
+{% endblock %}
