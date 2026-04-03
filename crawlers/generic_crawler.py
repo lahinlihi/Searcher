@@ -145,8 +145,9 @@ class GenericCrawler(BaseCrawler):
 
         page = start_page
         seen_titles = set()
-        # Selenium 사이트는 페이지 클릭 방식, 그 외는 URL 파라미터 방식
-        use_selenium_click = (param_name and self.use_selenium)
+        # pagination.click: true 일 때만 Selenium DOM 클릭 방식 사용
+        # (URL 파라미터가 서버에서 무시되는 JS 전용 사이트용)
+        use_selenium_click = (self.use_selenium and pagination.get('click', False))
 
         while len(self.results) < max_items:
             # 현재 페이지 소스 가져오기
@@ -154,12 +155,14 @@ class GenericCrawler(BaseCrawler):
                 # 첫 페이지: 항상 원래 URL로 로드
                 soup = self.fetch_page(self.crawl_url)
             elif use_selenium_click:
-                # Selenium 사이트 2페이지~: 번호 클릭
+                # pagination.click=true 사이트 2페이지~: 번호 클릭
                 soup = self._selenium_click_page(page)
-            else:
-                # requests 사이트 2페이지~: URL 파라미터
+            elif param_name:
+                # URL 파라미터 방식 (Selenium/requests 모두 지원)
                 url = self._build_page_url(self.crawl_url, param_name, page)
                 soup = self.fetch_page(url)
+            else:
+                break  # 페이지네이션 설정 없음
 
             if not soup:
                 if page == start_page:
