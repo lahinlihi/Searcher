@@ -1320,6 +1320,9 @@ def api_settings():
     elif request.method == 'POST':
         try:
             new_settings = request.json
+            # gemini_api_key는 별도 엔드포인트로 관리 — 폼에 없으면 기존 값 유지
+            if 'gemini_api_key' not in new_settings:
+                new_settings['gemini_api_key'] = settings_manager.get('gemini_api_key', '')
             success = settings_manager.save_settings(new_settings)
 
             if success:
