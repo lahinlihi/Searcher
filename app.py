@@ -1583,13 +1583,7 @@ def api_analyze_tender(tender_id):
             return jsonify({'status': 'processing', 'message': '분석이 진행 중입니다. 잠시 후 다시 확인합니다.'})
 
         # ── Gemini API 키 로드 ────────────────────────────────────────────
-        api_key = None
-        try:
-            with open('data/settings.json', 'r', encoding='utf-8') as f:
-                settings_data = json.load(f)
-            api_key = settings_data.get('gemini_api_key', '').strip() or None
-        except Exception:
-            pass
+        api_key = settings_manager.get('gemini_api_key', '').strip() or None
 
         # ── 백그라운드 스레드에서 분석 시작 ──────────────────────────────
         t = threading.Thread(
@@ -1610,13 +1604,9 @@ def api_analyze_tender(tender_id):
 @app.route('/api/settings/gemini-key', methods=['GET', 'POST'])
 def api_gemini_key():
     """Gemini API 키 조회/저장"""
-    settings_path = 'data/settings.json'
     if request.method == 'GET':
         try:
-            with open(settings_path, 'r', encoding='utf-8') as f:
-                settings = json.load(f)
-            key = settings.get('gemini_api_key', '')
-            # 마스킹 처리 (앞 8자리만 노출)
+            key = settings_manager.get('gemini_api_key', '')
             masked = key[:8] + '...' if len(key) > 8 else ('설정됨' if key else '')
             return jsonify({'has_key': bool(key), 'masked': masked})
         except Exception as e:
@@ -1625,11 +1615,7 @@ def api_gemini_key():
         try:
             data = request.json or {}
             new_key = data.get('api_key', '').strip()
-            with open(settings_path, 'r', encoding='utf-8') as f:
-                settings = json.load(f)
-            settings['gemini_api_key'] = new_key
-            with open(settings_path, 'w', encoding='utf-8') as f:
-                json.dump(settings, f, ensure_ascii=False, indent=2)
+            settings_manager.set('gemini_api_key', new_key)
             return jsonify({'message': 'Gemini API 키가 저장되었습니다.'})
         except Exception as e:
             return jsonify({'error': str(e)}), 500

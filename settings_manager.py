@@ -17,6 +17,7 @@ class SettingsManager:
     def _load_default_settings(self):
         """기본 설정 반환"""
         return {
+            'gemini_api_key': '',
             'crawl': {
                 'auto_enabled': True,
                 'times': ['09:00', '17:00'],

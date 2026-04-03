@@ -86,6 +86,35 @@ class GenericCrawler(BaseCrawler):
         new_query = urlencode({k: v[0] for k, v in params.items()})
         return urlunparse(parsed._replace(query=new_query))
 
+    def _selenium_click_page(self, page):
+        """Selenium으로 페이지 번호 링크 클릭 (JavaScript 페이지네이션 사이트)"""
+        import time
+        try:
+            from selenium.webdriver.common.by import By
+            # 페이지 번호 링크 찾기: 숫자 텍스트가 page인 a 태그
+            links = self.driver.find_elements(By.XPATH,
+                f"//a[normalize-space(text())='{page}'] | "
+                f"//button[normalize-space(text())='{page}']"
+            )
+            for link in links:
+                parent_class = (link.find_element(By.XPATH, '..').get_attribute('class') or '').lower()
+                own_class = (link.get_attribute('class') or '').lower()
+                # 페이지네이션 영역의 링크만 클릭 (nav, paging, pagination 클래스)
+                if any(x in parent_class + own_class for x in ['pag', 'page', 'num', 'navi']):
+                    self.driver.execute_script("arguments[0].click();", link)
+                    time.sleep(2)
+                    from bs4 import BeautifulSoup
+                    return BeautifulSoup(self.driver.page_source, 'html.parser')
+            # 클래스 무관하게 숫자 링크 직접 클릭
+            if links:
+                self.driver.execute_script("arguments[0].click();", links[0])
+                time.sleep(2)
+                from bs4 import BeautifulSoup
+                return BeautifulSoup(self.driver.page_source, 'html.parser')
+        except Exception as e:
+            print(f"[{self.site_name}] Selenium 페이지 클릭 실패 (page={page}): {e}")
+        return None
+
     def _crawl_list_page(self):
         """
         실제 웹페이지 크롤링 (페이지네이션 지원)
@@ -116,15 +145,22 @@ class GenericCrawler(BaseCrawler):
 
         page = start_page
         seen_titles = set()
+        # Selenium 사이트는 페이지 클릭 방식, 그 외는 URL 파라미터 방식
+        use_selenium_click = (param_name and self.use_selenium)
 
         while len(self.results) < max_items:
-            # 현재 페이지 URL 생성
-            if param_name:
-                url = self._build_page_url(self.crawl_url, param_name, page)
+            # 현재 페이지 소스 가져오기
+            if page == start_page:
+                # 첫 페이지: 항상 원래 URL로 로드
+                soup = self.fetch_page(self.crawl_url)
+            elif use_selenium_click:
+                # Selenium 사이트 2페이지~: 번호 클릭
+                soup = self._selenium_click_page(page)
             else:
-                url = self.crawl_url
+                # requests 사이트 2페이지~: URL 파라미터
+                url = self._build_page_url(self.crawl_url, param_name, page)
+                soup = self.fetch_page(url)
 
-            soup = self.fetch_page(url)
             if not soup:
                 if page == start_page:
                     raise Exception("페이지를 가져올 수 없습니다")
