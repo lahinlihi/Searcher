@@ -1,5 +1,13 @@
 // 관심공고 페이지 JavaScript
 
+const LABEL_OPTIONS = [
+    { value: '',           text: '라벨 없음',  bonus: 0,  cls: 'text-gray-400' },
+    { value: 'executable', text: '수행 가능',  bonus: 15, cls: 'text-green-700' },
+    { value: 'experienced',text: '경험 있음',  bonus: 10, cls: 'text-blue-700'  },
+    { value: 'interested', text: '관심사',     bonus: 5,  cls: 'text-purple-700'},
+    { value: 'reference',  text: '참고용',     bonus: 0,  cls: 'text-gray-500'  },
+];
+
 document.addEventListener('DOMContentLoaded', loadBookmarks);
 
 async function loadBookmarks() {
@@ -29,18 +37,32 @@ async function loadBookmarks() {
     }
 }
 
-function buildScoreBadge(score, businessType) {
-    if (score === 0) return '';
+function buildScoreBadge(score, businessType, labelBonus) {
+    if (score === 0 && !labelBonus) return '';
     let bg, label;
     if (score >= 70) { bg = 'bg-green-100 text-green-800 border border-green-300'; label = '높음'; }
     else if (score >= 40) { bg = 'bg-yellow-100 text-yellow-800 border border-yellow-300'; label = '보통'; }
     else { bg = 'bg-gray-100 text-gray-600 border border-gray-300'; label = '낮음'; }
     const typeText = businessType && businessType !== '기타' ? ` · ${businessType}` : '';
     const displayScore = Number.isInteger(score) ? score : score.toFixed(1);
+    const bonusText = labelBonus > 0 ? ` <span class="text-green-600">(+${labelBonus})</span>` : '';
     return `<span class="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded ${bg}"
-                  title="적합도 점수: 키워드 매칭(45점) + 사업유형(45점) + 긴급도·규모(10점)">
-        <span class="font-bold">${displayScore}점</span><span class="font-normal opacity-70">${label}${typeText}</span>
+                  title="적합도 점수: 키워드 매칭(45점) + 사업유형(45점) + 긴급도(10점) + 라벨보너스">
+        <span class="font-bold">${displayScore}점${bonusText}</span><span class="font-normal opacity-70">${label}${typeText}</span>
     </span>`;
+}
+
+function labelDropdown(bookmarkId, currentLabel) {
+    const cur = LABEL_OPTIONS.find(o => o.value === currentLabel) || LABEL_OPTIONS[0];
+    const options = LABEL_OPTIONS.map(o =>
+        `<option value="${o.value}" ${o.value === currentLabel ? 'selected' : ''}>${o.text}${o.bonus > 0 ? ' (+'+o.bonus+')' : ''}</option>`
+    ).join('');
+    return `<select id="label-sel-${bookmarkId}"
+                    onchange="saveLabel(${bookmarkId}, this)"
+                    class="text-xs border border-gray-200 rounded px-1.5 py-0.5 ${cur.cls} bg-white cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-300"
+                    title="스크랩 라벨: 라벨에 따라 점수 보너스 부여">
+                ${options}
+            </select>`;
 }
 
 function renderBookmarkCard(tender) {
@@ -48,7 +70,11 @@ function renderBookmarkCard(tender) {
         ? '<span class="tender-status-badge tender-status-pre">사전규격</span>'
         : '<span class="tender-status-badge tender-status-normal">일반</span>';
 
-    const scoreBadge = buildScoreBadge(tender.relevance_score ?? 0, tender.business_type || '기타');
+    const scoreBadge = buildScoreBadge(
+        tender.relevance_score ?? 0,
+        tender.business_type || '기타',
+        tender.label_bonus ?? 0
+    );
 
     const daysLeft = tender.days_left;
     let deadlineClass = 'tender-deadline-normal';
@@ -66,7 +92,8 @@ function renderBookmarkCard(tender) {
                 <div class="flex flex-wrap items-center gap-1">
                     ${statusBadge}
                     ${scoreBadge}
-                    ${bookmarkedAt ? `<span class="text-xs text-yellow-600 bg-yellow-50 border border-yellow-200 px-2 py-0.5 rounded">★ ${bookmarkedAt} 스크랩</span>` : ''}
+                    ${bookmarkedAt ? `<span class="text-xs text-yellow-600 bg-yellow-50 border border-yellow-200 px-2 py-0.5 rounded">★ ${bookmarkedAt}</span>` : ''}
+                    ${labelDropdown(tender.bookmark_id, tender.bookmark_label || '')}
                 </div>
                 <div class="flex items-center gap-2 ml-2 shrink-0">
                     <span class="font-semibold ${deadlineClass}">${deadlineText}</span>
@@ -90,9 +117,25 @@ function renderBookmarkCard(tender) {
             </div>
             <div class="flex gap-3 mt-1 text-sm">
                 <a href="/tender/${tender.id}" class="text-blue-600 hover:underline">상세보기 →</a>
-                ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-600 hover:underline">원본 공고 →</a>` : ''}
+                ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-600 hover:underline">공고 원문 →</a>` : ''}
             </div>
         </div>`;
+}
+
+async function saveLabel(bookmarkId, selectEl) {
+    const label = selectEl.value;
+    const opt = LABEL_OPTIONS.find(o => o.value === label) || LABEL_OPTIONS[0];
+    // 색상 업데이트
+    LABEL_OPTIONS.forEach(o => selectEl.classList.remove(o.cls));
+    selectEl.classList.add(opt.cls);
+    try {
+        await fetch(`/api/bookmarks/${bookmarkId}/label`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label })
+        });
+        // 점수 뱃지는 페이지 재로드 없이 보여주기 위해 조용히 성공 처리
+    } catch (e) { console.error(e); }
 }
 
 async function removeBookmark(tenderId, bookmarkId) {
@@ -116,9 +159,7 @@ async function removeBookmark(tenderId, bookmarkId) {
                     </div>`;
             }
         }
-    } catch (e) {
-        console.error(e);
-    }
+    } catch (e) { console.error(e); }
 }
 
 function formatPrice(price) {

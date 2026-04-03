@@ -162,12 +162,27 @@ class Bookmark(db.Model):
     """즐겨찾기 테이블"""
     __tablename__ = 'bookmarks'
 
+    # 스크랩 라벨 선택지 (안 3)
+    LABEL_CHOICES = [
+        ('executable',  '수행 가능'),   # +15점 보너스
+        ('experienced', '경험 있음'),   # +10점 보너스
+        ('interested',  '관심사'),      # +5점 보너스
+        ('reference',   '참고용'),      # +0점
+    ]
+    LABEL_BONUS = {
+        'executable':  15,
+        'experienced': 10,
+        'interested':   5,
+        'reference':    0,
+    }
+
     id = db.Column(db.Integer, primary_key=True)
     tender_id = db.Column(
         db.Integer,
         db.ForeignKey('tenders.id'),
         nullable=False)
     user_note = db.Column(db.Text)
+    label = db.Column(db.String(20), nullable=True)   # 스크랩 라벨
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -176,6 +191,7 @@ class Bookmark(db.Model):
             'id': self.id,
             'tender_id': self.tender_id,
             'user_note': self.user_note,
+            'label': self.label,
             'created_at': self.created_at.isoformat()
         }
 

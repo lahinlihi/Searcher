@@ -1120,10 +1120,13 @@ def api_bookmarks():
             if not tender:
                 continue
             score, btype = _score_and_type(tender, include_keywords)
+            label_bonus = Bookmark.LABEL_BONUS.get(b.label or '', 0)
             d = tender.to_dict(interest_keywords=include_keywords)
-            d['relevance_score'] = score
+            d['relevance_score'] = min(100.0, round(score + label_bonus, 1))
+            d['label_bonus'] = label_bonus
             d['business_type'] = btype
             d['bookmark_id'] = b.id
+            d['bookmark_label'] = b.label or ''
             d['bookmark_note'] = b.user_note or ''
             d['bookmarked_at'] = b.created_at.isoformat()
             result.append(d)
@@ -1151,6 +1154,24 @@ def api_bookmark_toggle():
             db.session.add(bookmark)
             db.session.commit()
             return jsonify({'bookmarked': True, 'bookmark_id': bookmark.id})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/bookmarks/<int:bookmark_id>/label', methods=['POST'])
+def api_bookmark_label(bookmark_id):
+    """관심공고 라벨 설정"""
+    try:
+        data = request.json or {}
+        label = data.get('label', '')
+        valid_labels = [k for k, _ in Bookmark.LABEL_CHOICES] + ['']
+        if label not in valid_labels:
+            return jsonify({'error': '유효하지 않은 라벨'}), 400
+        b = Bookmark.query.get_or_404(bookmark_id)
+        b.label = label or None
+        db.session.commit()
+        return jsonify({'label': b.label, 'label_bonus': Bookmark.LABEL_BONUS.get(b.label or '', 0)})
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
