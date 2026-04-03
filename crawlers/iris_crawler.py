@@ -58,7 +58,7 @@ class IrisCrawler(BaseCrawler):
         items = dbody.select('li')
         print(f"[{self.site_name}] {len(items)}개의 공고 발견")
 
-        for idx, item in enumerate(items[:50]):  # 최대 50개
+        for idx, item in enumerate(items[:100]):  # 최대 100개
             try:
                 tender = self._parse_tender_item(item, idx)
                 if tender:

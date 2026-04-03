@@ -77,9 +77,18 @@ class GenericCrawler(BaseCrawler):
 
         return self.get_results()
 
+    def _build_page_url(self, url, param, page):
+        """페이지 번호를 URL 쿼리 파라미터에 추가/변경"""
+        from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        params[param] = [str(page)]
+        new_query = urlencode({k: v[0] for k, v in params.items()})
+        return urlunparse(parsed._replace(query=new_query))
+
     def _crawl_list_page(self):
         """
-        실제 웹페이지 크롤링
+        실제 웹페이지 크롤링 (페이지네이션 지원)
 
         selectors 설정 예시:
         {
@@ -89,136 +98,196 @@ class GenericCrawler(BaseCrawler):
             'date': '.date',         # 날짜
             'link': 'a'              # 링크
         }
+
+        pagination 설정 예시:
+        {
+            'param': 'pageIndex',  # 페이지 번호 쿼리 파라미터명
+            'start': 1             # 시작 페이지 번호 (기본: 1)
+        }
         """
-        soup = self.fetch_page(self.crawl_url)
-
-        if not soup:
-            raise Exception("페이지를 가져올 수 없습니다")
-
-        # 셀렉터가 없으면 에러 처리
         if not self.selectors or not self.selectors.get('item'):
             print(f"[{self.site_name}] 셀렉터 미설정 - 크롤링 건너뜀")
             return
 
-        # 공고 목록 아이템 찾기
-        items = soup.select(self.selectors.get('item', ''))
+        max_items = self.site_config.get('max_items', 100)
+        pagination = self.site_config.get('pagination', {})
+        param_name = pagination.get('param') if pagination else None
+        start_page = pagination.get('start', 1) if pagination else 1
 
-        if not items:
-            print(f"[{self.site_name}] 공고를 찾을 수 없습니다 - 크롤링 건너뜀")
-            return
+        page = start_page
+        seen_titles = set()
 
-        for idx, item in enumerate(items[:20]):  # 최대 20개
-            try:
-                # 제목 추출
-                title_selector = self.selectors.get('title', '')
-                if title_selector:
-                    title_elem = item.select_one(title_selector)
-                    if title_elem:
-                        if self.title_attr:
-                            raw = title_elem.get(self.title_attr, '')
-                            if self.title_clean_regex:
-                                raw = re.sub(self.title_clean_regex, '', raw).strip()
-                            title = self._sanitize_text(raw)
-                        else:
-                            title = self._sanitize_text(title_elem.get_text(strip=True))
-                    else:
-                        title = f'{self.site_name} 공고 {idx + 1}'
+        while len(self.results) < max_items:
+            # 현재 페이지 URL 생성
+            if param_name:
+                url = self._build_page_url(self.crawl_url, param_name, page)
+            else:
+                url = self.crawl_url
+
+            soup = self.fetch_page(url)
+            if not soup:
+                if page == start_page:
+                    raise Exception("페이지를 가져올 수 없습니다")
+                break
+
+            items = soup.select(self.selectors.get('item', ''))
+            if not items:
+                if page == start_page:
+                    print(f"[{self.site_name}] 공고를 찾을 수 없습니다 - 크롤링 건너뜀")
+                break
+
+            # 중복 페이지 감지 (잘못된 페이지 파라미터 또는 마지막 페이지 이후)
+            if param_name and page > start_page:
+                title_sel = self.selectors.get('title', '')
+                page_titles = set()
+                for item in items:
+                    if title_sel:
+                        el = item.select_one(title_sel)
+                        if el:
+                            t = el.get_text(strip=True)[:50]
+                            if t:
+                                page_titles.add(t)
+                if page_titles and page_titles.issubset(seen_titles):
+                    print(f"[{self.site_name}] 페이지 {page}: 중복 감지, 수집 종료")
+                    break
+                seen_titles |= page_titles
+            elif param_name:
+                # 첫 페이지 타이틀 초기화
+                title_sel = self.selectors.get('title', '')
+                for item in items:
+                    if title_sel:
+                        el = item.select_one(title_sel)
+                        if el:
+                            t = el.get_text(strip=True)[:50]
+                            if t:
+                                seen_titles.add(t)
+
+            # 아이템 처리
+            count_before = len(self.results)
+            for idx, item in enumerate(items):
+                if len(self.results) >= max_items:
+                    break
+                try:
+                    self._process_item(item, idx)
+                except Exception as e:
+                    print(f"[{self.site_name}] 아이템 {idx} 파싱 오류: {str(e)}")
+                    continue
+
+            if page > start_page:
+                added = len(self.results) - count_before
+                print(f"[{self.site_name}] 페이지 {page}: {added}건 추가 (누적 {len(self.results)}건)")
+
+            # 단일 페이지 모드 또는 아이템 없으면 종료
+            if not param_name:
+                break
+            if len(self.results) == count_before:
+                break
+
+            page += 1
+
+    def _process_item(self, item, idx):
+        """공고 아이템 하나를 파싱하여 results에 추가"""
+        # 제목 추출
+        title_selector = self.selectors.get('title', '')
+        if title_selector:
+            title_elem = item.select_one(title_selector)
+            if title_elem:
+                if self.title_attr:
+                    raw = title_elem.get(self.title_attr, '')
+                    if self.title_clean_regex:
+                        raw = re.sub(self.title_clean_regex, '', raw).strip()
+                    title = self._sanitize_text(raw)
                 else:
-                    title = self._sanitize_text(
-                        item.get_text(strip=True)[:200]) if item else f'{self.site_name} 공고 {idx + 1}'
+                    title = self._sanitize_text(title_elem.get_text(strip=True))
+            else:
+                title = f'{self.site_name} 공고 {idx + 1}'
+        else:
+            title = self._sanitize_text(
+                item.get_text(strip=True)[:200]) if item else f'{self.site_name} 공고 {idx + 1}'
 
-                # 발주기관 추출
-                agency_selector = self.selectors.get('agency', '')
-                if agency_selector:
-                    agency_elem = item.select_one(agency_selector)
-                    agency = self._sanitize_text(agency_elem.get_text(
-                        strip=True)) if agency_elem else self.site_name
+        # 발주기관 추출
+        agency_selector = self.selectors.get('agency', '')
+        if agency_selector:
+            agency_elem = item.select_one(agency_selector)
+            agency = self._sanitize_text(agency_elem.get_text(
+                strip=True)) if agency_elem else self.site_name
+        else:
+            agency = self.site_name
+
+        # 링크 추출
+        link_selector = self.selectors.get('link', 'a')
+        if link_selector:
+            link_elem = item.select_one(link_selector)
+        else:
+            link_elem = item.find('a')
+
+        link = ''
+        if link_elem:
+            href = link_elem.get('href', '')
+
+            # onclick/javascript: 기반 URL 추출
+            if self.onclick_pattern and self.url_template:
+                for search_text in [href, link_elem.get('onclick', ''), item.get('onclick', '')]:
+                    if search_text:
+                        m = re.search(self.onclick_pattern, search_text)
+                        if m:
+                            link = self.url_template.format(id=m.group(1))
+                            break
+
+            if not link and href and href != '#' and not href.startswith('javascript:'):
+                # jsessionid 제거 (예: path;jsessionid=xxx?params)
+                if ';jsessionid=' in href:
+                    href = href.split(';jsessionid=')[
+                        0] + '?' + href.split('?', 1)[1] if '?' in href else href.split(';jsessionid=')[0]
+
+                # 상대 경로면 절대 경로로 변환
+                if href.startswith('/'):
+                    link = self.base_url + href
+                elif href.startswith('http'):
+                    link = href
                 else:
-                    agency = self.site_name
+                    from urllib.parse import urljoin
+                    link = urljoin(self.crawl_url, href)
 
-                # 링크 추출
-                link_selector = self.selectors.get('link', 'a')
-                if link_selector:
-                    link_elem = item.select_one(link_selector)
-                else:
-                    link_elem = item.find('a')
+        # 날짜 추출 (있으면)
+        date_selector = self.selectors.get('date', '')
+        if date_selector:
+            date_elem = item.select_one(date_selector)
+            date_text = date_elem.get_text(strip=True) if date_elem else ''
+        else:
+            date_text = item.get_text(strip=True)
 
-                link = ''
-                if link_elem:
-                    href = link_elem.get('href', '')
+        # 날짜 범위 파싱 시도 (시작일~종료일)
+        start_date, end_date = self._parse_date_range(date_text)
 
-                    # onclick/javascript: 기반 URL 추출
-                    if self.onclick_pattern and self.url_template:
-                        # href나 onclick 속성에서 ID 추출 시도 (link_elem 또는 상위 item의 onclick)
-                        for search_text in [href, link_elem.get('onclick', ''), item.get('onclick', '')]:
-                            if search_text:
-                                m = re.search(self.onclick_pattern, search_text)
-                                if m:
-                                    link = self.url_template.format(id=m.group(1))
-                                    break
+        # 날짜 범위 파싱 실패시 단일 날짜 파싱
+        if start_date is None:
+            announced_date = self._parse_date(date_text)
+            deadline_date = datetime.now() + timedelta(days=random.randint(7, 30))
+        else:
+            announced_date = start_date
+            deadline_date = end_date
 
-                    if not link and href and href != '#' and not href.startswith('javascript:'):
-                        # jsessionid 제거 (예: path;jsessionid=xxx?params)
-                        if ';jsessionid=' in href:
-                            href = href.split(';jsessionid=')[
-                                0] + '?' + href.split('?', 1)[1] if '?' in href else href.split(';jsessionid=')[0]
+        # 공고번호 생성
+        tender_number = self._generate_tender_number()
 
-                        # 상대 경로면 절대 경로로 변환
-                        if href.startswith('/'):
-                            link = self.base_url + href
-                        elif href.startswith('http'):
-                            link = href
-                        else:
-                            # 상대 경로: crawl_url의 디렉토리 경로 기준으로 변환
-                            from urllib.parse import urljoin
-                            link = urljoin(self.crawl_url, href)
+        # 공고 데이터 생성
+        tender = {
+            'title': title[:200],
+            'agency': agency[:100],
+            'tender_number': tender_number,
+            'announced_date': announced_date,
+            'deadline_date': deadline_date,
+            'opening_date': deadline_date + timedelta(days=random.randint(1, 15)) if deadline_date else None,
+            'estimated_price': random.randint(50, 300) * 1000000,
+            'bid_method': '일반경쟁입찰',
+            'status': '일반',
+            'is_sme_only': False,
+            'source_site': self.site_name,
+            'url': link if link else f"{self.base_url}/detail?id={tender_number}"
+        }
 
-                # 날짜 추출 (있으면)
-                date_selector = self.selectors.get('date', '')
-                if date_selector:
-                    date_elem = item.select_one(date_selector)
-                    date_text = date_elem.get_text(
-                        strip=True) if date_elem else ''
-                else:
-                    # 셀렉터가 없으면 전체 텍스트에서 날짜 찾기
-                    date_text = item.get_text(strip=True)
-
-                # 날짜 범위 파싱 시도 (시작일~종료일)
-                start_date, end_date = self._parse_date_range(date_text)
-
-                # 날짜 범위 파싱 실패시 단일 날짜 파싱
-                if start_date is None:
-                    announced_date = self._parse_date(date_text)
-                    # 마감일은 랜덤으로 생성 (실제 데이터가 없는 경우)
-                    deadline_date = datetime.now() + timedelta(days=random.randint(7, 30))
-                else:
-                    announced_date = start_date
-                    deadline_date = end_date
-
-                # 공고번호 생성
-                tender_number = self._generate_tender_number()
-
-                # 공고 데이터 생성
-                tender = {
-                    'title': title[:200],  # 최대 200자
-                    'agency': agency[:100],
-                    'tender_number': tender_number,
-                    'announced_date': announced_date,
-                    'deadline_date': deadline_date,
-                    'opening_date': deadline_date + timedelta(days=random.randint(1, 15)) if deadline_date else None,
-                    'estimated_price': random.randint(50, 300) * 1000000,
-                    'bid_method': '일반경쟁입찰',
-                    'status': '일반',
-                    'is_sme_only': False,
-                    'source_site': self.site_name,
-                    'url': link if link else f"{self.base_url}/detail?id={tender_number}"
-                }
-
-                self.results.append(tender)
-
-            except Exception as e:
-                print(f"[{self.site_name}] 아이템 {idx} 파싱 오류: {str(e)}")
-                continue
+        self.results.append(tender)
 
     def _generate_sample_data(self):
         """샘플 데이터 생성"""
