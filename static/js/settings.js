@@ -786,11 +786,11 @@ async function loadGeminiKeyStatus() {
         const data = await resp.json();
         const status = document.getElementById('gemini-key-status');
         if (data.has_key) {
-            status.textContent = '저장된 키: ' + data.masked;
+            status.innerHTML = `✅ 서버에 로드됨: <strong>${data.masked}</strong>`;
             status.className = 'text-xs text-green-600 mt-1';
         } else {
-            status.textContent = 'API 키가 설정되지 않았습니다.';
-            status.className = 'text-xs text-gray-500 mt-1';
+            status.innerHTML = '❌ 서버에 API 키 없음 — 아래에서 키를 입력하고 저장하세요.';
+            status.className = 'text-xs text-red-500 mt-1';
         }
     } catch (e) {
         console.error('Gemini key status load failed:', e);

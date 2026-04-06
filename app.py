@@ -1387,8 +1387,7 @@ def api_settings():
     """설정 조회/저장"""
     if request.method == 'GET':
         try:
-            settings = settings_manager.load_settings()
-            return jsonify(settings)
+            return jsonify(settings_manager.settings)
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
