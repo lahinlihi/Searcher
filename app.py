@@ -1806,9 +1806,15 @@ if __name__ == '__main__':
     crawler_scheduler = None
     # 스케줄러 시작
     if Config.AUTO_CRAWL_ENABLED:
-        from scheduler import CrawlScheduler
-        crawler_scheduler = CrawlScheduler(app)
-        crawler_scheduler.start()
+        try:
+            from scheduler import CrawlScheduler
+            crawler_scheduler = CrawlScheduler(app)
+            crawler_scheduler.start()
+        except Exception as e:
+            import traceback
+            print(f"[스케줄러] 초기화 실패 — 크롤링 기능이 비활성화됩니다.")
+            print(f"[스케줄러] 오류: {e}")
+            traceback.print_exc()
 
     try:
         from waitress import serve
