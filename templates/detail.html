@@ -240,6 +240,13 @@
                     <p class="text-sm text-amber-800">
                         💡 Gemini API 키를 <a href="/settings" class="underline font-medium text-blue-700">설정</a>하면 AI 분석을 이용할 수 있습니다.
                     </p>
+                    <p class="text-sm text-amber-700 mt-1">
+                        이미 키를 설정하셨다면 이전 분석 결과가 캐시되어 있을 수 있습니다.
+                        <button onclick="runAnalysis({{ tender.id }}, true)"
+                                class="underline font-semibold text-blue-700 hover:text-blue-900">
+                            재분석 시작 →
+                        </button>
+                    </p>
                 </div>
 
                 <!-- 탭 영역 -->
