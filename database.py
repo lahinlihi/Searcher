@@ -238,6 +238,15 @@ def init_db(app):
     with app.app_context():
         db.create_all()
 
+        # 스키마 마이그레이션: bookmarks.label 컬럼 추가 (없을 경우)
+        try:
+            from sqlalchemy import text
+            db.session.execute(text('ALTER TABLE bookmarks ADD COLUMN label TEXT'))
+            db.session.commit()
+            print("[DB] bookmarks.label 컬럼 추가됨")
+        except Exception:
+            db.session.rollback()  # 이미 존재하면 무시
+
         # 기본 필터가 없으면 생성
         if Filter.query.filter_by(is_default=True).first() is None:
             default_filter = Filter(

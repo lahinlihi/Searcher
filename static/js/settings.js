@@ -1,12 +1,28 @@
 // 설정 페이지 JavaScript
 
 let currentSettings = {};
+let supportedCrawlerTypes = new Set();
+let legacyCrawlerSites = new Set();
 
 // 페이지 로드 시 실행
 document.addEventListener('DOMContentLoaded', function() {
-    loadSettings();
+    loadSupportedCrawlers().then(() => loadSettings());
     loadDatabaseStats();
 });
+
+// 서버에서 구현된 크롤러 타입 목록 로드
+async function loadSupportedCrawlers() {
+    try {
+        const response = await fetch('/api/supported-crawlers');
+        if (response.ok) {
+            const data = await response.json();
+            supportedCrawlerTypes = new Set(data.supported_types || []);
+            legacyCrawlerSites = new Set(data.legacy_sites || []);
+        }
+    } catch (error) {
+        console.error('Failed to load supported crawlers:', error);
+    }
+}
 
 // 설정 로드
 async function loadSettings() {
@@ -246,22 +262,6 @@ function renderSitesList(sitesConfig) {
         return;
     }
 
-    // 크롤러가 구현된 사이트 목록 (실제 작동 확인됨)
-    const implementedCrawlers = [
-        // API 기반 크롤러
-        'g2b_api', 'g2b_pre_spec', 'lh_api', 'smb24_api', 'mois_predece',
-        // 전용 크롤러
-        'iris', 'kosmes',
-        // 웹 크롤링 기반 (GenericCrawler)
-        'sung-dong-gu', 'kist_notice', 'hrdkorea', 'kocca', 'kosac',
-        'mohw', 'motie', 'msit', 'moe', 'semas', 'nia',
-        'moel', 'mss', 'nipa',
-        // RSS 피드
-        'gwangjin-gu', 'seongbuk-gu',
-        // 비활성화 (내부망 전용, 서버 접속 불가)
-        'kist_bid', 'koica_api'
-    ];
-
     for (const [siteId, siteData] of Object.entries(sitesConfig)) {
         const siteDiv = document.createElement('div');
         siteDiv.className = 'flex items-center justify-between p-2 bg-gray-50 rounded';
@@ -277,8 +277,9 @@ function renderSitesList(sitesConfig) {
 
         const infoDiv = document.createElement('div');
 
-        // 크롤러 구현 여부 표시
-        const hasCrawler = implementedCrawlers.includes(siteId);
+        // 크롤러 구현 여부: 레거시 사이트이거나 crawler_type이 지원 목록에 있으면 구현됨
+        const crawlerType = siteData.crawler_type || siteData.crawl_type || 'generic';
+        const hasCrawler = legacyCrawlerSites.has(siteId) || supportedCrawlerTypes.has(crawlerType);
         const crawlerBadge = hasCrawler
             ? '<span class="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded ml-2">크롤러 구현됨</span>'
             : '<span class="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded ml-2">설정만</span>';
@@ -823,7 +824,81 @@ async function saveGeminiKey() {
     }
 }
 
-// 페이지 로드 시 Gemini 키 상태 로드
+// 분석 우선순위 라디오 버튼 UI 처리
+function _initModelPriorityUI(selectedValue) {
+    const options = document.querySelectorAll('#model-priority-selector .model-priority-option');
+    options.forEach(label => {
+        const radio = label.querySelector('input[type="radio"]');
+        const card = label.querySelector('div');
+        radio.addEventListener('change', () => _updateModelPriorityStyle());
+        if (radio.value === selectedValue) {
+            radio.checked = true;
+        }
+    });
+    _updateModelPriorityStyle();
+}
+
+function _updateModelPriorityStyle() {
+    const options = document.querySelectorAll('#model-priority-selector .model-priority-option');
+    options.forEach(label => {
+        const radio = label.querySelector('input[type="radio"]');
+        const card = label.querySelector('div');
+        if (radio.checked) {
+            card.className = card.className.replace('border-gray-200', 'border-blue-500')
+                                          .replace('border-blue-300', 'border-blue-500');
+            if (!card.className.includes('border-blue-500')) {
+                card.classList.remove('border-gray-200');
+                card.classList.add('border-blue-500', 'bg-blue-50');
+            } else {
+                card.classList.add('bg-blue-50');
+            }
+        } else {
+            card.classList.remove('border-blue-500', 'bg-blue-50');
+            card.classList.add('border-gray-200');
+        }
+    });
+}
+
+async function loadModelPriority() {
+    try {
+        const resp = await fetch('/api/settings/gemini-model-priority');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        _initModelPriorityUI(data.priority || 'quality');
+    } catch (e) {
+        console.error('모델 우선순위 로드 실패:', e);
+        _initModelPriorityUI('quality');
+    }
+}
+
+async function saveModelPriority() {
+    const checked = document.querySelector('#model-priority-selector input[name="model_priority"]:checked');
+    if (!checked) return;
+    const priority = checked.value;
+    const statusEl = document.getElementById('model-priority-status');
+    try {
+        const resp = await fetch('/api/settings/gemini-model-priority', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ priority })
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            statusEl.textContent = '✅ 저장됨';
+            statusEl.className = 'text-xs text-green-600 ml-2';
+            setTimeout(() => { statusEl.textContent = ''; }, 2000);
+        } else {
+            statusEl.textContent = '저장 실패: ' + (data.error || '');
+            statusEl.className = 'text-xs text-red-500 ml-2';
+        }
+    } catch (e) {
+        statusEl.textContent = '오류: ' + e.message;
+        statusEl.className = 'text-xs text-red-500 ml-2';
+    }
+}
+
+// 페이지 로드 시 Gemini 키 상태 및 모델 우선순위 로드
 document.addEventListener('DOMContentLoaded', function() {
     loadGeminiKeyStatus();
+    loadModelPriority();
 });

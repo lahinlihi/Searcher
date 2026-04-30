@@ -18,6 +18,7 @@ class SettingsManager:
         """기본 설정 반환"""
         return {
             'gemini_api_key': '',
+            'gemini_model_priority': 'quality',  # speed | balanced | quality
             'crawl': {
                 'auto_enabled': True,
                 'times': ['09:00', '17:00'],

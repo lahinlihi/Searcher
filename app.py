@@ -1382,6 +1382,16 @@ def api_export_excel():
 
 # ============= Phase 3: 설정 관리 API =============
 
+@app.route('/api/supported-crawlers', methods=['GET'])
+def api_supported_crawlers():
+    """구현된 크롤러 타입 목록 반환 (프론트엔드 동적 배지 표시용)"""
+    from scheduler import SUPPORTED_CRAWLER_TYPES, LEGACY_CRAWLERS
+    return jsonify({
+        'supported_types': list(SUPPORTED_CRAWLER_TYPES),
+        'legacy_sites': list(LEGACY_CRAWLERS),
+    })
+
+
 @app.route('/api/settings', methods=['GET', 'POST'])
 def api_settings():
     """설정 조회/저장"""
@@ -1595,7 +1605,7 @@ _analysis_in_progress = set()
 _analysis_lock = threading.Lock()
 
 
-def _run_analysis_background(tender_id, tender_url, tender_title, source_site, api_key):
+def _run_analysis_background(tender_id, tender_url, tender_title, source_site, api_key, model_priority='quality'):
     """백그라운드 스레드에서 분석 실행 후 DB 저장"""
     with app.app_context():
         try:
@@ -1605,6 +1615,7 @@ def _run_analysis_background(tender_id, tender_url, tender_title, source_site, a
                 tender_title=tender_title,
                 api_key=api_key,
                 source_site=source_site,
+                model_priority=model_priority,
             )
             secs = result.get('gemini_sections')
             model = secs.get('_model') if isinstance(secs, dict) else None
@@ -1659,13 +1670,14 @@ def api_analyze_tender(tender_id):
         if already_running:
             return jsonify({'status': 'processing', 'message': '분석이 진행 중입니다. 잠시 후 다시 확인합니다.'})
 
-        # ── Gemini API 키 로드 ────────────────────────────────────────────
+        # ── Gemini API 키 및 모델 우선순위 로드 ──────────────────────────
         api_key = settings_manager.get('gemini_api_key', '').strip() or None
+        model_priority = settings_manager.get('gemini_model_priority', 'quality')
 
         # ── 백그라운드 스레드에서 분석 시작 ──────────────────────────────
         t = threading.Thread(
             target=_run_analysis_background,
-            args=(tender_id, tender.url, tender.title, tender.source_site or '', api_key),
+            args=(tender_id, tender.url, tender.title, tender.source_site or '', api_key, model_priority),
             daemon=True,
         )
         t.start()
@@ -1694,6 +1706,24 @@ def api_gemini_key():
             new_key = data.get('api_key', '').strip()
             settings_manager.set('gemini_api_key', new_key)
             return jsonify({'message': 'Gemini API 키가 저장되었습니다.'})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/settings/gemini-model-priority', methods=['GET', 'POST'])
+def api_gemini_model_priority():
+    """Gemini 분석 모델 우선순위 조회/저장"""
+    if request.method == 'GET':
+        priority = settings_manager.get('gemini_model_priority', 'quality')
+        return jsonify({'priority': priority})
+    else:
+        try:
+            data = request.json or {}
+            priority = data.get('priority', 'quality')
+            if priority not in ('speed', 'balanced', 'quality'):
+                return jsonify({'error': '유효하지 않은 값 (speed/balanced/quality)'}), 400
+            settings_manager.set('gemini_model_priority', priority)
+            return jsonify({'message': '저장되었습니다.', 'priority': priority})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 

@@ -16,6 +16,7 @@ from crawlers.iris_crawler import IrisCrawler
 from crawlers.lh_api_crawler import LHApiCrawler
 from crawlers.smb24_api_crawler import SMB24ApiCrawler
 from crawlers.kosmes_crawler import KosmesCrawler
+from crawlers.sbiz24_crawler import Sbiz24Crawler
 from crawlers.rss_crawler import RSSCrawler
 from crawlers.mois_predece_crawler import MOISPredeceCrawler
 from crawlers.kist_bid_crawler import KISTBidCrawler
@@ -24,6 +25,29 @@ from crawlers.koica_api_crawler import KOICAApiCrawler
 from deduplication import mark_duplicates_in_db
 from database import db, Tender, CrawlLog
 from settings_manager import settings_manager
+
+
+
+# crawler_type 값 → 전용 구현체가 있는 목록
+SUPPORTED_CRAWLER_TYPES = {
+    'api',          # G2BApiCrawler
+    'pre_spec',     # G2BPreSpecCrawler
+    'iris',         # IrisCrawler
+    'lh_api',       # LHApiCrawler
+    'smb24_api',    # SMB24ApiCrawler
+    'mois_predece', # MOISPredeceCrawler
+    'kist_bid',     # KISTBidCrawler
+    'kist_notice',  # KISTNoticeCrawler
+    'koica_api',    # KOICAApiCrawler
+    'kosmes',       # KosmesCrawler
+    'sbiz24',       # Sbiz24Crawler
+    'rss',          # RSSCrawler
+    'generic',      # GenericCrawler (범용)
+    'list',         # GenericCrawler (리스트형)
+}
+
+# 레거시 크롤러: 항상 구현됨 (site_id 기준)
+LEGACY_CRAWLERS = {'sung-dong-gu'}
 
 
 class CrawlScheduler:
@@ -521,6 +545,11 @@ class CrawlScheduler:
                         crawler = KosmesCrawler(site_info)
                         self.crawlers[site_id] = crawler
                         print(f"[스케줄러] {site_id}: 중소벤처기업진흥공단 크롤러 생성")
+                    elif crawler_type == 'sbiz24':
+                        # 소상공인24 크롤러
+                        crawler = Sbiz24Crawler(site_info)
+                        self.crawlers[site_id] = crawler
+                        print(f"[스케줄러] {site_id}: 소상공인24 크롤러 생성")
                     else:
                         # GenericCrawler 사용 (일반 웹 크롤링)
                         crawler = GenericCrawler(

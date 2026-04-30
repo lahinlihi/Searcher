@@ -64,6 +64,15 @@
         "name": "중소벤처 24",
         "url": "https://www.smb.go.kr",
         "service_key": "YOUR_SMB_SERVICE_KEY_HERE"
+      },
+      "sbiz24": {
+        "crawler_type": "sbiz24",
+        "enabled": false,
+        "name": "소상공인24",
+        "description": "소상공인시장진흥공단 공고조회 및 신청",
+        "url": "https://www.sbiz24.kr",
+        "days_range": 30,
+        "max_items": 100
       }
     }
   },

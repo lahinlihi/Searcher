@@ -795,9 +795,19 @@ def _select_text_for_gemini(text, max_chars=10000):
     return text[:max_chars]
 
 
-def gemini_analyze(text, api_key, tender_title=''):
+def gemini_analyze(text, api_key, tender_title='', model_priority='quality'):
     """
-    Gemini 2.0 Flash API로 RFP를 4개 섹션으로 구조화 분석.
+    Gemini API로 RFP를 4개 섹션으로 구조화 분석.
+
+    model_priority:
+      'speed'    — 빠른 모델 우선 (flash-lite 시작), 평균 5–10초
+      'balanced' — 균형 모델 우선 (2.0-flash 시작), 평균 8–15초
+      'quality'  — 고품질 모델 우선 (2.5-flash 시작), 평균 30–90초
+
+    오류 처리:
+      - RPM(분당 한도) 초과 → 65초 대기 후 같은 모델 1회 재시도
+      - RPD(일별 한도) / 모델 없음(404) / 서버 오류 → 다음 모델로 전환
+      - 예상치 못한 오류 → 즉시 반환
 
     Returns dict with keys: summary, kpi, proposal_requirements, special_notes
     각 값은 마크다운 문자열.
@@ -812,8 +822,6 @@ def gemini_analyze(text, api_key, tender_title=''):
     import json as _json
     import time as _time
 
-    # 스마트 텍스트 선택: 앞 5,000자 + 배점표 섹션 5,000자 (총 최대 10,000자)
-    # DB 캐싱으로 재호출 없으므로 품질 우선
     truncated = _select_text_for_gemini(text, max_chars=15000)
     prompt = _GEMINI_PROMPT.format(title=tender_title, text=truncated)
 
@@ -827,102 +835,172 @@ def gemini_analyze(text, api_key, tender_title=''):
             ),
         )
 
-    # 모델 우선순위: flash-lite (무료 1,500 RPD, 30 RPM) → 2.5-flash → flash
-    _MODELS = ['gemini-2.0-flash-lite', 'gemini-2.5-flash', 'gemini-2.0-flash']
-    last_error = None
+    def _is_rpm_error(err_str):
+        """분당 요청 한도 초과 여부 — 65초 대기 후 같은 모델 재시도"""
+        el = err_str.lower()
+        return (
+            'per_minute' in el or 'per minute' in el or
+            'rate_limit_exceeded' in el or 'ratelimitexceeded' in el
+        )
+
+    def _is_retryable(err_str):
+        """다음 모델로 전환해야 하는 오류 (RPD, 404, 서버 오류)"""
+        el = err_str.lower()
+        return (
+            '429' in err_str or '404' in err_str or
+            '503' in err_str or '502' in err_str or
+            'unavailable' in el or 'resource_exhausted' in el or
+            'resourceexhausted' in el
+        )
+
+    # 우선순위별 모델 시작 순서 (소진 시 뒤 모델로 자동 폴백)
+    # speed    : 빠른 모델 우선 — flash-lite(5–10s) → 1.5-8b → 1.5 → 2.0 → 2.5
+    # balanced : 균형 모델 우선 — 2.0-flash(8–12s) → flash-lite → 1.5 → 2.5
+    # quality  : 고품질 모델 우선 — 2.5-flash(30–90s) → 2.0 → 1.5 → 1.5-8b → lite
+    _MODEL_ORDERS = {
+        'speed': [
+            'gemini-2.0-flash-lite',
+            'gemini-1.5-flash-8b',
+            'gemini-1.5-flash',
+            'gemini-2.0-flash',
+            'gemini-2.5-flash',
+        ],
+        'balanced': [
+            'gemini-2.0-flash',
+            'gemini-2.0-flash-lite',
+            'gemini-1.5-flash',
+            'gemini-1.5-flash-8b',
+            'gemini-2.5-flash',
+        ],
+        'quality': [
+            'gemini-2.5-flash',
+            'gemini-2.0-flash',
+            'gemini-1.5-flash',
+            'gemini-1.5-flash-8b',
+            'gemini-2.0-flash-lite',
+        ],
+    }
+    _MODELS = _MODEL_ORDERS.get(model_priority, _MODEL_ORDERS['quality'])
+    logger.info(f"Gemini 분석 시작 (우선순위: {model_priority}, 1순위 모델: {_MODELS[0]})")
+
+    failed_models = []
     for model_name in _MODELS:
-        try:
-            response = _call(model_name)
+        rpm_retried = False
+        while True:
+            try:
+                response = _call(model_name)
 
-            raw = response.text.strip()
-            if raw.startswith('```'):
-                raw = re.sub(r'^```[a-z]*\n?', '', raw)
-                raw = re.sub(r'\n?```$', '', raw)
-            data = _json.loads(raw)
+                raw = response.text.strip()
+                if raw.startswith('```'):
+                    raw = re.sub(r'^```[a-z]*\n?', '', raw)
+                    raw = re.sub(r'\n?```$', '', raw)
+                data = _json.loads(raw)
 
-            def _to_md(v, depth=0):
-                """중첩 dict/list를 마크다운 문자열로 재귀 변환"""
-                _EMPTY = ('해당 없음', '', 'N/A', '없음', 'null', 'None')
-                if v is None:
-                    return '해당 없음'
-                if isinstance(v, str):
-                    return v
-                if isinstance(v, list):
-                    items = [_to_md(i, depth + 1) for i in v]
-                    items = [i for i in items if i.strip() not in _EMPTY]
-                    if not items:
+                def _to_md(v, depth=0):
+                    """중첩 dict/list를 마크다운 문자열로 재귀 변환"""
+                    _EMPTY = ('해당 없음', '', 'N/A', '없음', 'null', 'None')
+                    if v is None:
                         return '해당 없음'
-                    # 이미 bullet(-)로 시작하면 그대로, 아니면 추가
-                    return '\n'.join(
-                        i if i.startswith(('-', '#', '|', '*', '>', ' ')) else f'- {i}'
-                        for i in items
+                    if isinstance(v, str):
+                        return v
+                    if isinstance(v, list):
+                        items = [_to_md(i, depth + 1) for i in v]
+                        items = [i for i in items if i.strip() not in _EMPTY]
+                        if not items:
+                            return '해당 없음'
+                        return '\n'.join(
+                            i if i.startswith(('-', '#', '|', '*', '>', ' ')) else f'- {i}'
+                            for i in items
+                        )
+                    if isinstance(v, dict):
+                        parts = []
+                        for k, sub in v.items():
+                            sub_md = _to_md(sub, depth + 1)
+                            if sub_md.strip() in _EMPTY:
+                                continue
+                            if '\n' in sub_md:
+                                parts.append(f'**{k}**\n{sub_md}')
+                            else:
+                                parts.append(f'- **{k}**: {sub_md}')
+                        if not parts:
+                            return '해당 없음'
+                        return '\n'.join(parts)
+                    return str(v)
+
+                sections = {'_model': model_name}
+                for key in ('summary', 'kpi', 'proposal_requirements', 'special_notes'):
+                    val = data.get(key, '해당 없음')
+                    val = _to_md(val)
+                    sections[key] = val.strip() or '해당 없음'
+
+                # ── special_notes 후처리 ─────────────────────────────────────
+                sn = sections.get('special_notes', '')
+                sn_lines = sn.splitlines()
+                sn_lines = [
+                    l for l in sn_lines
+                    if not re.match(r'^-\s*\[(?:실적|인력)\]', l.strip())
+                ]
+                sn = '\n'.join(sn_lines)
+
+                if '사업 구조 특이점' not in sn:
+                    struct_block = (
+                        "**사업 구조 특이점**\n"
+                        "- 다년차 여부: 해당 없음\n"
+                        "- 연계사업 여부: 해당 없음\n"
+                        "- 운영 형태: 해당 없음\n"
                     )
-                if isinstance(v, dict):
-                    parts = []
-                    for k, sub in v.items():
-                        sub_md = _to_md(sub, depth + 1)
-                        if sub_md.strip() in _EMPTY:
-                            continue
-                        if '\n' in sub_md:
-                            parts.append(f'**{k}**\n{sub_md}')
-                        else:
-                            parts.append(f'- **{k}**: {sub_md}')
-                    if not parts:
-                        return '해당 없음'
-                    return '\n'.join(parts)
-                return str(v)
+                    if '공동수급' in sn:
+                        sn = sn.replace('**공동수급', struct_block + '\n**공동수급', 1)
+                    else:
+                        sn = struct_block + '\n' + sn
 
-            sections = {'_model': model_name}
-            for key in ('summary', 'kpi', 'proposal_requirements', 'special_notes'):
-                val = data.get(key, '해당 없음')
-                val = _to_md(val)
-                sections[key] = val.strip() or '해당 없음'
+                sections['special_notes'] = sn.strip()
+                # ────────────────────────────────────────────────────────────
 
-            # ── special_notes 후처리 ─────────────────────────────────────────
-            # 1) [실적], [인력] 태그 행 제거: 해당 내용은 '정량 평가 세부 배점'에 이미 포함됨
-            sn = sections.get('special_notes', '')
-            sn_lines = sn.splitlines()
-            sn_lines = [
-                l for l in sn_lines
-                if not re.match(r'^-\s*\[(?:실적|인력)\]', l.strip())
-            ]
-            sn = '\n'.join(sn_lines)
+                logger.info(f"Gemini 분석 완료 ({model_name})")
+                return sections
 
-            # 2) '사업 구조 특이점' 섹션이 없으면 맨 앞에 '해당 없음'으로 삽입
-            if '사업 구조 특이점' not in sn:
-                struct_block = (
-                    "**사업 구조 특이점**\n"
-                    "- 다년차 여부: 해당 없음\n"
-                    "- 연계사업 여부: 해당 없음\n"
-                    "- 운영 형태: 해당 없음\n"
-                )
-                # '공동수급' 섹션 앞에 삽입, 없으면 맨 앞에
-                if '공동수급' in sn:
-                    sn = sn.replace('**공동수급', struct_block + '\n**공동수급', 1)
-                else:
-                    sn = struct_block + '\n' + sn
+            except Exception as e:
+                err_str = str(e)
 
-            sections['special_notes'] = sn.strip()
-            # ─────────────────────────────────────────────────────────────────
+                # ── RPM 초과: 65초 대기 후 같은 모델 1회 재시도 ────────────
+                if _is_rpm_error(err_str) and not rpm_retried:
+                    logger.warning(
+                        f"Gemini {model_name} RPM 한도 초과, "
+                        f"65초 대기 후 재시도... (오류: {err_str[:80]})"
+                    )
+                    _time.sleep(65)
+                    rpm_retried = True
+                    continue  # 같은 모델 재시도
 
-            logger.info(f"Gemini 분석 완료 ({model_name})")
-            return sections
+                # ── RPD / 모델 없음 / 서버 오류: 다음 모델로 전환 ───────────
+                if _is_retryable(err_str):
+                    logger.warning(
+                        f"Gemini {model_name} 실패 → 다음 모델로: {err_str[:100]}"
+                    )
+                    failed_models.append(f"{model_name}({err_str[:40]})")
+                    _time.sleep(2)
+                    break  # while 루프 탈출 → for 루프 다음 모델
 
-        except Exception as e:
-            err_str = str(e)
-            if '429' in err_str or '404' in err_str:
-                logger.warning(f"Gemini {model_name} 실패({err_str[:50]}), 다음 모델 시도")
-                _time.sleep(2)  # RPM 초과 방지 대기
-                continue
-            logger.error(f"Gemini API 오류 ({model_name}): {e}")
-            return {'error': f'[Gemini 오류] {str(e)[:300]}'}
+                # ── 예상치 못한 오류: 즉시 반환 ────────────────────────────
+                logger.error(f"Gemini API 오류 ({model_name}): {e}")
+                return {'error': f'[Gemini 오류] {str(e)[:300]}'}
 
-    return {'error': '[Gemini 오류] 일일 무료 할당량이 초과되었습니다. 내일(한국시간 오후 4~5시) 이후 다시 시도하거나, Google AI Studio에서 결제를 설정해 주세요.'}
+    # 모든 모델 실패
+    logger.error(f"Gemini 모든 모델({len(_MODELS)}개) 실패: {failed_models}")
+    return {
+        'error': (
+            '[Gemini 오류] 모든 모델의 일일 무료 할당량이 초과되었습니다.\n'
+            '내일(한국시간 오후 4~5시) 이후 다시 시도하거나, '
+            'Google AI Studio에서 결제를 설정해 주세요.\n'
+            f'(시도한 모델: {", ".join(m.split("(")[0] for m in failed_models)})'
+        )
+    }
 
 
 # ── 통합 분석 함수 ────────────────────────────────────────────────────────────
 
-def analyze_tender(tender_url, tender_title='', api_key=None, source_site=''):  # noqa: ARG001 (source_site reserved for future site-specific logic)
+def analyze_tender(tender_url, tender_title='', api_key=None, source_site='', model_priority='quality'):  # noqa: ARG001 (source_site reserved for future site-specific logic)
     """
     공고 URL에서 첨부파일(RFP)을 찾아 분석.
 
@@ -1062,6 +1140,8 @@ def analyze_tender(tender_url, tender_title='', api_key=None, source_site=''):  
 
     # 4. C: Gemini 4개 섹션 분석 (API 키 있을 때만)
     if api_key:
-        result['gemini_sections'] = gemini_analyze(combined_text, api_key, tender_title)
+        result['gemini_sections'] = gemini_analyze(
+            combined_text, api_key, tender_title, model_priority=model_priority
+        )
 
     return result

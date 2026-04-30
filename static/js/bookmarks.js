@@ -15,10 +15,14 @@ async function loadBookmarks() {
         const res = await fetch('/api/bookmarks');
         const tenders = await res.json();
 
+        if (!res.ok) {
+            throw new Error(tenders.error || `서버 오류 (${res.status})`);
+        }
+
         const countEl = document.getElementById('bookmark-count');
         const container = document.getElementById('bookmarks-list');
 
-        if (!tenders || tenders.length === 0) {
+        if (!Array.isArray(tenders) || tenders.length === 0) {
             countEl.textContent = '0건';
             container.innerHTML = `
                 <div class="text-center py-12">
@@ -31,9 +35,9 @@ async function loadBookmarks() {
         countEl.textContent = `${tenders.length}건`;
         container.innerHTML = tenders.map(t => renderBookmarkCard(t)).join('');
     } catch (e) {
-        console.error(e);
+        console.error('관심공고 로드 실패:', e);
         document.getElementById('bookmarks-list').innerHTML =
-            '<p class="text-red-500 text-sm">불러오기 실패</p>';
+            `<p class="text-red-500 text-sm">불러오기 실패: ${e.message}</p>`;
     }
 }
 
