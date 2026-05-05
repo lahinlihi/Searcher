@@ -238,13 +238,12 @@
                 <!-- Gemini 없을 때 안내 -->
                 <div id="no-gemini-notice" class="hidden bg-amber-50 border border-amber-200 rounded-lg p-3">
                     <p class="text-sm text-amber-800">
-                        💡 Gemini API 키를 <a href="/settings" class="underline font-medium text-blue-700">설정</a>하면 AI 분석을 이용할 수 있습니다.
+                        💡 AI 분석 결과가 없습니다. Gemini API 키가 <a href="/settings" class="underline font-medium text-blue-700">설정</a>되어 있다면 아래 버튼을 눌러 분석을 시작하세요.
                     </p>
-                    <p class="text-sm text-amber-700 mt-1">
-                        이미 키를 설정하셨다면 이전 분석 결과가 캐시되어 있을 수 있습니다.
+                    <p class="text-sm text-amber-700 mt-2">
                         <button onclick="runAnalysis({{ tender.id }}, true)"
-                                class="underline font-semibold text-blue-700 hover:text-blue-900">
-                            재분석 시작 →
+                                class="inline-block bg-blue-600 text-white text-xs font-semibold px-3 py-1.5 rounded hover:bg-blue-700 transition">
+                            AI 분석 시작 →
                         </button>
                     </p>
                 </div>
@@ -1297,6 +1296,12 @@ function _renderResult(data, tenderId) {
             document.getElementById('analysis-error-msg').textContent = gs.error;
             document.getElementById('analysis-error').classList.remove('hidden');
         } else {
+            // gemini_sections가 null — 이전 캐시에 API 키 없이 저장된 경우
+            // 사용자가 분석 버튼을 이미 눌렀으므로, force=true로 자동 재분석
+            if (data.cached && !data.error) {
+                runAnalysis(tenderId, true);
+                return;
+            }
             document.getElementById('no-gemini-notice').classList.remove('hidden');
         }
 
