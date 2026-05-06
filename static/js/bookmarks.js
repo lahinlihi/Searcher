@@ -113,7 +113,7 @@ function renderBookmarkCard(tender) {
             </h4>
             <div class="flex justify-between items-center text-sm text-gray-600 mt-1">
                 <div class="flex items-center gap-2">
-                    <span>발주: ${escapeHtml(tender.agency)}</span>
+                    <span>${(tender.agency && tender.agency.includes('조달청') && tender.demand_agency) ? `수요: ${escapeHtml(tender.demand_agency)}` : `발주: ${escapeHtml(tender.agency)}`}</span>
                     <span class="text-xs px-2 py-0.5 bg-gray-100 rounded">${tender.source_site}</span>
                     ${announcedDate ? `<span class="text-xs text-gray-400">등록: ${announcedDate}</span>` : ''}
                 </div>

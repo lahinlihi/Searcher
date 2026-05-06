@@ -256,6 +256,13 @@ function renderResults(tenders) {
                     // 키워드 강조 적용
                     const highlightedTitle = highlightKeywords(tender.title);
 
+                    // 조달청은 발주 대행기관 → 수요기관 표시
+                    const isJodal = tender.agency && tender.agency.includes('조달청');
+                    const displayAgency = (isJodal && tender.demand_agency) ? tender.demand_agency : tender.agency;
+                    const agencyTooltip = (isJodal && tender.demand_agency)
+                        ? `수요기관: ${tender.demand_agency} (발주: ${tender.agency})`
+                        : tender.agency;
+
                     return `
                         <tr class="hover:bg-gray-50">
                             <td class="text-center">${statusBadge}</td>
@@ -264,7 +271,7 @@ function renderResults(tenders) {
                                     ${highlightedTitle}
                                 </a>
                             </td>
-                            <td class="truncate" title="${tender.agency}">${tender.agency}</td>
+                            <td class="truncate" title="${agencyTooltip}">${displayAgency}</td>
                             <td class="text-center">
                                 <span class="text-xs px-2 py-1 bg-gray-100 rounded whitespace-nowrap">${tender.source_site}</span>
                             </td>

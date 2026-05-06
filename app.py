@@ -948,6 +948,27 @@ def api_tenders():
         # 스마트 정렬 적용
         sorted_tenders = smart_sort_tenders(all_tenders)
 
+        # 동일 사업명 중복 제거 — smart_sort 이후 첫 번째(최신) 공고만 대표로 유지
+        import re as _re
+
+        def _norm_title(t):
+            """(수정공고)·(재공고) 등 접두어와 「」 괄호를 제거한 정규화 제목"""
+            t = _re.sub(
+                r'^[\s\(（\[「『【]*(?:수정공고|재공고|재입찰|정정공고|취소공고)[\s\)）\]」』】,·\s]*',
+                '', t, flags=_re.IGNORECASE,
+            )
+            t = _re.sub(r'[「」『』【】\[\]]', '', t)
+            return t.strip()
+
+        seen_titles: dict = {}
+        deduped: list = []
+        for tender in sorted_tenders:
+            key = _norm_title(tender.title)
+            if key not in seen_titles:
+                seen_titles[key] = True
+                deduped.append(tender)
+        sorted_tenders = deduped
+
         # 수동 페이징
         total = len(sorted_tenders)
         start = (page - 1) * per_page
