@@ -347,8 +347,184 @@
     </div>
 </div>
 
+    <!-- 사용자 관리 -->
+    <div class="card">
+        <div class="card-header flex justify-between items-center">
+            <h3 class="card-title">사용자 관리</h3>
+            <button onclick="showAddUserModal()" class="btn-primary text-sm">+ 사용자 추가</button>
+        </div>
+        <div class="card-body">
+            <div id="users-list" class="space-y-2">
+                <p class="text-sm text-gray-400">불러오는 중...</p>
+            </div>
+            <!-- 본인 비밀번호 변경 -->
+            <div class="mt-6 border-t pt-5">
+                <h4 class="text-sm font-semibold text-gray-700 mb-3">내 비밀번호 변경</h4>
+                <div class="flex flex-wrap gap-2 items-end">
+                    <div>
+                        <label class="form-label text-xs">현재 비밀번호</label>
+                        <input type="password" id="cur-pw" class="form-input text-sm" placeholder="현재 비밀번호">
+                    </div>
+                    <div>
+                        <label class="form-label text-xs">새 비밀번호</label>
+                        <input type="password" id="new-pw" class="form-input text-sm" placeholder="새 비밀번호 (4자 이상)">
+                    </div>
+                    <button onclick="changeMyPassword()" class="btn-secondary text-sm">변경</button>
+                </div>
+                <p id="pw-change-msg" class="text-xs mt-2 hidden"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 사용자 추가 모달 -->
+    <div id="add-user-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+        <div class="bg-white rounded-xl shadow-lg p-6 w-80">
+            <h3 class="text-lg font-semibold mb-4">사용자 추가</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="form-label text-sm">아이디</label>
+                    <input type="text" id="new-user-id" class="form-input" placeholder="아이디">
+                </div>
+                <div>
+                    <label class="form-label text-sm">비밀번호</label>
+                    <input type="password" id="new-user-pw" class="form-input" placeholder="비밀번호 (4자 이상)">
+                </div>
+                <div>
+                    <label class="form-label text-sm">역할</label>
+                    <select id="new-user-role" class="form-input">
+                        <option value="user">일반 사용자</option>
+                        <option value="admin">관리자</option>
+                    </select>
+                </div>
+            </div>
+            <p id="add-user-err" class="text-xs text-red-600 mt-2 hidden"></p>
+            <div class="flex gap-2 mt-4">
+                <button onclick="addUser()" class="btn-primary flex-1">추가</button>
+                <button onclick="document.getElementById('add-user-modal').classList.add('hidden')" class="btn-secondary flex-1">취소</button>
+            </div>
+        </div>
+    </div>
+
 {% endblock %}
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+<script>
+// ── 사용자 관리 ─────────────────────────────────────────────────────────────
+
+async function loadUsers() {
+    const res = await fetch('/api/admin/users');
+    const users = await res.json();
+    const list = document.getElementById('users-list');
+    if (!Array.isArray(users) || users.length === 0) {
+        list.innerHTML = '<p class="text-sm text-gray-400">사용자 없음</p>';
+        return;
+    }
+    list.innerHTML = users.map(u => `
+        <div class="flex items-center justify-between border rounded px-3 py-2 text-sm bg-gray-50" id="user-row-${u.id}">
+            <div class="flex items-center gap-2">
+                <span class="font-medium">${escHtml(u.username)}</span>
+                <span class="text-xs px-1.5 py-0.5 rounded ${u.role === 'admin' ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-600'}">
+                    ${u.role === 'admin' ? '관리자' : '일반'}
+                </span>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="toggleRole(${u.id}, '${u.role}')"
+                        class="text-xs text-blue-600 hover:underline" title="역할 전환">역할변경</button>
+                <button onclick="resetPw(${u.id})"
+                        class="text-xs text-gray-500 hover:underline" title="비밀번호 초기화">PW초기화</button>
+                <button onclick="deleteUser(${u.id})"
+                        class="text-xs text-red-500 hover:underline">삭제</button>
+            </div>
+        </div>`).join('');
+}
+
+function showAddUserModal() {
+    document.getElementById('new-user-id').value = '';
+    document.getElementById('new-user-pw').value = '';
+    document.getElementById('new-user-role').value = 'user';
+    document.getElementById('add-user-err').classList.add('hidden');
+    document.getElementById('add-user-modal').classList.remove('hidden');
+}
+
+async function addUser() {
+    const username = document.getElementById('new-user-id').value.trim();
+    const password = document.getElementById('new-user-pw').value.trim();
+    const role = document.getElementById('new-user-role').value;
+    const errEl = document.getElementById('add-user-err');
+    if (!username || !password) { showErr(errEl, '아이디와 비밀번호를 입력하세요.'); return; }
+    const res = await fetch('/api/admin/users', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({username, password, role})
+    });
+    const data = await res.json();
+    if (!res.ok) { showErr(errEl, data.error || '오류'); return; }
+    document.getElementById('add-user-modal').classList.add('hidden');
+    loadUsers();
+}
+
+async function deleteUser(id) {
+    if (!confirm('이 사용자를 삭제하시겠습니까?')) return;
+    const res = await fetch(`/api/admin/users/${id}`, {method:'DELETE'});
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || '삭제 실패'); return; }
+    loadUsers();
+}
+
+async function toggleRole(id, currentRole) {
+    const newRole = currentRole === 'admin' ? 'user' : 'admin';
+    if (!confirm(`역할을 "${newRole === 'admin' ? '관리자' : '일반 사용자'}"(으)로 변경하시겠습니까?`)) return;
+    const res = await fetch(`/api/admin/users/${id}/role`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({role: newRole})
+    });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || '변경 실패'); return; }
+    loadUsers();
+}
+
+async function resetPw(id) {
+    const pw = prompt('새 비밀번호를 입력하세요 (4자 이상):');
+    if (!pw || pw.length < 4) { alert('비밀번호는 4자 이상이어야 합니다.'); return; }
+    const res = await fetch(`/api/admin/users/${id}/password`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({password: pw})
+    });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || '변경 실패'); return; }
+    alert('비밀번호가 변경되었습니다.');
+}
+
+async function changeMyPassword() {
+    const cur = document.getElementById('cur-pw').value;
+    const nw = document.getElementById('new-pw').value;
+    const msg = document.getElementById('pw-change-msg');
+    const res = await fetch('/api/me/password', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({current_password: cur, new_password: nw})
+    });
+    const data = await res.json();
+    msg.classList.remove('hidden','text-green-600','text-red-600');
+    if (res.ok) {
+        msg.textContent = data.message || '변경되었습니다.';
+        msg.classList.add('text-green-600');
+        document.getElementById('cur-pw').value = '';
+        document.getElementById('new-pw').value = '';
+    } else {
+        msg.textContent = data.error || '오류가 발생했습니다.';
+        msg.classList.add('text-red-600');
+    }
+}
+
+function showErr(el, msg) {
+    el.textContent = msg;
+    el.classList.remove('hidden');
+}
+
+function escHtml(s) {
+    return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+document.addEventListener('DOMContentLoaded', loadUsers);
+</script>
 {% endblock %}

@@ -196,6 +196,25 @@ class Bookmark(db.Model):
         }
 
 
+class User(db.Model):
+    """사용자 테이블"""
+    __tablename__ = 'users'
+
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200), nullable=False)
+    role = db.Column(db.String(20), default='user')  # 'admin' | 'user'
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'username': self.username,
+            'role': self.role,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class TenderAnalysis(db.Model):
     """공고 AI 분석 결과 캐시 테이블"""
     __tablename__ = 'tender_analyses'
@@ -246,6 +265,18 @@ def init_db(app):
             print("[DB] bookmarks.label 컬럼 추가됨")
         except Exception:
             db.session.rollback()  # 이미 존재하면 무시
+
+        # 기본 관리자 계정 생성 (유저가 아무도 없을 때)
+        if User.query.count() == 0:
+            from werkzeug.security import generate_password_hash
+            admin = User(
+                username='admin',
+                password_hash=generate_password_hash('admin'),
+                role='admin',
+            )
+            db.session.add(admin)
+            db.session.commit()
+            print("[DB] 기본 관리자 계정 생성: admin / admin (반드시 비밀번호를 변경하세요)")
 
         # 기본 필터가 없으면 생성
         if Filter.query.filter_by(is_default=True).first() is None:

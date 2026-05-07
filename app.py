@@ -2,10 +2,12 @@ from email_notifier import email_notifier, EmailNotifier
 from settings_manager import settings_manager
 from excel_exporter import excel_exporter
 from data_manager import DataManager
-from flask import Flask, render_template, request, jsonify, make_response
+from flask import Flask, render_template, request, jsonify, make_response, session, redirect, url_for, g
+from functools import wraps
+from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
 from config import Config
-from database import db, init_db, Tender, Filter, CrawlLog, Bookmark, TenderAnalysis
+from database import db, init_db, Tender, Filter, CrawlLog, Bookmark, TenderAnalysis, User
 from datetime import datetime, timedelta
 import json
 import re
@@ -154,9 +156,55 @@ _KOREAN_LOCATIONS = sorted([
 
 app = Flask(__name__)
 app.config.from_object(Config)
+app.secret_key = settings_manager.get('secret_key') or 'change-me-in-production-please'
+app.permanent_session_lifetime = timedelta(days=7)
 
 # CORS 설정
 CORS(app)
+
+
+# ── 인증 헬퍼 ──────────────────────────────────────────────────────────────────
+
+def _current_user():
+    """세션에서 현재 사용자 객체 반환 (없으면 None)"""
+    uid = session.get('user_id')
+    if uid is None:
+        return None
+    return User.query.get(uid)
+
+
+@app.before_request
+def _load_user():
+    """모든 요청 전에 현재 사용자를 g.user 에 바인드"""
+    g.user = _current_user()
+
+
+def login_required(f):
+    """로그인한 사용자만 접근 가능"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if g.user is None:
+            if request.is_json or request.path.startswith('/api/'):
+                return jsonify({'error': '로그인이 필요합니다.', 'redirect': '/login'}), 401
+            return redirect(url_for('login_page', next=request.path))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def admin_required(f):
+    """관리자만 접근 가능"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if g.user is None:
+            if request.is_json or request.path.startswith('/api/'):
+                return jsonify({'error': '로그인이 필요합니다.', 'redirect': '/login'}), 401
+            return redirect(url_for('login_page', next=request.path))
+        if g.user.role != 'admin':
+            if request.is_json or request.path.startswith('/api/'):
+                return jsonify({'error': '관리자 권한이 필요합니다.'}), 403
+            return render_template('403.html'), 403
+        return f(*args, **kwargs)
+    return decorated
 
 # 데이터베이스 초기화
 init_db(app)
@@ -547,47 +595,168 @@ def format_price_filter(price):
 
 @app.route('/test')
 def test():
-    """테스트 엔드포인트"""
     return 'Server is working!'
 
 
+# ── 로그인 / 로그아웃 ──────────────────────────────────────────────────────────
+
+@app.route('/login', methods=['GET', 'POST'])
+def login_page():
+    if g.user:
+        return redirect('/')
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        user = User.query.filter_by(username=username).first()
+        if user and check_password_hash(user.password_hash, password):
+            session.permanent = True
+            session['user_id'] = user.id
+            session['role'] = user.role
+            next_url = request.form.get('next') or request.args.get('next') or '/'
+            return redirect(next_url)
+        error = '아이디 또는 비밀번호가 올바르지 않습니다.'
+    return render_template('login.html', error=error, next=request.args.get('next', '/'))
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect('/login')
+
+
+# ── 사용자 관리 API (관리자 전용) ───────────────────────────────────────────────
+
+@app.route('/api/admin/users', methods=['GET'])
+@admin_required
+def api_admin_users():
+    return jsonify([u.to_dict() for u in User.query.order_by(User.created_at).all()])
+
+
+@app.route('/api/admin/users', methods=['POST'])
+@admin_required
+def api_admin_create_user():
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    role = data.get('role', 'user')
+    if not username or not password:
+        return jsonify({'error': '아이디와 비밀번호를 입력하세요.'}), 400
+    if role not in ('admin', 'user'):
+        return jsonify({'error': '역할은 admin 또는 user 이어야 합니다.'}), 400
+    if User.query.filter_by(username=username).first():
+        return jsonify({'error': '이미 존재하는 아이디입니다.'}), 409
+    user = User(username=username, password_hash=generate_password_hash(password), role=role)
+    db.session.add(user)
+    db.session.commit()
+    return jsonify(user.to_dict()), 201
+
+
+@app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
+@admin_required
+def api_admin_delete_user(user_id):
+    user = User.query.get_or_404(user_id)
+    if user.id == g.user.id:
+        return jsonify({'error': '자기 자신은 삭제할 수 없습니다.'}), 400
+    if user.role == 'admin' and User.query.filter_by(role='admin').count() <= 1:
+        return jsonify({'error': '마지막 관리자는 삭제할 수 없습니다.'}), 400
+    db.session.delete(user)
+    db.session.commit()
+    return jsonify({'message': '삭제되었습니다.'})
+
+
+@app.route('/api/admin/users/<int:user_id>/password', methods=['POST'])
+@admin_required
+def api_admin_change_password(user_id):
+    user = User.query.get_or_404(user_id)
+    data = request.json or {}
+    new_pw = data.get('password', '').strip()
+    if len(new_pw) < 4:
+        return jsonify({'error': '비밀번호는 4자 이상이어야 합니다.'}), 400
+    user.password_hash = generate_password_hash(new_pw)
+    db.session.commit()
+    return jsonify({'message': '비밀번호가 변경되었습니다.'})
+
+
+@app.route('/api/admin/users/<int:user_id>/role', methods=['POST'])
+@admin_required
+def api_admin_change_role(user_id):
+    user = User.query.get_or_404(user_id)
+    data = request.json or {}
+    new_role = data.get('role', '')
+    if new_role not in ('admin', 'user'):
+        return jsonify({'error': '유효하지 않은 역할입니다.'}), 400
+    if user.id == g.user.id and new_role != 'admin':
+        return jsonify({'error': '자신의 관리자 권한은 해제할 수 없습니다.'}), 400
+    if user.role == 'admin' and new_role == 'user' and User.query.filter_by(role='admin').count() <= 1:
+        return jsonify({'error': '마지막 관리자의 역할은 변경할 수 없습니다.'}), 400
+    user.role = new_role
+    db.session.commit()
+    return jsonify({'message': '역할이 변경되었습니다.', 'role': new_role})
+
+
+@app.route('/api/me/password', methods=['POST'])
+@login_required
+def api_change_my_password():
+    """본인 비밀번호 변경"""
+    data = request.json or {}
+    current = data.get('current_password', '')
+    new_pw = data.get('new_password', '').strip()
+    if not check_password_hash(g.user.password_hash, current):
+        return jsonify({'error': '현재 비밀번호가 올바르지 않습니다.'}), 400
+    if len(new_pw) < 4:
+        return jsonify({'error': '새 비밀번호는 4자 이상이어야 합니다.'}), 400
+    g.user.password_hash = generate_password_hash(new_pw)
+    db.session.commit()
+    return jsonify({'message': '비밀번호가 변경되었습니다.'})
+
+
+# ── 페이지 라우트 ──────────────────────────────────────────────────────────────
+
 @app.route('/')
+@login_required
 def index():
     """메인 대시보드"""
     return render_template('dashboard.html')
 
 
 @app.route('/search')
+@login_required
 def search_page():
     """검색 페이지"""
     return render_template('search.html')
 
 
 @app.route('/filters')
+@admin_required
 def filters_page():
     """필터 관리 페이지"""
     return render_template('filters.html')
 
 
 @app.route('/settings')
+@admin_required
 def settings_page():
     """설정 페이지"""
     return render_template('settings.html')
 
 
 @app.route('/bookmarks')
+@login_required
 def bookmarks_page():
     """관심공고 페이지"""
     return render_template('bookmarks.html')
 
 
 @app.route('/logs')
+@admin_required
 def logs_page():
     """로그 페이지"""
     return render_template('logs.html')
 
 
 @app.route('/tender/<int:tender_id>')
+@login_required
 def tender_detail(tender_id):
     """공고 상세 페이지"""
     tender = Tender.query.get_or_404(tender_id)
@@ -605,6 +774,7 @@ def tender_detail(tender_id):
 
 
 @app.route('/api/tender/<int:tender_id>/related')
+@login_required
 def api_tender_related(tender_id):
     """
     연관 공고 검색: 제목 앞 15자가 같은 공고를 찾아 반환.
@@ -642,6 +812,7 @@ def api_tender_related(tender_id):
 # ============= API 엔드포인트 =============
 
 @app.route('/api/dashboard')
+@login_required
 def api_dashboard():
     """대시보드 데이터 조회"""
     try:
@@ -803,6 +974,7 @@ def api_dashboard():
 
 
 @app.route('/api/tenders')
+@login_required
 def api_tenders():
     """공고 목록 조회 (필터링, 페이징)"""
     try:
@@ -1003,6 +1175,7 @@ def api_tenders():
 
 
 @app.route('/api/filters', methods=['GET', 'POST'])
+@login_required
 def api_filters():
     """필터 목록 조회 또는 새 필터 생성"""
     if request.method == 'GET':
@@ -1010,6 +1183,8 @@ def api_filters():
         return jsonify([f.to_dict() for f in filters])
 
     elif request.method == 'POST':
+        if g.user.role != 'admin':
+            return jsonify({'error': '관리자 권한이 필요합니다.'}), 403
         try:
             data = request.json
 
@@ -1042,6 +1217,7 @@ def api_filters():
 
 
 @app.route('/api/filters/<int:filter_id>', methods=['PUT', 'DELETE'])
+@admin_required
 def api_filter_detail(filter_id):
     """필터 수정 또는 삭제"""
     filter_obj = Filter.query.get_or_404(filter_id)
@@ -1088,6 +1264,7 @@ def api_filter_detail(filter_id):
 
 
 @app.route('/api/logs')
+@admin_required
 def api_logs():
     """크롤링 로그 조회"""
     logs = CrawlLog.query.order_by(CrawlLog.started_at.desc()).limit(20).all()
@@ -1095,6 +1272,7 @@ def api_logs():
 
 
 @app.route('/api/stats')
+@login_required
 def api_stats():
     """통계 데이터"""
     try:
@@ -1130,6 +1308,7 @@ def api_stats():
 
 
 @app.route('/api/bookmarks', methods=['GET'])
+@login_required
 def api_bookmarks():
     """관심공고 목록 조회 (공고 상세 + 적합도 점수 포함)"""
     try:
@@ -1157,6 +1336,7 @@ def api_bookmarks():
 
 
 @app.route('/api/bookmarks/toggle', methods=['POST'])
+@login_required
 def api_bookmark_toggle():
     """관심공고 토글 (추가/삭제)"""
     try:
@@ -1181,6 +1361,7 @@ def api_bookmark_toggle():
 
 
 @app.route('/api/bookmarks/<int:bookmark_id>/label', methods=['POST'])
+@login_required
 def api_bookmark_label(bookmark_id):
     """관심공고 라벨 설정"""
     try:
@@ -1199,6 +1380,7 @@ def api_bookmark_label(bookmark_id):
 
 
 @app.route('/api/bookmarks/ids', methods=['GET'])
+@login_required
 def api_bookmark_ids():
     """북마크된 tender_id 목록"""
     try:
@@ -1209,6 +1391,7 @@ def api_bookmark_ids():
 
 
 @app.route('/api/search', methods=['POST'])
+@admin_required
 def api_search():
     """즉시 검색 시작 (크롤링)"""
     # crawler_scheduler는 읽기만 하므로 global 선언 불필요
@@ -1235,6 +1418,7 @@ def api_search():
 
 
 @app.route('/api/crawl/status')
+@admin_required
 def api_crawl_status():
     """최근 크롤링 상태 조회"""
     try:
@@ -1251,6 +1435,7 @@ def api_crawl_status():
 # ============= Phase 3: 데이터 관리 API =============
 
 @app.route('/api/data/delete-old', methods=['POST'])
+@admin_required
 def api_delete_old_tenders():
     """오래된 공고 삭제"""
     try:
@@ -1262,6 +1447,7 @@ def api_delete_old_tenders():
 
 
 @app.route('/api/data/clear-tenders', methods=['POST'])
+@admin_required
 def api_clear_tenders():
     """크롤링 데이터(공고)만 삭제 - 설정, 필터, 북마크 유지"""
     try:
@@ -1275,6 +1461,7 @@ def api_clear_tenders():
 
 
 @app.route('/api/data/reset', methods=['POST'])
+@admin_required
 def api_reset_database():
     """데이터베이스 초기화"""
     try:
@@ -1293,6 +1480,7 @@ def api_reset_database():
 
 
 @app.route('/api/data/stats')
+@admin_required
 def api_database_stats():
     """데이터베이스 통계"""
     try:
@@ -1306,6 +1494,7 @@ def api_database_stats():
 
 
 @app.route('/api/data/cleanup', methods=['POST'])
+@admin_required
 def api_cleanup_data():
     """데이터 정리 (중복 제거)"""
     try:
@@ -1319,6 +1508,7 @@ def api_cleanup_data():
 # ============= Phase 3: Excel 내보내기 API =============
 
 @app.route('/api/export/csv')
+@login_required
 def api_export_csv():
     """CSV로 내보내기"""
     try:
@@ -1364,6 +1554,7 @@ def api_export_csv():
 
 
 @app.route('/api/export/excel')
+@login_required
 def api_export_excel():
     """Excel HTML로 내보내기"""
     try:
@@ -1404,6 +1595,7 @@ def api_export_excel():
 # ============= Phase 3: 설정 관리 API =============
 
 @app.route('/api/supported-crawlers', methods=['GET'])
+@admin_required
 def api_supported_crawlers():
     """구현된 크롤러 타입 목록 반환 (프론트엔드 동적 배지 표시용)"""
     from scheduler import SUPPORTED_CRAWLER_TYPES, LEGACY_CRAWLERS
@@ -1414,6 +1606,7 @@ def api_supported_crawlers():
 
 
 @app.route('/api/settings', methods=['GET', 'POST'])
+@admin_required
 def api_settings():
     """설정 조회/저장"""
     if request.method == 'GET':
@@ -1439,6 +1632,7 @@ def api_settings():
 
 
 @app.route('/api/settings/validate', methods=['POST'])
+@admin_required
 def api_validate_settings():
     """설정 유효성 검사"""
     try:
@@ -1468,6 +1662,7 @@ def not_found(error):
 
 
 @app.route('/api/interest-keywords', methods=['GET', 'POST'])
+@login_required
 def api_interest_keywords():
     """관심 키워드 조회/저장"""
     if request.method == 'GET':
@@ -1485,6 +1680,8 @@ def api_interest_keywords():
             return jsonify({'error': str(e)}), 500
 
     elif request.method == 'POST':
+        if g.user.role != 'admin':
+            return jsonify({'error': '관리자 권한이 필요합니다.'}), 403
         try:
             data = request.json
             keywords = data.get('keywords', [])
@@ -1535,6 +1732,7 @@ def api_interest_keywords():
 
 
 @app.route('/api/email-settings', methods=['GET', 'POST'])
+@admin_required
 def api_email_settings():
     """이메일 알림 설정 조회/저장"""
     if request.method == 'GET':
@@ -1589,6 +1787,7 @@ def api_email_settings():
 
 
 @app.route('/api/test-email', methods=['POST'])
+@admin_required
 def api_test_email():
     """테스트 이메일 발송"""
     try:
@@ -1665,6 +1864,7 @@ def _run_analysis_background(tender_id, tender_url, tender_title, source_site, a
 
 
 @app.route('/api/tender/<int:tender_id>/analyze')
+@login_required
 def api_analyze_tender(tender_id):
     """
     공고 첨부파일(RFP) AI 분석.
@@ -1712,6 +1912,7 @@ def api_analyze_tender(tender_id):
 
 
 @app.route('/api/settings/gemini-key', methods=['GET', 'POST'])
+@admin_required
 def api_gemini_key():
     """Gemini API 키 조회/저장"""
     if request.method == 'GET':
@@ -1732,6 +1933,7 @@ def api_gemini_key():
 
 
 @app.route('/api/settings/gemini-model-priority', methods=['GET', 'POST'])
+@admin_required
 def api_gemini_model_priority():
     """Gemini 분석 모델 우선순위 조회/저장"""
     if request.method == 'GET':
