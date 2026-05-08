@@ -4,10 +4,11 @@ let agencyChart = null;
 let dailyChart = null;
 let includeKeywords = [];
 let bookmarkedIds = new Set();
+let dismissedIds = new Set();
 
 // 페이지 로드 시 실행
 document.addEventListener('DOMContentLoaded', function() {
-    loadBookmarkedIds().then(() => {
+    Promise.all([loadBookmarkedIds(), loadDismissedIds()]).then(() => {
         loadDashboardData();
         loadStats();
     });
@@ -20,6 +21,59 @@ async function loadBookmarkedIds() {
         const ids = await res.json();
         bookmarkedIds = new Set(ids);
     } catch (e) { /* 조용히 무시 */ }
+}
+
+// 관심없음 ID 목록 로드
+async function loadDismissedIds() {
+    try {
+        const res = await fetch('/api/dismissed/ids');
+        const ids = await res.json();
+        dismissedIds = new Set(ids);
+    } catch (e) { /* 조용히 무시 */ }
+}
+
+// 관심없음 버튼 HTML 생성
+function dismissButton(tenderId) {
+    return `<button onclick="dismissTender(${tenderId}, this)"
+                class="text-xs text-gray-400 hover:text-red-500 transition-colors border border-gray-200 hover:border-red-300 rounded px-1.5 py-0.5 leading-none shrink-0"
+                title="관심없음 — 대시보드에서 숨깁니다">✕</button>`;
+}
+
+// 관심없음 처리
+async function dismissTender(tenderId, btn) {
+    try {
+        const card = btn.closest('.tender-item');
+        // 즉시 시각적 피드백
+        if (card) {
+            card.style.transition = 'opacity 0.3s';
+            card.style.opacity = '0.3';
+        }
+        const res = await fetch(`/api/tenders/${tenderId}/dismiss`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        if (res.ok) {
+            dismissedIds.add(tenderId);
+            if (card) {
+                setTimeout(() => {
+                    card.style.transition = 'all 0.3s';
+                    card.style.maxHeight = card.scrollHeight + 'px';
+                    card.offsetHeight; // reflow
+                    card.style.maxHeight = '0';
+                    card.style.opacity = '0';
+                    card.style.marginBottom = '0';
+                    card.style.paddingTop = '0';
+                    card.style.paddingBottom = '0';
+                    card.style.overflow = 'hidden';
+                    setTimeout(() => card.remove(), 300);
+                }, 100);
+            }
+        } else {
+            if (card) card.style.opacity = '1';
+        }
+    } catch (e) {
+        console.error(e);
+    }
 }
 
 // 북마크 토글
@@ -206,6 +260,7 @@ function renderKeywordTenders(elementId, tenders, keywords) {
                     <div class="flex items-center gap-2 ml-2 shrink-0">
                         <span class="font-semibold ${deadlineClass}">${deadlineText}</span>
                         ${starButton(tender.id)}
+                        ${dismissButton(tender.id)}
                     </div>
                 </div>
                 <h4 class="font-medium text-gray-900 mt-1">
@@ -429,9 +484,17 @@ function refreshDashboard() {
 function renderActiveKeywords(keywords, matchCount) {
     const container = document.getElementById('active-keywords');
     const countEl = document.getElementById('keyword-match-count');
+    const allLink = document.getElementById('interest-all-link');
 
     if (countEl !== null) {
         countEl.textContent = (matchCount || 0) + '건';
+    }
+    if (allLink) {
+        if (matchCount > 0) {
+            allLink.classList.remove('hidden');
+        } else {
+            allLink.classList.add('hidden');
+        }
     }
 
     if (!container) return;

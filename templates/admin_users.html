@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+{% block title %}회원 관리 — 입찰공고 통합 검색{% endblock %}
+
+{% block content %}
+<div class="space-y-6 max-w-3xl">
+
+    <!-- 헤더 -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h2 class="text-2xl font-bold text-gray-900">회원 관리</h2>
+            <p class="text-sm text-gray-500 mt-0.5">
+                {% if g.user.role == 'admin' %}
+                    전체 회원을 관리합니다.
+                {% else %}
+                    일반회원을 관리합니다. (Admin 및 중간관리자는 관리 불가)
+                {% endif %}
+            </p>
+        </div>
+        <button onclick="showAddModal()"
+                class="btn-primary text-sm flex items-center gap-1">
+            <span class="text-base leading-none">+</span> 일반회원 추가
+        </button>
+    </div>
+
+    <!-- 회원 목록 테이블 -->
+    <div class="card overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gray-50 border-b">
+                    <tr>
+                        <th class="text-left px-4 py-3 font-semibold text-gray-600 w-6">#</th>
+                        <th class="text-left px-4 py-3 font-semibold text-gray-600">아이디</th>
+                        <th class="text-left px-4 py-3 font-semibold text-gray-600">역할</th>
+                        <th class="text-left px-4 py-3 font-semibold text-gray-600">등록일</th>
+                        <th class="text-right px-4 py-3 font-semibold text-gray-600">작업</th>
+                    </tr>
+                </thead>
+                <tbody id="users-tbody">
+                    <tr><td colspan="5" class="px-4 py-6 text-center text-gray-400 text-sm">불러오는 중…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 내 비밀번호 변경 -->
+    <div class="card">
+        <div class="card-header"><h3 class="card-title">내 비밀번호 변경</h3></div>
+        <div class="card-body">
+            <div class="flex flex-wrap gap-3 items-end">
+                <div>
+                    <label class="form-label text-xs">현재 비밀번호</label>
+                    <input type="password" id="cur-pw" class="form-input text-sm" placeholder="현재 비밀번호">
+                </div>
+                <div>
+                    <label class="form-label text-xs">새 비밀번호</label>
+                    <input type="password" id="new-pw" class="form-input text-sm" placeholder="새 비밀번호 (4자 이상)">
+                </div>
+                <button onclick="changeMyPw()" class="btn-secondary text-sm">변경</button>
+            </div>
+            <p id="my-pw-msg" class="text-xs mt-2 hidden"></p>
+        </div>
+    </div>
+</div>
+
+<!-- ── 회원 추가 모달 ─────────────────────────────────────────────────────── -->
+<div id="add-modal" class="hidden fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center">
+    <div class="bg-white rounded-xl shadow-xl p-6 w-80">
+        <h3 class="text-lg font-semibold mb-4">일반회원 추가</h3>
+        <div class="space-y-3">
+            <div>
+                <label class="form-label text-sm">아이디</label>
+                <input type="text" id="new-username" class="form-input" placeholder="아이디 입력">
+            </div>
+            <div>
+                <label class="form-label text-sm">비밀번호</label>
+                <input type="password" id="new-password" class="form-input" placeholder="4자 이상">
+            </div>
+        </div>
+        <p id="add-err" class="text-xs text-red-600 mt-2 hidden"></p>
+        <div class="flex gap-2 mt-4">
+            <button onclick="createUser()" class="btn-primary flex-1">추가</button>
+            <button onclick="hideModal('add-modal')" class="btn-secondary flex-1">취소</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── 비밀번호 변경 모달 ──────────────────────────────────────────────────── -->
+<div id="pw-modal" class="hidden fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center">
+    <div class="bg-white rounded-xl shadow-xl p-6 w-80">
+        <h3 class="text-lg font-semibold mb-1">비밀번호 변경</h3>
+        <p id="pw-modal-name" class="text-sm text-gray-500 mb-4"></p>
+        <input type="hidden" id="pw-modal-id">
+        <input type="password" id="pw-modal-input" class="form-input w-full mb-1" placeholder="새 비밀번호 (4자 이상)">
+        <p id="pw-modal-err" class="text-xs text-red-600 hidden"></p>
+        <div class="flex gap-2 mt-4">
+            <button onclick="submitPwChange()" class="btn-primary flex-1">변경</button>
+            <button onclick="hideModal('pw-modal')" class="btn-secondary flex-1">취소</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// 현재 로그인 사용자 정보 (Jinja2에서 주입)
+const ME = { id: {{ g.user.id }}, role: '{{ g.user.role }}' };
+
+const ROLE_BADGE = {
+    admin:     '<span class="inline-block text-xs font-semibold px-2 py-0.5 rounded bg-blue-100 text-blue-700">Admin</span>',
+    moderator: '<span class="inline-block text-xs font-semibold px-2 py-0.5 rounded bg-orange-100 text-orange-700">중간관리자</span>',
+    user:      '<span class="inline-block text-xs font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-600">일반회원</span>',
+};
+
+function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── 목록 로드 ─────────────────────────────────────────────────────────────────
+async function loadUsers() {
+    const res = await fetch('/api/admin/users');
+    const data = await res.json();
+    const tbody = document.getElementById('users-tbody');
+
+    if (!Array.isArray(data) || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-6 text-center text-gray-400 text-sm">회원이 없습니다.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = data.map((u, i) => {
+        const isSelf = u.id === ME.id;
+        const badge = ROLE_BADGE[u.role] || u.role;
+        const date = u.created_at ? u.created_at.substring(0, 10) : '-';
+
+        // 작업 버튼 구성 (역할 기반)
+        const actions = buildActions(u, isSelf);
+
+        return `<tr class="border-b last:border-0 hover:bg-gray-50" id="row-${u.id}">
+            <td class="px-4 py-3 text-gray-400">${i + 1}</td>
+            <td class="px-4 py-3 font-medium text-gray-900">
+                ${esc(u.username)}${isSelf ? ' <span class="text-xs text-blue-500">(나)</span>' : ''}
+            </td>
+            <td class="px-4 py-3">${badge}</td>
+            <td class="px-4 py-3 text-gray-500">${date}</td>
+            <td class="px-4 py-3 text-right">${actions}</td>
+        </tr>`;
+    }).join('');
+}
+
+function buildActions(u, isSelf) {
+    const btns = [];
+    const myRole = ME.role;
+
+    // ── PW 변경 ──────────────────────────────────────────────────────────────
+    // admin: 누구든 가능 / moderator: user만
+    const canPw = myRole === 'admin' || (myRole === 'moderator' && u.role === 'user');
+    if (canPw) {
+        btns.push(`<button onclick="openPwModal(${u.id}, '${esc(u.username)}')"
+                           class="text-xs text-blue-600 hover:underline">PW변경</button>`);
+    }
+
+    // ── 역할 변경 버튼 ────────────────────────────────────────────────────────
+    if (myRole === 'admin') {
+        if (u.role === 'user') {
+            btns.push(`<button onclick="changeRole(${u.id}, 'moderator')"
+                               class="text-xs text-orange-600 hover:underline">중간관리자 승급</button>`);
+        } else if (u.role === 'moderator') {
+            btns.push(`<button onclick="changeRole(${u.id}, 'admin')"
+                               class="text-xs text-blue-600 hover:underline">Admin 승급</button>`);
+            btns.push(`<button onclick="changeRole(${u.id}, 'user')"
+                               class="text-xs text-gray-500 hover:underline">일반회원 강등</button>`);
+        } else if (u.role === 'admin' && !isSelf) {
+            btns.push(`<button onclick="changeRole(${u.id}, 'moderator')"
+                               class="text-xs text-gray-500 hover:underline">중간관리자 강등</button>`);
+        }
+    } else if (myRole === 'moderator' && u.role === 'user') {
+        btns.push(`<button onclick="changeRole(${u.id}, 'moderator')"
+                           class="text-xs text-orange-600 hover:underline">중간관리자 승급</button>`);
+    }
+
+    // ── 삭제 ─────────────────────────────────────────────────────────────────
+    // admin: 자기 자신 제외 누구든 / moderator: user만, 자기 자신 제외
+    const canDelete = !isSelf && (
+        myRole === 'admin' ||
+        (myRole === 'moderator' && u.role === 'user')
+    );
+    if (canDelete) {
+        btns.push(`<button onclick="deleteUser(${u.id})"
+                           class="text-xs text-red-500 hover:underline">삭제</button>`);
+    }
+
+    return btns.length
+        ? `<div class="flex items-center justify-end gap-3">${btns.join('')}</div>`
+        : '<span class="text-xs text-gray-300">-</span>';
+}
+
+// ── 회원 추가 ────────────────────────────────────────────────────────────────
+function showAddModal() {
+    document.getElementById('new-username').value = '';
+    document.getElementById('new-password').value = '';
+    document.getElementById('add-err').classList.add('hidden');
+    document.getElementById('add-modal').classList.remove('hidden');
+}
+
+async function createUser() {
+    const username = document.getElementById('new-username').value.trim();
+    const password = document.getElementById('new-password').value.trim();
+    const errEl = document.getElementById('add-err');
+    if (!username || !password) { showErr(errEl, '아이디와 비밀번호를 입력하세요.'); return; }
+    const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, role: 'user' }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showErr(errEl, data.error || '생성 실패'); return; }
+    hideModal('add-modal');
+    loadUsers();
+}
+
+// ── 비밀번호 변경 ────────────────────────────────────────────────────────────
+function openPwModal(id, username) {
+    document.getElementById('pw-modal-id').value = id;
+    document.getElementById('pw-modal-name').textContent = username + ' 의 비밀번호';
+    document.getElementById('pw-modal-input').value = '';
+    document.getElementById('pw-modal-err').classList.add('hidden');
+    document.getElementById('pw-modal').classList.remove('hidden');
+}
+
+async function submitPwChange() {
+    const id = document.getElementById('pw-modal-id').value;
+    const pw = document.getElementById('pw-modal-input').value.trim();
+    const errEl = document.getElementById('pw-modal-err');
+    if (pw.length < 4) { showErr(errEl, '비밀번호는 4자 이상이어야 합니다.'); return; }
+    const res = await fetch(`/api/admin/users/${id}/password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw }),
+    });
+    const data = await res.json();
+    if (!res.ok) { showErr(errEl, data.error || '변경 실패'); return; }
+    hideModal('pw-modal');
+    showToast('비밀번호가 변경되었습니다.');
+}
+
+// ── 역할 변경 ────────────────────────────────────────────────────────────────
+const ROLE_NAME = { admin: 'Admin', moderator: '중간관리자', user: '일반회원' };
+
+async function changeRole(id, newRole) {
+    if (!confirm(`이 사용자를 "${ROLE_NAME[newRole]}"(으)로 변경하시겠습니까?`)) return;
+    const res = await fetch(`/api/admin/users/${id}/role`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: newRole }),
+    });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || '변경 실패'); return; }
+    loadUsers();
+}
+
+// ── 삭제 ────────────────────────────────────────────────────────────────────
+async function deleteUser(id) {
+    if (!confirm('이 회원을 삭제하시겠습니까?')) return;
+    const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || '삭제 실패'); return; }
+    document.getElementById(`row-${id}`)?.remove();
+    showToast('삭제되었습니다.');
+}
+
+// ── 내 비밀번호 변경 ─────────────────────────────────────────────────────────
+async function changeMyPw() {
+    const cur = document.getElementById('cur-pw').value;
+    const nw  = document.getElementById('new-pw').value;
+    const msg = document.getElementById('my-pw-msg');
+    const res = await fetch('/api/me/password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: cur, new_password: nw }),
+    });
+    const data = await res.json();
+    msg.classList.remove('hidden', 'text-green-600', 'text-red-600');
+    if (res.ok) {
+        msg.textContent = data.message || '변경되었습니다.';
+        msg.classList.add('text-green-600');
+        document.getElementById('cur-pw').value = '';
+        document.getElementById('new-pw').value = '';
+    } else {
+        msg.textContent = data.error || '오류가 발생했습니다.';
+        msg.classList.add('text-red-600');
+    }
+}
+
+// ── 유틸 ─────────────────────────────────────────────────────────────────────
+function hideModal(id) { document.getElementById(id).classList.add('hidden'); }
+function showErr(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
+
+function showToast(msg) {
+    const t = document.createElement('div');
+    t.className = 'fixed bottom-6 right-6 bg-gray-800 text-white text-sm px-4 py-2 rounded shadow-lg z-50 transition-opacity';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 400); }, 2000);
+}
+
+document.addEventListener('DOMContentLoaded', loadUsers);
+</script>
+{% endblock %}

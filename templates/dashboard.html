@@ -70,13 +70,14 @@
                 <div class="flex-1">
                     <div class="flex items-center gap-3 mb-1">
                         <h4 class="text-sm font-semibold text-blue-900">관심 공고 필터</h4>
-                        <span id="keyword-match-count" class="text-sm font-semibold text-blue-700 bg-blue-200 px-2 py-0.5 rounded-full" title="최근 7일 · 금액·제외 키워드 필터 적용">0건</span>
+                        <span id="keyword-match-count" class="text-sm font-semibold text-blue-700 bg-blue-200 px-2 py-0.5 rounded-full" title="관심 키워드·금액·제외 키워드 필터에 매칭된 공고 전체 수 (대시보드 섹션별 최대 20건 표시)">0건</span>
+                        <a id="interest-all-link" href="/search?use_interest=1" class="hidden text-xs text-blue-600 hover:text-blue-800 font-medium underline underline-offset-2">모두 보기 →</a>
                     </div>
                     <div id="active-keywords" class="flex flex-wrap gap-2">
                         <!-- JavaScript로 동적 생성 -->
                     </div>
                 </div>
-                <a href="/settings" class="btn-secondary text-sm whitespace-nowrap ml-4">키워드 수정</a>
+                <a href="/filters" class="btn-secondary text-sm whitespace-nowrap ml-4">필터 관리</a>
             </div>
         </div>
     </div>

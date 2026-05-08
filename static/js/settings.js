@@ -8,7 +8,121 @@ let legacyCrawlerSites = new Set();
 document.addEventListener('DOMContentLoaded', function() {
     loadSupportedCrawlers().then(() => loadSettings());
     loadDatabaseStats();
+    loadLastCrawlResult();
 });
+
+// ── 수동 크롤링 ──────────────────────────────────────────────────────────────
+let crawlPollInterval = null;
+
+async function startCrawling() {
+    const btn = document.getElementById('crawl-btn');
+    const box = document.getElementById('crawl-status-box');
+    const title = document.getElementById('crawl-status-title');
+    const detail = document.getElementById('crawl-status-detail');
+    const spinner = document.getElementById('crawl-spinner');
+    const statusText = document.getElementById('crawl-status-text');
+
+    btn.disabled = true;
+    btn.textContent = '크롤링 중...';
+    box.classList.remove('hidden');
+    title.textContent = '크롤링 진행 중...';
+    title.className = 'font-medium text-blue-700';
+    detail.textContent = '잠시만 기다려주세요.';
+    spinner.classList.remove('hidden');
+    statusText.textContent = '';
+    document.getElementById('crawl-last-result').classList.add('hidden');
+
+    try {
+        const res = await fetch('/api/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            showCrawlError(data.error || '크롤링 시작 실패');
+            return;
+        }
+        // 상태 폴링 시작
+        if (crawlPollInterval) clearInterval(crawlPollInterval);
+        crawlPollInterval = setInterval(pollCrawlStatus, 3000);
+    } catch (e) {
+        showCrawlError('서버 연결 오류');
+    }
+}
+
+async function pollCrawlStatus() {
+    try {
+        const res = await fetch('/api/crawl/status');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const title = document.getElementById('crawl-status-title');
+        const detail = document.getElementById('crawl-status-detail');
+        const spinner = document.getElementById('crawl-spinner');
+        const btn = document.getElementById('crawl-btn');
+        const statusText = document.getElementById('crawl-status-text');
+
+        if (data.status === 'completed') {
+            clearInterval(crawlPollInterval);
+            crawlPollInterval = null;
+            spinner.classList.add('hidden');
+            title.textContent = '크롤링 완료!';
+            title.className = 'font-medium text-green-700';
+            detail.textContent = `총 ${data.total_found}건 수집 / 신규 ${data.new_tenders}건`;
+            document.getElementById('crawl-status-box').querySelector('div').className = 'flex items-center gap-2 mb-2';
+            document.getElementById('crawl-status-box').className = 'p-4 bg-green-50 border border-green-200 rounded-lg';
+            btn.disabled = false;
+            btn.textContent = '실시간 크롤링 시작';
+            const elapsed = data.completed_at
+                ? Math.round((new Date(data.completed_at) - new Date(data.started_at)) / 1000) + '초'
+                : '';
+            statusText.textContent = `마지막: ${data.total_found}건 수집 (${elapsed})`;
+            showLastCrawlResult(data);
+        } else if (data.status === 'failed') {
+            clearInterval(crawlPollInterval);
+            crawlPollInterval = null;
+            showCrawlError(data.error_message || '크롤링 실패');
+        }
+    } catch (e) {
+        // 네트워크 일시 오류는 무시하고 계속 폴링
+    }
+}
+
+function showCrawlError(msg) {
+    clearInterval(crawlPollInterval);
+    crawlPollInterval = null;
+    const box = document.getElementById('crawl-status-box');
+    const title = document.getElementById('crawl-status-title');
+    const detail = document.getElementById('crawl-status-detail');
+    const spinner = document.getElementById('crawl-spinner');
+    const btn = document.getElementById('crawl-btn');
+    box.className = 'p-4 bg-red-50 border border-red-200 rounded-lg';
+    spinner.classList.add('hidden');
+    title.textContent = '크롤링 실패';
+    title.className = 'font-medium text-red-700';
+    detail.textContent = msg;
+    btn.disabled = false;
+    btn.textContent = '실시간 크롤링 시작';
+}
+
+async function loadLastCrawlResult() {
+    try {
+        const res = await fetch('/api/crawl/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.status) showLastCrawlResult(data);
+    } catch (e) {}
+}
+
+function showLastCrawlResult(data) {
+    const el = document.getElementById('crawl-last-result');
+    if (!data || !data.started_at) return;
+    const startTime = new Date(data.started_at).toLocaleString('ko-KR');
+    const statusLabel = data.status === 'completed' ? '완료' : data.status === 'failed' ? '실패' : '진행 중';
+    el.innerHTML = `<strong>최근 크롤링:</strong> ${startTime} · ${statusLabel} · 수집 ${data.total_found}건 / 신규 ${data.new_tenders}건`;
+    el.classList.remove('hidden');
+}
 
 // 서버에서 구현된 크롤러 타입 목록 로드
 async function loadSupportedCrawlers() {

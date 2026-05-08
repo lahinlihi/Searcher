@@ -131,13 +131,16 @@
             </div>
 
             <!-- 외부 링크 -->
-            {% if tender.url %}
-            <div class="mt-6 pt-6 border-t">
+            <div class="mt-6 pt-6 border-t flex flex-wrap gap-3 items-center">
+                {% if tender.url %}
                 <a href="{{ tender.url }}" target="_blank" class="btn-primary inline-block">
                     공고 원문 보기 →
                 </a>
+                {% endif %}
+                <button onclick="toggleHistory()" id="history-toggle-btn" class="btn-secondary text-sm">
+                    🔍 수행이력 조회
+                </button>
             </div>
-            {% endif %}
         </div>
     </div>
 
@@ -285,6 +288,51 @@
 
             <!-- 초기 빈 상태 -->
             <div id="analysis-placeholder"></div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- 수행이력 조회 결과 -->
+    <div class="card hidden" id="history-card">
+        <div class="card-header">
+            <div class="flex justify-between items-center flex-wrap gap-2">
+                <div>
+                    <h3 class="card-title">수행이력 조회</h3>
+                    <p class="text-xs text-gray-400 mt-0.5">나라장터 낙찰결과 API · 최근 5년 · 공고명 유사검색</p>
+                </div>
+                <span id="history-query-badge" class="hidden text-xs bg-blue-50 border border-blue-200 text-blue-700 px-2 py-1 rounded"></span>
+            </div>
+        </div>
+        <div class="card-body" id="history-body">
+            <p class="text-gray-400 text-sm text-center py-6">버튼을 눌러 이력을 조회하세요.</p>
+        </div>
+    </div>
+
+    <!-- 공유 메모 -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">공유 메모</h3>
+            <p class="text-xs text-gray-400 mt-0.5">모든 사용자가 볼 수 있습니다. 이 공고에 대한 정보·의견을 공유하세요.</p>
+        </div>
+        <div class="card-body space-y-4">
+            <!-- 메모 목록 -->
+            <div id="memos-list" class="space-y-3">
+                <p class="text-gray-400 text-sm text-center py-4">불러오는 중...</p>
+            </div>
+
+            <!-- 새 메모 작성 -->
+            <div class="border-t pt-4">
+                <textarea id="new-memo-input"
+                    class="form-input w-full text-sm resize-none"
+                    rows="3"
+                    maxlength="1000"
+                    placeholder="메모를 입력하세요... (최대 1000자)"></textarea>
+                <div class="flex justify-between items-center mt-2">
+                    <span id="memo-char-count" class="text-xs text-gray-400">0 / 1000</span>
+                    <button onclick="submitMemo()" class="btn-primary text-sm">메모 등록</button>
+                </div>
+                <p id="memo-error" class="text-xs text-red-600 mt-1 hidden"></p>
+            </div>
         </div>
     </div>
 
@@ -527,7 +575,6 @@
     }
     .ai-panel-proposal .ai-score-major-cell { color:#92400e; background:#fffbeb; border-right-color:#fde68a !important; }
     </style>
-    {% endif %}
 
     <!-- 액션 버튼들 -->
     <div class="flex gap-3">
@@ -543,6 +590,88 @@
 </div>
 
 <script>
+// ── 공유 메모 ─────────────────────────────────────────────────────────────────
+const TENDER_ID = {{ tender.id }};
+const MY_USER_ID = {{ g.user.id }};
+const MY_ROLE = '{{ g.user.role }}';
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadMemos();
+    const inp = document.getElementById('new-memo-input');
+    if (inp) inp.addEventListener('input', () => {
+        document.getElementById('memo-char-count').textContent = inp.value.length + ' / 1000';
+    });
+});
+
+async function loadMemos() {
+    try {
+        const res = await fetch(`/api/tenders/${TENDER_ID}/memos`);
+        const memos = await res.json();
+        const container = document.getElementById('memos-list');
+        if (!memos.length) {
+            container.innerHTML = '<p class="text-gray-400 text-sm text-center py-4">등록된 메모가 없습니다.</p>';
+            return;
+        }
+        container.innerHTML = memos.map(m => renderMemo(m)).join('');
+    } catch (e) {
+        document.getElementById('memos-list').innerHTML = '<p class="text-red-500 text-sm">메모 불러오기 실패</p>';
+    }
+}
+
+function renderMemo(m) {
+    const dt = new Date(m.created_at);
+    const dateStr = dt.toLocaleString('ko-KR', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+    const roleBadge = m.user_role === 'admin'
+        ? '<span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-semibold ml-1">Admin</span>'
+        : m.user_role === 'moderator'
+        ? '<span class="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-semibold ml-1">중간관리자</span>'
+        : '';
+    const canDelete = m.user_id === MY_USER_ID || MY_ROLE === 'admin' || MY_ROLE === 'moderator';
+    const deleteBtn = canDelete
+        ? `<button onclick="deleteMemo(${m.id})" class="text-xs text-gray-400 hover:text-red-500 transition-colors ml-2" title="삭제">삭제</button>`
+        : '';
+    const content = (m.content || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+    return `<div class="border rounded-lg p-3 bg-gray-50" id="memo-${m.id}">
+        <div class="flex justify-between items-center mb-1.5">
+            <div class="text-xs text-gray-500">
+                <span class="font-semibold text-gray-700">${(m.username||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span>
+                ${roleBadge}
+                <span class="ml-2">${dateStr}</span>
+            </div>
+            ${deleteBtn}
+        </div>
+        <p class="text-sm text-gray-800 leading-relaxed">${content}</p>
+    </div>`;
+}
+
+async function submitMemo() {
+    const inp = document.getElementById('new-memo-input');
+    const errEl = document.getElementById('memo-error');
+    const content = inp.value.trim();
+    if (!content) { errEl.textContent = '내용을 입력하세요.'; errEl.classList.remove('hidden'); return; }
+    errEl.classList.add('hidden');
+    try {
+        const res = await fetch(`/api/tenders/${TENDER_ID}/memos`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content })
+        });
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.error || '등록 실패'; errEl.classList.remove('hidden'); return; }
+        inp.value = '';
+        document.getElementById('memo-char-count').textContent = '0 / 1000';
+        loadMemos();
+    } catch (e) { errEl.textContent = '서버 오류'; errEl.classList.remove('hidden'); }
+}
+
+async function deleteMemo(memoId) {
+    if (!confirm('이 메모를 삭제하시겠습니까?')) return;
+    try {
+        const res = await fetch(`/api/tenders/${TENDER_ID}/memos/${memoId}`, { method: 'DELETE' });
+        if (res.ok) { document.getElementById(`memo-${memoId}`)?.remove(); }
+    } catch (e) { alert('삭제 실패'); }
+}
+
 // ── 관심공고 (북마크) ─────────────────────────────────────────────────────────
 (async function initBookmark() {
     const tenderId = {{ tender.id }};
@@ -657,6 +786,190 @@ function copyTenderNumber() {
     }).catch(err => {
         alert('복사 실패: ' + err);
     });
+}
+
+// ── 수행이력 조회 ──────────────────────────────────────────────────────────────
+let _historyLoaded = false;
+let _historyVisible = false;
+
+function toggleHistory() {
+    const card = document.getElementById('history-card');
+    _historyVisible = !_historyVisible;
+    if (_historyVisible) {
+        card.classList.remove('hidden');
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (!_historyLoaded) loadHistory();
+        document.getElementById('history-toggle-btn').textContent = '🔍 수행이력 닫기';
+    } else {
+        card.classList.add('hidden');
+        document.getElementById('history-toggle-btn').textContent = '🔍 수행이력 조회';
+    }
+}
+
+async function loadHistory(allTypes = false) {
+    const body = document.getElementById('history-body');
+    const label = allTypes ? '물품·공사 포함 조회 중...' : '나라장터 낙찰결과 조회 중 (용역)...';
+    body.innerHTML = `<div class="text-center py-8"><div class="inline-block animate-spin rounded-full h-7 w-7 border-b-2 border-blue-500 mb-3"></div><p class="text-sm text-gray-500">${label}</p><p class="text-xs text-gray-400 mt-1">최근 5년 × 월별 병렬 조회 중 (5~15초 소요)</p></div>`;
+
+    try {
+        const url = `/api/tenders/${TENDER_ID}/history` + (allTypes ? '?all_types=1' : '');
+        const res = await fetch(url);
+        const data = await res.json();
+        _historyLoaded = true;
+
+        if (data.error) { body.innerHTML = `<p class="text-red-500 text-sm">${data.error}</p>`; return; }
+
+        // 검색어 배지
+        const badge = document.getElementById('history-query-badge');
+        badge.textContent = `검색어: "${data.query}"`;
+        badge.classList.remove('hidden');
+
+        if (!data.items || data.items.length === 0) {
+            let msg = '<p class="text-gray-400 text-sm text-center py-6">조회된 수행이력이 없습니다.</p>';
+            if (data.errors && data.errors.length) {
+                msg += `<p class="text-xs text-red-400 text-center mt-2">API 오류: ${data.errors.join(', ')}</p>`;
+            }
+            body.innerHTML = msg;
+            return;
+        }
+
+        const failCount      = data.items.filter(x => x._fail_type && !x._followup_contract).length;
+        const followupCount  = data.items.filter(x => x._followup_contract).length;
+        const failBadge      = failCount > 0
+            ? ` · <span class="text-red-500 font-semibold">${failCount}건 유찰</span>`
+            : '';
+        const followupBadge  = followupCount > 0
+            ? ` · <span class="text-amber-600 font-semibold">${followupCount}건 유찰→수의계약</span>`
+            : '';
+        let html = `<p class="text-xs text-gray-400 mb-3">총 ${data.items.length}건 조회됨 (최신순)${failBadge}${followupBadge}</p>`;
+        html += `<div class="overflow-x-auto"><table class="w-full text-sm border-collapse">
+            <thead>
+                <tr class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                    <th class="px-3 py-2 text-left border-b font-semibold">개찰일</th>
+                    <th class="px-3 py-2 text-left border-b font-semibold">공고명</th>
+                    <th class="px-3 py-2 text-left border-b font-semibold">발주기관</th>
+                    <th class="px-3 py-2 text-left border-b font-semibold">낙찰업체</th>
+                    <th class="px-3 py-2 text-right border-b font-semibold">낙찰금액</th>
+                    <th class="px-3 py-2 text-center border-b font-semibold">참가수</th>
+                    <th class="px-3 py-2 text-center border-b font-semibold">상태</th>
+                </tr>
+            </thead>
+            <tbody>`;
+
+        data.items.forEach((item, i) => {
+            const failType = item._fail_type || null;  // 'sole_bidder' | 'no_bidder' | 'unknown' | null
+            const isFail = failType !== null;
+            const openDt = (isFail
+                ? item.opengDt
+                : (item.rlOpengDt || item.fnlSucsfDate || '')
+            ).substring(0, 10);
+
+            const nmRaw = item.bidNtceNm || '';
+            const nm = nmRaw.length > 40 ? nmRaw.substring(0, 40) + '…' : nmRaw;
+            const org = item.dminsttNm || '-';
+            const bidNo = item.bidNtceNo || '';
+            const bidSeq = item.bidNtceOrd || '000';
+            const g2bUrl = bidNo
+                ? `https://www.g2b.go.kr/pt/menu/selectSubFrame.do?framesrc=/pt/menu/frameTgong.do?targetUrl=https://www.g2b.go.kr:8101/ep/invitation/publish/bidInfoDtl.do?bidno=${bidNo}%26bidseq=${bidSeq}`
+                : '';
+            const nmHtml = bidNo
+                ? `<a href="${g2bUrl}" target="_blank" class="${isFail ? 'text-orange-600 hover:underline' : 'text-blue-600 hover:underline'}" title="${nmRaw}">${nm}</a>`
+                : `<span title="${nmRaw}">${nm}</span>`;
+
+            const typeBadge = item._bid_type !== '용역'
+                ? `<span class="text-xs bg-gray-100 text-gray-500 px-1 rounded ml-1">${item._bid_type}</span>`
+                : '';
+
+            let winnerCell, amtCell, cntCell, statusCell, rowBg;
+            const fc = item._followup_contract || null;  // 수의계약 정보
+
+            if (isFail) {
+                // ── 유찰 (단독응찰 / 무응찰 / 기타) ──────────────────────────
+                const corpInfo = item.opengCorpInfo || '';
+                const parts = corpInfo.split('^');
+                const bidderNm = (parts[0] || '').trim();
+                const bidAmt   = parts[3] ? formatAmtKr(parseInt(parts[3])) : '-';
+                const cnt = item.prtcptCnum != null ? item.prtcptCnum : '-';
+
+                if (fc) {
+                    // ── 유찰 후 수의계약 체결 ──────────────────────────────
+                    const contractWinner = fc.winner || '-';
+                    const contractAmt    = fc.amount ? formatAmtKr(parseInt(fc.amount)) : '-';
+                    const isSameBidder   = bidderNm && contractWinner.includes(bidderNm.substring(0, 4));
+
+                    winnerCell = `<div class="leading-tight">
+                        <span class="font-medium text-green-700">${contractWinner}</span>
+                        ${isSameBidder
+                            ? '<span class="text-xs text-gray-400 ml-1">(단독응찰자)</span>'
+                            : (bidderNm ? `<div class="text-xs text-gray-400">투찰: ${bidderNm}</div>` : '')}
+                    </div>`;
+                    amtCell  = `<span class="text-green-700 font-semibold whitespace-nowrap">${contractAmt}</span>`;
+                    cntCell  = `<span class="text-gray-500">${cnt}</span>`;
+
+                    const failLabel =
+                        failType === 'sole_bidder' ? '단독응찰' :
+                        failType === 'no_bidder'   ? '무응찰' : '유찰';
+                    statusCell = `<div class="leading-tight text-center">
+                        <div class="text-xs font-semibold border px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border-amber-300">${failLabel} → 수의계약</div>
+                        ${fc.date ? `<div class="text-xs text-gray-400 mt-0.5">계약 ${fc.date}</div>` : ''}
+                    </div>`;
+                    rowBg = 'bg-amber-50 hover:bg-amber-100';
+                } else {
+                    // ── 순수 유찰 ───────────────────────────────────────────
+                    winnerCell = bidderNm
+                        ? `<span class="text-gray-600 text-xs">${bidderNm}</span>`
+                        : `<span class="text-gray-400 text-xs">-</span>`;
+                    amtCell  = `<span class="text-orange-600 whitespace-nowrap">${bidAmt}</span>`;
+                    cntCell  = `<span class="${cnt == 0 ? 'text-gray-400' : 'text-red-500 font-bold'}">${cnt}</span>`;
+
+                    const { label, cls } =
+                        failType === 'sole_bidder' ? { label: '단독응찰 유찰', cls: 'bg-red-50 text-red-600 border-red-200' } :
+                        failType === 'no_bidder'   ? { label: '무응찰',        cls: 'bg-gray-100 text-gray-500 border-gray-300' } :
+                                                      { label: '유찰(불명)',    cls: 'bg-orange-50 text-orange-500 border-orange-200' };
+                    statusCell = `<span class="text-xs font-semibold border px-1.5 py-0.5 rounded ${cls}">${label}</span>`;
+                    rowBg = 'bg-red-50 hover:bg-red-100';
+                }
+            } else {
+                // ── 정상 낙찰 ────────────────────────────────────────────────
+                const winner = item.bidwinnrNm || '-';
+                const amt    = item.sucsfbidAmt ? formatAmtKr(parseInt(item.sucsfbidAmt)) : '-';
+                const cnt    = item.prtcptCnum || '-';
+                winnerCell = `<span class="font-medium text-gray-800">${winner}</span>`;
+                amtCell    = `<span class="text-blue-700 font-semibold whitespace-nowrap">${amt}</span>`;
+                cntCell    = `<span class="text-gray-500">${cnt}</span>`;
+                statusCell = `<span class="text-xs font-semibold border px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border-blue-200">낙찰</span>`;
+                rowBg = i % 2 === 0 ? 'bg-white hover:bg-blue-50' : 'bg-gray-50 hover:bg-blue-50';
+            }
+
+            html += `<tr class="${rowBg} transition-colors">
+                <td class="px-3 py-2 border-b text-gray-500 whitespace-nowrap text-xs">${openDt}</td>
+                <td class="px-3 py-2 border-b">${nmHtml}${typeBadge}</td>
+                <td class="px-3 py-2 border-b text-gray-600 text-xs">${org}</td>
+                <td class="px-3 py-2 border-b">${winnerCell}</td>
+                <td class="px-3 py-2 border-b text-right">${amtCell}</td>
+                <td class="px-3 py-2 border-b text-center">${cntCell}</td>
+                <td class="px-3 py-2 border-b text-center">${statusCell}</td>
+            </tr>`;
+        });
+
+        html += `</tbody></table></div>`;
+        if (data.errors && data.errors.length) {
+            html += `<p class="text-xs text-orange-400 mt-3">일부 카테고리 오류: ${data.errors.join(', ')}</p>`;
+        }
+        body.innerHTML = html;
+    } catch (e) {
+        body.innerHTML = `<p class="text-red-500 text-sm">이력 조회 실패: ${e.message}</p>`;
+    }
+}
+
+function formatAmtKr(n) {
+    if (!n || isNaN(n)) return '-';
+    const uk  = Math.floor(n / 100000000);
+    const man = Math.floor((n % 100000000) / 10000);
+    if (uk > 0 && man > 0) return `${uk}억 ${man.toLocaleString('ko-KR')}만원`;
+    if (uk > 0) return `${uk}억원`;
+    if (man > 0) return `${man.toLocaleString('ko-KR')}만원`;
+    return n.toLocaleString('ko-KR') + '원';
 }
 
 // ── 탭 전환 ──────────────────────────────────────────────────────────────────

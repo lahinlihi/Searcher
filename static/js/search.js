@@ -9,7 +9,25 @@ let bookmarkedIds = new Set();
 document.addEventListener('DOMContentLoaded', function() {
     loadFilterPresets();
     loadBookmarkedIds();
+
+    // ?use_interest=1 → 관심 키워드 자동 적용 후 검색
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('use_interest') === '1') {
+        applyInterestAndSearch();
+    }
 });
+
+async function applyInterestAndSearch() {
+    try {
+        const res = await fetch('/api/interest-keywords');
+        const data = await res.json();
+        const kws = (data.keywords || []).join(', ');
+        const exkws = (data.exclude_keywords || []).join(', ');
+        if (kws) document.getElementById('include-keywords').value = kws;
+        if (exkws) document.getElementById('exclude-keywords').value = exkws;
+        if (kws || exkws) searchTenders(1);
+    } catch (e) { console.error('관심 키워드 로드 실패:', e); }
+}
 
 async function loadBookmarkedIds() {
     try {
@@ -542,80 +560,6 @@ function exportExcel() {
 
     // CSV 다운로드
     window.location.href = `/api/export/csv?${params.toString()}`;
-}
-
-// 실시간 크롤링 시작
-async function startCrawling() {
-    const statusDiv = document.getElementById('crawl-status');
-    statusDiv.classList.remove('hidden');
-
-    try {
-        const response = await fetch('/api/search', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({})
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-            // 크롤링 상태 폴링 시작
-            pollCrawlStatus();
-        } else {
-            alert('크롤링 시작 실패: ' + data.error);
-            statusDiv.classList.add('hidden');
-        }
-
-    } catch (error) {
-        console.error('Failed to start crawling:', error);
-        alert('크롤링 시작 중 오류가 발생했습니다.');
-        statusDiv.classList.add('hidden');
-    }
-}
-
-// 크롤링 상태 폴링
-function pollCrawlStatus() {
-    const interval = setInterval(async () => {
-        try {
-            const response = await fetch('/api/crawl/status');
-            const data = await response.json();
-
-            if (data.status === 'completed') {
-                // 크롤링 완료
-                clearInterval(interval);
-                const statusDiv = document.getElementById('crawl-status');
-                statusDiv.innerHTML = `
-                    <p class="text-green-700 font-medium">크롤링 완료!</p>
-                    <p class="text-sm text-green-600 mt-1">
-                        총 ${data.total_found}건 수집, 새 공고 ${data.new_tenders}건
-                    </p>
-                `;
-
-                // 5초 후 자동으로 검색 실행
-                setTimeout(() => {
-                    statusDiv.classList.add('hidden');
-                    searchTenders(1);
-                }, 5000);
-            } else if (data.status === 'failed') {
-                // 크롤링 실패
-                clearInterval(interval);
-                const statusDiv = document.getElementById('crawl-status');
-                statusDiv.innerHTML = `
-                    <p class="text-red-700 font-medium">크롤링 실패</p>
-                    <p class="text-sm text-red-600 mt-1">${data.error_message || '오류가 발생했습니다.'}</p>
-                `;
-
-                setTimeout(() => {
-                    statusDiv.classList.add('hidden');
-                }, 5000);
-            }
-
-        } catch (error) {
-            console.error('Failed to poll crawl status:', error);
-        }
-    }, 3000); // 3초마다 상태 체크
 }
 
 // 가격 포맷

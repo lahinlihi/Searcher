@@ -8,7 +8,36 @@ const LABEL_OPTIONS = [
     { value: 'reference',  text: '참고용',     bonus: 0,  cls: 'text-gray-500'  },
 ];
 
-document.addEventListener('DOMContentLoaded', loadBookmarks);
+let currentTab = 'bookmarks';
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadBookmarks();
+    loadDismissed();
+});
+
+// ── 탭 전환 ───────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+    currentTab = tab;
+    const tabs = ['bookmarks', 'dismissed'];
+    tabs.forEach(t => {
+        const btn = document.getElementById(`tab-${t}`);
+        const panel = document.getElementById(`panel-${t}`);
+        if (t === tab) {
+            btn.classList.add('tab-active', 'border-blue-600', 'text-blue-600');
+            btn.classList.remove('border-transparent', 'text-gray-500');
+            panel.classList.remove('hidden');
+        } else {
+            btn.classList.remove('tab-active', 'border-blue-600', 'text-blue-600');
+            btn.classList.add('border-transparent', 'text-gray-500');
+            panel.classList.add('hidden');
+        }
+    });
+}
+
+function refreshCurrentTab() {
+    if (currentTab === 'bookmarks') loadBookmarks();
+    else loadDismissed();
+}
 
 async function loadBookmarks() {
     try {
@@ -23,7 +52,7 @@ async function loadBookmarks() {
         const container = document.getElementById('bookmarks-list');
 
         if (!Array.isArray(tenders) || tenders.length === 0) {
-            countEl.textContent = '0건';
+            countEl.textContent = '0';
             container.innerHTML = `
                 <div class="text-center py-12">
                     <p class="text-gray-400 text-sm mb-2">스크랩한 공고가 없습니다.</p>
@@ -32,13 +61,93 @@ async function loadBookmarks() {
             return;
         }
 
-        countEl.textContent = `${tenders.length}건`;
+        countEl.textContent = tenders.length;
         container.innerHTML = tenders.map(t => renderBookmarkCard(t)).join('');
     } catch (e) {
         console.error('관심공고 로드 실패:', e);
         document.getElementById('bookmarks-list').innerHTML =
             `<p class="text-red-500 text-sm">불러오기 실패: ${e.message}</p>`;
     }
+}
+
+// ── 관심없음 목록 ─────────────────────────────────────────────────────────────
+async function loadDismissed() {
+    try {
+        const res = await fetch('/api/dismissed');
+        const tenders = await res.json();
+        const countEl = document.getElementById('dismissed-count');
+        const container = document.getElementById('dismissed-list');
+
+        if (!Array.isArray(tenders) || tenders.length === 0) {
+            countEl.textContent = '0';
+            container.innerHTML = `
+                <div class="text-center py-12">
+                    <p class="text-gray-400 text-sm">관심없음으로 숨긴 공고가 없습니다.</p>
+                </div>`;
+            return;
+        }
+
+        countEl.textContent = tenders.length;
+        container.innerHTML = tenders.map(t => renderDismissedCard(t)).join('');
+    } catch (e) {
+        console.error('관심없음 로드 실패:', e);
+        document.getElementById('dismissed-list').innerHTML =
+            `<p class="text-red-500 text-sm">불러오기 실패: ${e.message}</p>`;
+    }
+}
+
+function renderDismissedCard(tender) {
+    const daysLeft = tender.days_left;
+    const isExpired = daysLeft !== null && daysLeft < 0;
+    const deadlineText = daysLeft !== null ? (isExpired ? `마감 (D${daysLeft})` : `D-${daysLeft}`) : '-';
+    const deadlineClass = isExpired ? 'text-gray-400 line-through' : (daysLeft <= 2 ? 'text-red-600 font-semibold' : 'text-gray-600');
+    const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
+    const dismissedAt = tender.dismissed_at ? tender.dismissed_at.substring(0, 10) : '';
+    const statusBadge = tender.status === '사전규격'
+        ? '<span class="tender-status-badge tender-status-pre">사전규격</span>'
+        : '<span class="tender-status-badge tender-status-normal">일반</span>';
+
+    return `
+        <div class="tender-item opacity-60 hover:opacity-90 transition-opacity" id="dismissed-card-${tender.id}">
+            <div class="flex justify-between items-start mb-1">
+                <div class="flex flex-wrap items-center gap-1">
+                    ${statusBadge}
+                    ${dismissedAt ? `<span class="text-xs text-gray-400">숨김: ${dismissedAt}</span>` : ''}
+                </div>
+                <div class="flex items-center gap-2 ml-2 shrink-0">
+                    <span class="${deadlineClass} text-sm">${deadlineText}</span>
+                    <button onclick="undismissTender(${tender.id})"
+                            class="text-xs text-blue-600 hover:text-blue-800 border border-blue-200 hover:border-blue-400 rounded px-2 py-0.5 transition-colors"
+                            title="복원 — 다시 대시보드에 표시">복원</button>
+                </div>
+            </div>
+            <h4 class="font-medium text-gray-700 mt-1">
+                <a href="/tender/${tender.id}" class="hover:text-blue-600 hover:underline">
+                    ${escapeHtml(tender.title)}
+                </a>
+            </h4>
+            <div class="flex justify-between items-center text-sm text-gray-500 mt-1">
+                <div class="flex items-center gap-2">
+                    <span>${(tender.agency && tender.agency.includes('조달청') && tender.demand_agency) ? `수요: ${escapeHtml(tender.demand_agency)}` : `발주: ${escapeHtml(tender.agency)}`}</span>
+                    <span class="text-xs px-2 py-0.5 bg-gray-100 rounded">${tender.source_site}</span>
+                </div>
+                <span>금액: ${price}</span>
+            </div>
+        </div>`;
+}
+
+async function undismissTender(tenderId) {
+    try {
+        const res = await fetch(`/api/tenders/${tenderId}/dismiss`, { method: 'DELETE' });
+        if (res.ok) {
+            const card = document.getElementById(`dismissed-card-${tenderId}`);
+            if (card) {
+                card.style.transition = 'opacity 0.3s';
+                card.style.opacity = '0';
+                setTimeout(() => { card.remove(); loadDismissed(); }, 300);
+            }
+        }
+    } catch (e) { console.error(e); }
 }
 
 function buildScoreBadge(score, businessType, labelBonus) {
@@ -154,7 +263,7 @@ async function removeBookmark(tenderId, bookmarkId) {
             const card = document.getElementById(`bookmark-card-${tenderId}`);
             if (card) card.remove();
             const remaining = document.querySelectorAll('[id^="bookmark-card-"]').length;
-            document.getElementById('bookmark-count').textContent = `${remaining}건`;
+            document.getElementById('bookmark-count').textContent = remaining;
             if (remaining === 0) {
                 document.getElementById('bookmarks-list').innerHTML = `
                     <div class="text-center py-12">

@@ -7,7 +7,7 @@ from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
 from config import Config
-from database import db, init_db, Tender, Filter, CrawlLog, Bookmark, TenderAnalysis, User
+from database import db, init_db, Tender, Filter, CrawlLog, Bookmark, TenderAnalysis, User, UserPreference, DismissedTender, TenderMemo
 from datetime import datetime, timedelta
 import json
 import re
@@ -192,7 +192,7 @@ def login_required(f):
 
 
 def admin_required(f):
-    """관리자만 접근 가능"""
+    """Admin(최고관리자)만 접근 가능"""
     @wraps(f)
     def decorated(*args, **kwargs):
         if g.user is None:
@@ -202,6 +202,22 @@ def admin_required(f):
         if g.user.role != 'admin':
             if request.is_json or request.path.startswith('/api/'):
                 return jsonify({'error': '관리자 권한이 필요합니다.'}), 403
+            return render_template('403.html'), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
+def moderator_required(f):
+    """Admin 또는 중간관리자(moderator)만 접근 가능"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if g.user is None:
+            if request.is_json or request.path.startswith('/api/'):
+                return jsonify({'error': '로그인이 필요합니다.', 'redirect': '/login'}), 401
+            return redirect(url_for('login_page', next=request.path))
+        if g.user.role not in ('admin', 'moderator'):
+            if request.is_json or request.path.startswith('/api/'):
+                return jsonify({'error': '접근 권한이 없습니다.'}), 403
             return render_template('403.html'), 403
         return f(*args, **kwargs)
     return decorated
@@ -276,9 +292,22 @@ def get_last_workday(from_date=None):
 
 
 # 관심 키워드 로드 함수
-def load_interest_keywords():
-    """설정 파일에서 관심 키워드 로드 (쉼표 구분 문자열도 개별 키워드로 분리)"""
+def _get_user_pref(user_id):
+    """user_id에 해당하는 UserPreference 반환. 없으면 빈 객체 반환"""
+    if user_id is None:
+        return None
+    with app.app_context():
+        return UserPreference.query.filter_by(user_id=user_id).first()
+
+
+def load_interest_keywords(user_id=None):
+    """사용자별 관심 키워드 로드"""
     try:
+        if user_id is not None:
+            pref = UserPreference.query.filter_by(user_id=user_id).first()
+            if pref:
+                return pref.get_interest_keywords()
+        # fallback: settings.json (레거시)
         with open('data/settings.json', 'r', encoding='utf-8') as f:
             settings = json.load(f)
             raw = settings.get('user_preferences', {}).get('interest_keywords', [])
@@ -293,21 +322,27 @@ def load_interest_keywords():
         return []
 
 
-def load_exclude_keywords():
-    """설정 파일에서 제외 키워드 로드"""
+def load_exclude_keywords(user_id=None):
+    """사용자별 제외 키워드 로드"""
     try:
+        if user_id is not None:
+            pref = UserPreference.query.filter_by(user_id=user_id).first()
+            if pref:
+                return pref.get_exclude_keywords()
         with open('data/settings.json', 'r', encoding='utf-8') as f:
             settings = json.load(f)
-            return settings.get(
-                'user_preferences', {}).get(
-                'exclude_keywords', [])
+            return settings.get('user_preferences', {}).get('exclude_keywords', [])
     except BaseException:
         return []
 
 
-def load_budget_range():
-    """설정 파일에서 금액 범위 로드 (단위: 원). min/max 중 None이면 제한 없음"""
+def load_budget_range(user_id=None):
+    """사용자별 금액 범위 로드"""
     try:
+        if user_id is not None:
+            pref = UserPreference.query.filter_by(user_id=user_id).first()
+            if pref:
+                return pref.get_budget_range()
         with open('data/settings.json', 'r', encoding='utf-8') as f:
             settings = json.load(f)
             return settings.get('user_preferences', {}).get('budget_range', {})
@@ -438,7 +473,7 @@ def _priority_score(tender):
     return min(10.0, round(urgency + price_bonus, 2))
 
 
-def _score_and_type(tender, include_keywords):
+def _score_and_type(tender, include_keywords, type_weights=None):
     """
     적합도 점수(소수점 1자리, 최대 100.0점) + 사업 유형 계산
 
@@ -452,9 +487,9 @@ def _score_and_type(tender, include_keywords):
 
     A×B 기반 점수 (최대 30점) + C 시너지 보너스 (최대 15점) = 최대 45점
 
-    ── 사업 유형 점수 45점 ───────────────────────────────────────────────
-    교육운영(45) > 시설운영(36) > 콘텐츠개발(31.5) > 행사운영(27) >
-    컨설팅(18) > 연구용역(9) > 기타(0)  * 복합 패턴 기반, 오분류 방지
+    ── 사업 유형 점수 (사용자 설정, 기본 25점) ────────────────────────────
+    최우선(45) / 선호(35) / 보통(25, 기본값) / 낮음(15) / 제외(0)
+    * type_weights에 직접 점수로 저장. 설정 없으면 25점(보통).
 
     ── 우선순위 점수 10점 ───────────────────────────────────────────────
     마감 긴급도(0-7점) + 사업 규모 보너스(0-3점) → 동점 최소화 (소수점 표시)
@@ -497,7 +532,16 @@ def _score_and_type(tender, include_keywords):
 
     # ── 사업 유형 점수 ───────────────────────────────────────────────────
     type_name, raw_type_score = _detect_business_type(cleaned)
-    type_score = raw_type_score * 0.9   # 50→45, 40→36, 35→31.5, 30→27, 20→18, 10→9
+    if type_name == '기타':
+        type_score = 0.0
+    else:
+        raw_user_w = (type_weights or {}).get(type_name)
+        if raw_user_w is None:
+            type_score = 25.0                           # 기본값: 보통 25점
+        elif float(raw_user_w) > 2.0:
+            type_score = float(raw_user_w)              # 신규: 직접 점수 (45/35/25/15/0)
+        else:
+            type_score = raw_type_score * 0.9 * float(raw_user_w)  # 레거시: 배율
 
     # ── 우선순위 점수 ────────────────────────────────────────────────────
     priority = _priority_score(tender)
@@ -506,11 +550,11 @@ def _score_and_type(tender, include_keywords):
     return total, type_name
 
 
-def calculate_relevance_score(tender, include_keywords):
-    return _score_and_type(tender, include_keywords)[0]
+def calculate_relevance_score(tender, include_keywords, type_weights=None):
+    return _score_and_type(tender, include_keywords, type_weights)[0]
 
 
-def smart_sort_tenders_by_keyword_count(tenders, include_keywords):
+def smart_sort_tenders_by_keyword_count(tenders, include_keywords, type_weights=None):
     """
     관련성 점수 기반 정렬
     1순위: 관련성 점수 (높을수록)
@@ -518,7 +562,7 @@ def smart_sort_tenders_by_keyword_count(tenders, include_keywords):
     3순위: 금액 (높을수록)
     """
     def sort_key(tender):
-        score = calculate_relevance_score(tender, include_keywords)
+        score = calculate_relevance_score(tender, include_keywords, type_weights)
         if tender.announced_date:
             try:
                 date_ord = tender.announced_date.toordinal()
@@ -625,25 +669,42 @@ def logout():
     return redirect('/login')
 
 
-# ── 사용자 관리 API (관리자 전용) ───────────────────────────────────────────────
+# ── 사용자 관리 API ────────────────────────────────────────────────────────────
+# 역할: admin(최고관리자) / moderator(중간관리자) / user(일반회원)
+# admin     : 전체 관리 (다른 admin 포함, 마지막 admin 보호)
+# moderator : 일반회원(user)만 생성·PW변경·삭제·중간관리자 승급 가능
+# user      : 관리 페이지 접근 불가
+
+def _role_label(role):
+    return {'admin': 'Admin', 'moderator': '중간관리자', 'user': '일반회원'}.get(role, role)
+
 
 @app.route('/api/admin/users', methods=['GET'])
-@admin_required
+@moderator_required
 def api_admin_users():
-    return jsonify([u.to_dict() for u in User.query.order_by(User.created_at).all()])
+    """사용자 목록 — admin: 전체, moderator: user 역할만"""
+    if g.user.role == 'admin':
+        users = User.query.order_by(User.created_at).all()
+    else:
+        users = User.query.filter_by(role='user').order_by(User.created_at).all()
+    return jsonify([u.to_dict() for u in users])
 
 
 @app.route('/api/admin/users', methods=['POST'])
-@admin_required
+@moderator_required
 def api_admin_create_user():
+    """사용자 생성 — admin: 모든 역할, moderator: user만"""
     data = request.json or {}
     username = data.get('username', '').strip()
     password = data.get('password', '').strip()
     role = data.get('role', 'user')
     if not username or not password:
         return jsonify({'error': '아이디와 비밀번호를 입력하세요.'}), 400
-    if role not in ('admin', 'user'):
-        return jsonify({'error': '역할은 admin 또는 user 이어야 합니다.'}), 400
+    if role not in ('admin', 'moderator', 'user'):
+        return jsonify({'error': '유효하지 않은 역할입니다.'}), 400
+    # 중간관리자는 user만 생성 가능
+    if g.user.role == 'moderator' and role != 'user':
+        return jsonify({'error': '중간관리자는 일반회원만 생성할 수 있습니다.'}), 403
     if User.query.filter_by(username=username).first():
         return jsonify({'error': '이미 존재하는 아이디입니다.'}), 409
     user = User(username=username, password_hash=generate_password_hash(password), role=role)
@@ -653,22 +714,29 @@ def api_admin_create_user():
 
 
 @app.route('/api/admin/users/<int:user_id>', methods=['DELETE'])
-@admin_required
+@moderator_required
 def api_admin_delete_user(user_id):
+    """사용자 삭제 — admin: 모두(마지막 admin 보호), moderator: user만"""
     user = User.query.get_or_404(user_id)
     if user.id == g.user.id:
         return jsonify({'error': '자기 자신은 삭제할 수 없습니다.'}), 400
+    # 중간관리자는 user만 삭제 가능
+    if g.user.role == 'moderator' and user.role != 'user':
+        return jsonify({'error': '중간관리자는 일반회원만 삭제할 수 있습니다.'}), 403
     if user.role == 'admin' and User.query.filter_by(role='admin').count() <= 1:
-        return jsonify({'error': '마지막 관리자는 삭제할 수 없습니다.'}), 400
+        return jsonify({'error': '마지막 Admin은 삭제할 수 없습니다.'}), 400
     db.session.delete(user)
     db.session.commit()
     return jsonify({'message': '삭제되었습니다.'})
 
 
 @app.route('/api/admin/users/<int:user_id>/password', methods=['POST'])
-@admin_required
+@moderator_required
 def api_admin_change_password(user_id):
+    """비밀번호 변경 — admin: 모두, moderator: user만"""
     user = User.query.get_or_404(user_id)
+    if g.user.role == 'moderator' and user.role != 'user':
+        return jsonify({'error': '중간관리자는 일반회원의 비밀번호만 변경할 수 있습니다.'}), 403
     data = request.json or {}
     new_pw = data.get('password', '').strip()
     if len(new_pw) < 4:
@@ -679,20 +747,27 @@ def api_admin_change_password(user_id):
 
 
 @app.route('/api/admin/users/<int:user_id>/role', methods=['POST'])
-@admin_required
+@moderator_required
 def api_admin_change_role(user_id):
+    """역할 변경 — admin: 자유, moderator: user→moderator 승급만"""
     user = User.query.get_or_404(user_id)
     data = request.json or {}
     new_role = data.get('role', '')
-    if new_role not in ('admin', 'user'):
+    if new_role not in ('admin', 'moderator', 'user'):
         return jsonify({'error': '유효하지 않은 역할입니다.'}), 400
-    if user.id == g.user.id and new_role != 'admin':
-        return jsonify({'error': '자신의 관리자 권한은 해제할 수 없습니다.'}), 400
-    if user.role == 'admin' and new_role == 'user' and User.query.filter_by(role='admin').count() <= 1:
-        return jsonify({'error': '마지막 관리자의 역할은 변경할 수 없습니다.'}), 400
+    # 중간관리자 제한: user→moderator 승급만 허용
+    if g.user.role == 'moderator':
+        if user.role != 'user' or new_role != 'moderator':
+            return jsonify({'error': '중간관리자는 일반회원을 중간관리자로 승급하는 것만 가능합니다.'}), 403
+    # 자기 자신의 admin 권한 해제 방지
+    if user.id == g.user.id and user.role == 'admin' and new_role != 'admin':
+        return jsonify({'error': '자신의 Admin 권한은 해제할 수 없습니다.'}), 400
+    # 마지막 admin 보호
+    if user.role == 'admin' and new_role != 'admin' and User.query.filter_by(role='admin').count() <= 1:
+        return jsonify({'error': '마지막 Admin의 역할은 변경할 수 없습니다.'}), 400
     user.role = new_role
     db.session.commit()
-    return jsonify({'message': '역할이 변경되었습니다.', 'role': new_role})
+    return jsonify({'message': f'역할이 {_role_label(new_role)}(으)로 변경되었습니다.', 'role': new_role})
 
 
 @app.route('/api/me/password', methods=['POST'])
@@ -728,7 +803,7 @@ def search_page():
 
 
 @app.route('/filters')
-@admin_required
+@moderator_required
 def filters_page():
     """필터 관리 페이지"""
     return render_template('filters.html')
@@ -773,25 +848,63 @@ def tender_detail(tender_id):
     return render_template('detail.html', tender=tender, days_left=days_left, is_expired=is_expired)
 
 
+@app.route('/admin/users')
+@moderator_required
+def admin_users_page():
+    """회원 관리 페이지 (admin + moderator 접근 가능)"""
+    return render_template('admin_users.html')
+
+
 @app.route('/api/tender/<int:tender_id>/related')
 @login_required
 def api_tender_related(tender_id):
     """
-    연관 공고 검색: 제목 앞 15자가 같은 공고를 찾아 반환.
-    사전규격 ↔ 일반입찰을 서로 연결하는 데 사용.
+    연관 공고 검색: 같은 채널 + 같은 수요기관 기준.
+    나라장터는 사전규격·API를 같은 채널로 묶어 처리.
     """
+    import re as _re2
+
     tender = Tender.query.get_or_404(tender_id)
 
-    # 제목 첫 15자로 같은 사업의 다른 공고 탐색
-    title_key = tender.title[:15]
-    related = Tender.query.filter(
-        Tender.id != tender_id,          # 자기 자신 제외
-        Tender.title.contains(title_key) # 제목 앞부분 일치
-    ).order_by(
-        # 상태가 다른 것(사전규격 ↔ 일반) 우선 표시
-        db.case((Tender.status == '사전규격', 0), else_=1).label('status_order'),
+    # ── 1. 채널 패밀리 결정 ──────────────────────────────────────
+    G2B_SITES = {'나라장터', '나라장터 사전규격', '나라장터 API'}
+    if tender.source_site in G2B_SITES:
+        site_filter = Tender.source_site.in_(list(G2B_SITES))
+    else:
+        site_filter = Tender.source_site == tender.source_site
+
+    # ── 2. 수요기관 결정 (실수요기관 우선, 없으면 공고기관) ──────
+    search_agency = tender.demand_agency or tender.agency
+    agency_filter = db.or_(
+        Tender.demand_agency == search_agency,
+        db.and_(Tender.demand_agency == None, Tender.agency == search_agency),
+        Tender.agency == search_agency,
+    ) if search_agency else None
+
+    # ── 3. 제목 핵심어 추출 (연도·회차·메타태그 제거) ──────────
+    raw = tender.title or ''
+    raw = _re2.sub(r'\[[^\]]+\]', '', raw)          # [대괄호] 제거
+    raw = _re2.sub(r'\d{4}년도?', '', raw)
+    raw = _re2.sub(r"'\d{2}년도?", '', raw)
+    raw = _re2.sub(r'제\s*\d+\s*회차?', '', raw)
+    raw = _re2.sub(r'\d+\s*차년도', '', raw)
+    raw = _re2.sub(r'\d+\s*차\b', '', raw)
+    raw = _re2.sub(r'^\(?\s*(재공고|재입찰)\s*\)?[\s-]*', '', raw)
+    raw = _re2.sub(r'\s+', ' ', raw).strip()
+    title_key = raw[:20] if len(raw) > 20 else raw
+
+    # ── 4. 쿼리 ──────────────────────────────────────────────────
+    filters = [Tender.id != tender_id, site_filter]
+    if agency_filter is not None:
+        filters.append(agency_filter)
+    if title_key:
+        filters.append(Tender.title.contains(title_key))
+
+    related = Tender.query.filter(*filters).order_by(
+        # 상태가 다른 것(사전규격 ↔ 일반) 우선
+        db.case((Tender.status != tender.status, 0), else_=1),
         Tender.announced_date.desc()
-    ).limit(5).all()
+    ).limit(8).all()
 
     result = []
     for t in related:
@@ -825,10 +938,18 @@ def api_dashboard():
         else:
             start_date = yesterday
 
-        # 포함/제외 키워드 및 금액 범위 로드
-        include_keywords = load_interest_keywords()
-        exclude_keywords = load_exclude_keywords()
-        budget_range = load_budget_range()
+        # 포함/제외 키워드 및 금액 범위 로드 (사용자별)
+        uid = g.user.id if g.user else None
+        include_keywords = load_interest_keywords(uid)
+        exclude_keywords = load_exclude_keywords(uid)
+        budget_range = load_budget_range(uid)
+
+        # 관심없음 처리된 공고 ID 목록
+        dismissed_ids = [d.tender_id for d in DismissedTender.query.filter_by(user_id=uid).all()] if uid else []
+
+        # 사용자 사업유형 가중치 로드
+        _pref = UserPreference.query.filter_by(user_id=uid).first() if uid else None
+        user_type_weights = _pref.get_type_weights() if _pref else {}
 
         # 공통 필터 준비
         kw_filter = db.or_(*[Tender.title.contains(kw) for kw in include_keywords]) if include_keywords else None
@@ -883,8 +1004,10 @@ def api_dashboard():
                 db.or_(Tender.estimated_price == None, Tender.estimated_price <= br_max))
 
         all_pre_new = pre_new_query.all()
+        if dismissed_ids:
+            all_pre_new = [t for t in all_pre_new if t.id not in dismissed_ids]
         sorted_pre_new = smart_sort_tenders_by_keyword_count(
-            all_pre_new, include_keywords)
+            all_pre_new, include_keywords, user_type_weights)
         pre_tenders = sorted_pre_new[:20]
 
         # 6. 신규공고(기타 채널): 금~오늘, 나라장터 제외, 수의계약 제외, 마감 안 지난 것
@@ -910,8 +1033,10 @@ def api_dashboard():
                 db.or_(Tender.estimated_price == None, Tender.estimated_price <= br_max))
 
         all_new = new_query.all()
+        if dismissed_ids:
+            all_new = [t for t in all_new if t.id not in dismissed_ids]
         sorted_new = smart_sort_tenders_by_keyword_count(
-            all_new, include_keywords)
+            all_new, include_keywords, user_type_weights)
         recent_tenders = sorted_new[:20]
 
         seven_days_ago = now - timedelta(days=7)
@@ -940,7 +1065,9 @@ def api_dashboard():
                 db.or_(Tender.estimated_price == None, Tender.estimated_price <= br_max))
 
         all_urgent = urgent_query.all()
-        sorted_urgent = smart_sort_tenders_by_keyword_count(all_urgent, include_keywords)
+        if dismissed_ids:
+            all_urgent = [t for t in all_urgent if t.id not in dismissed_ids]
+        sorted_urgent = smart_sort_tenders_by_keyword_count(all_urgent, include_keywords, user_type_weights)
         urgent_tenders = sorted_urgent[:20]
 
         # 전체 필터 적용 후 총 건수 (배지용)
@@ -1160,8 +1287,8 @@ def api_tenders():
 
         pagination = ManualPagination(items, page, per_page, total)
 
-        # 관심 키워드 로드
-        interest_keywords = load_interest_keywords()
+        # 관심 키워드 로드 (사용자별)
+        interest_keywords = load_interest_keywords(g.user.id if g.user else None)
 
         return jsonify({
             'tenders': [t.to_dict(interest_keywords=interest_keywords) for t in pagination.items],
@@ -1179,20 +1306,19 @@ def api_tenders():
 def api_filters():
     """필터 목록 조회 또는 새 필터 생성"""
     if request.method == 'GET':
-        filters = Filter.query.all()
+        filters = Filter.query.filter_by(user_id=g.user.id).all()
         return jsonify([f.to_dict() for f in filters])
 
     elif request.method == 'POST':
-        if g.user.role != 'admin':
-            return jsonify({'error': '관리자 권한이 필요합니다.'}), 403
         try:
             data = request.json
 
-            # 기본 필터로 설정하는 경우, 다른 필터의 기본값 해제
+            # 기본 필터로 설정하는 경우, 해당 사용자의 다른 필터 기본값 해제
             if data.get('is_default'):
-                Filter.query.update({'is_default': False})
+                Filter.query.filter_by(user_id=g.user.id).update({'is_default': False})
 
             new_filter = Filter(
+                user_id=g.user.id,
                 name=data['name'],
                 is_default=data.get('is_default', False),
                 include_keywords=json.dumps(data.get('include_keywords', [])),
@@ -1217,10 +1343,12 @@ def api_filters():
 
 
 @app.route('/api/filters/<int:filter_id>', methods=['PUT', 'DELETE'])
-@admin_required
+@login_required
 def api_filter_detail(filter_id):
-    """필터 수정 또는 삭제"""
+    """필터 수정 또는 삭제 (본인 소유만)"""
     filter_obj = Filter.query.get_or_404(filter_id)
+    if filter_obj.user_id != g.user.id:
+        return jsonify({'error': '본인 필터만 수정/삭제할 수 있습니다.'}), 403
 
     if request.method == 'PUT':
         try:
@@ -1312,8 +1440,8 @@ def api_stats():
 def api_bookmarks():
     """관심공고 목록 조회 (공고 상세 + 적합도 점수 포함)"""
     try:
-        include_keywords = load_interest_keywords()
-        bookmarks = Bookmark.query.order_by(Bookmark.created_at.desc()).all()
+        include_keywords = load_interest_keywords(g.user.id)
+        bookmarks = Bookmark.query.filter_by(user_id=g.user.id).order_by(Bookmark.created_at.desc()).all()
         result = []
         for b in bookmarks:
             tender = b.tender
@@ -1345,13 +1473,13 @@ def api_bookmark_toggle():
         if not tender_id:
             return jsonify({'error': 'tender_id 필요'}), 400
 
-        existing = Bookmark.query.filter_by(tender_id=tender_id).first()
+        existing = Bookmark.query.filter_by(tender_id=tender_id, user_id=g.user.id).first()
         if existing:
             db.session.delete(existing)
             db.session.commit()
             return jsonify({'bookmarked': False})
         else:
-            bookmark = Bookmark(tender_id=tender_id, user_note='')
+            bookmark = Bookmark(tender_id=tender_id, user_id=g.user.id, user_note='')
             db.session.add(bookmark)
             db.session.commit()
             return jsonify({'bookmarked': True, 'bookmark_id': bookmark.id})
@@ -1384,10 +1512,344 @@ def api_bookmark_label(bookmark_id):
 def api_bookmark_ids():
     """북마크된 tender_id 목록"""
     try:
-        ids = [b.tender_id for b in Bookmark.query.with_entities(Bookmark.tender_id).all()]
+        ids = [b.tender_id for b in Bookmark.query.filter_by(user_id=g.user.id).with_entities(Bookmark.tender_id).all()]
         return jsonify(ids)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tenders/<int:tender_id>/memos', methods=['GET', 'POST'])
+@login_required
+def api_tender_memos(tender_id):
+    """공고 공유 메모 조회/작성"""
+    if request.method == 'GET':
+        try:
+            memos = TenderMemo.query.filter_by(tender_id=tender_id)\
+                .order_by(TenderMemo.created_at.asc()).all()
+            return jsonify([m.to_dict() for m in memos])
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    elif request.method == 'POST':
+        try:
+            content = (request.json or {}).get('content', '').strip()
+            if not content:
+                return jsonify({'error': '내용을 입력하세요.'}), 400
+            if len(content) > 1000:
+                return jsonify({'error': '메모는 1000자 이내로 작성하세요.'}), 400
+            memo = TenderMemo(tender_id=tender_id, user_id=g.user.id, content=content)
+            db.session.add(memo)
+            db.session.commit()
+            return jsonify(memo.to_dict()), 201
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tenders/<int:tender_id>/memos/<int:memo_id>', methods=['DELETE'])
+@login_required
+def api_tender_memo_delete(tender_id, memo_id):
+    """공고 공유 메모 삭제 (본인 또는 admin/moderator)"""
+    try:
+        memo = TenderMemo.query.filter_by(id=memo_id, tender_id=tender_id).first_or_404()
+        if memo.user_id != g.user.id and g.user.role not in ('admin', 'moderator'):
+            return jsonify({'error': '본인 메모만 삭제할 수 있습니다.'}), 403
+        db.session.delete(memo)
+        db.session.commit()
+        return jsonify({'message': '삭제되었습니다.'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tenders/<int:tender_id>/dismiss', methods=['POST', 'DELETE'])
+@login_required
+def api_dismiss_tender(tender_id):
+    """공고 관심없음 처리 / 취소"""
+    try:
+        existing = DismissedTender.query.filter_by(
+            user_id=g.user.id, tender_id=tender_id).first()
+
+        if request.method == 'POST':
+            if existing:
+                return jsonify({'dismissed': True})  # 이미 처리됨
+            dismissed = DismissedTender(user_id=g.user.id, tender_id=tender_id)
+            db.session.add(dismissed)
+            db.session.commit()
+            return jsonify({'dismissed': True})
+
+        else:  # DELETE — 관심없음 취소
+            if existing:
+                db.session.delete(existing)
+                db.session.commit()
+            return jsonify({'dismissed': False})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/dismissed', methods=['GET'])
+@login_required
+def api_dismissed_list():
+    """관심없음 공고 목록 조회"""
+    try:
+        include_keywords = load_interest_keywords(g.user.id)
+        dismissed = DismissedTender.query.filter_by(
+            user_id=g.user.id).order_by(DismissedTender.created_at.desc()).all()
+        result = []
+        for d in dismissed:
+            tender = d.tender
+            if not tender:
+                continue
+            td = tender.to_dict(interest_keywords=include_keywords)
+            td['dismissed_at'] = d.created_at.isoformat()
+            td['dismissed_id'] = d.id
+            result.append(td)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/dismissed/ids', methods=['GET'])
+@login_required
+def api_dismissed_ids():
+    """관심없음 처리된 tender_id 목록"""
+    try:
+        ids = [d.tender_id for d in DismissedTender.query.filter_by(
+            user_id=g.user.id).with_entities(DismissedTender.tender_id).all()]
+        return jsonify(ids)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/tenders/<int:tender_id>/history')
+@login_required
+def api_tender_history(tender_id):
+    """공고 수행이력 조회 - 나라장터 낙찰결과 API (최근 5년, 월별 병렬 조회)"""
+    import requests as _req
+    import re as _re
+    from datetime import datetime as _dt, timedelta as _td
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import calendar as _cal
+
+    tender = Tender.query.get_or_404(tender_id)
+
+    service_key = settings_manager.get('crawl.sites.g2b_api.service_key', '')
+    if not service_key:
+        return jsonify({'error': 'API 키가 설정되지 않았습니다.'}), 500
+
+    # 공고명에서 메타정보 제거 → 핵심 사업명만 추출
+    title = tender.title or ''
+    clean = title
+
+    # ① 대괄호 내용 전체 제거 ([재공고] [일반용역] [긴급] [사전규격공개] 등)
+    clean = _re.sub(r'\[[^\]]+\]', '', clean)
+    # ② 소괄호 내 메타 키워드 제거 (재공고·재입찰·긴급·사전규격 등, 20자 이내)
+    _META_PAREN = re.compile(
+        r'\(\s*(?:재공고|재입찰|긴급|사전규격공개|사전규격|일반용역|추가공고|정정공고|공고|변경)\s*\)',
+        re.IGNORECASE,
+    )
+    clean = _META_PAREN.sub('', clean)
+    # ③ 연도·회차·차년도 제거
+    clean = _re.sub(r'\d{4}년도?', '', clean)
+    clean = _re.sub(r"'\d{2}년도?", '', clean)
+    clean = _re.sub(r'\(\s*20\d{2}\s*\)', '', clean)
+    clean = _re.sub(r'제\s*\d+\s*회차?', '', clean)
+    clean = _re.sub(r'\d+\s*차년도', '', clean)
+    clean = _re.sub(r'\d+\s*차\b', '', clean)
+    # ④ 앞부분 재공고·재입찰 표기 제거
+    clean = _re.sub(r'^\(?\s*(재공고|재입찰)\s*\)?[\s-]*', '', clean)
+    clean = _re.sub(r'\s+', ' ', clean).strip()
+    query_nm = clean[:60] if len(clean) > 60 else clean
+
+    # API 최대 허용 범위: ~31일. 5년 × 12개월 = 60 구간으로 나눠 병렬 조회
+    now = _dt.now()
+    months = []  # (year, month) 목록 (최근 5년)
+    for offset in range(60):
+        y = now.year
+        m = now.month - offset
+        while m <= 0:
+            m += 12
+            y -= 1
+        months.append((y, m))
+
+    base = 'http://apis.data.go.kr/1230000/as/ScsbidInfoService'
+    all_types = request.args.get('all_types') == '1'
+
+    # (endpoint, bid_type_label, result_kind)
+    # result_kind: 'award' = 낙찰결과, 'openg' = 개찰결과(유찰감지용)
+    ops = [
+        ('getScsbidListSttusServcPPSSrch',        '용역', 'award'),
+        ('getOpengResultListInfoServcPPSSrch',     '용역', 'openg'),  # 유찰 감지
+    ]
+    if all_types:
+        ops += [
+            ('getScsbidListSttusThngPPSSrch',     '물품', 'award'),
+            ('getScsbidListSttusCnstwkPPSSrch',   '공사', 'award'),
+        ]
+
+    def _parse_items(data):
+        """API 응답에서 item 리스트 추출 (리스트/딕셔너리/None 모두 처리)"""
+        body = data.get('response', {}).get('body', {})
+        raw = body.get('items')
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, dict):
+            inner = raw.get('item', [])
+            return [inner] if isinstance(inner, dict) else inner
+        return []
+
+    def fetch_month(op, bid_type, kind, year, month):
+        last_day = _cal.monthrange(year, month)[1]
+        bdt = f'{year}{month:02d}010000'
+        edt = f'{year}{month:02d}{last_day:02d}2359'
+        try:
+            r = _req.get(
+                f'{base}/{op}',
+                params={
+                    'ServiceKey': service_key, 'type': 'json',
+                    'inqryDiv': '1', 'inqryBgnDt': bdt, 'inqryEndDt': edt,
+                    'bidNtceNm': query_nm, 'pageNo': '1', 'numOfRows': '100',
+                },
+                timeout=15,
+            )
+            data = r.json()
+            if 'nkoneps' in str(data):
+                return kind, bid_type, [], None
+            raw = _parse_items(data)
+            for item in raw:
+                item['_bid_type'] = bid_type
+                item['_kind'] = kind
+            return kind, bid_type, raw, None
+        except Exception as e:
+            return kind, bid_type, [], str(e)
+
+    seen_award_ids = set()   # 낙찰결과 입찰공고번호 (중복 제거용)
+    seen_openg_ids = set()   # 개찰결과 입찰공고번호
+    award_items = []         # 낙찰 성공 목록
+    openg_failed = []        # 단독응찰 유찰 목록
+
+    errors = []
+
+    # 병렬 조회 (최대 20 스레드)
+    futures = []
+    with ThreadPoolExecutor(max_workers=20) as ex:
+        for op, bid_type, kind in ops:
+            for y, m in months:
+                futures.append(ex.submit(fetch_month, op, bid_type, kind, y, m))
+
+        for fut in as_completed(futures):
+            kind, bid_type, items, err = fut.result()
+            if err:
+                errors.append(f'{bid_type}: {err}')
+                continue
+
+            for item in items:
+                bid_no = item.get('bidNtceNo', '')
+                if not bid_no:
+                    continue
+
+                if kind == 'award':
+                    if bid_no not in seen_award_ids:
+                        seen_award_ids.add(bid_no)
+                        award_items.append(item)
+                else:  # 'openg' - 개찰결과: 유찰(단독응찰·무응찰) 수집
+                    progrs = item.get('progrsDivCdNm', '')
+                    cnt = int(item.get('prtcptCnum') or 0)
+                    if progrs == '유찰':
+                        if bid_no not in seen_openg_ids:
+                            seen_openg_ids.add(bid_no)
+                            if cnt == 0:
+                                item['_fail_type'] = 'no_bidder'    # 무응찰
+                            elif cnt == 1:
+                                item['_fail_type'] = 'sole_bidder'  # 단독응찰
+                            else:
+                                item['_fail_type'] = 'unknown'      # 기타 유찰
+                            openg_failed.append(item)
+
+    # ── 유찰 후 수의계약 탐지 ────────────────────────────────────────────────
+    # 낙찰결과 항목을 입찰공고번호로 인덱싱
+    award_by_bidno = {
+        x.get('bidNtceNo'): x
+        for x in award_items
+        if x.get('bidNtceNo')
+    }
+    # 유찰 항목을 낙찰결과 항목과 입찰공고번호로 매칭
+    # → 같은 번호가 낙찰결과에도 있으면 "유찰 후 수의계약" 으로 처리
+    bids_absorbed = set()  # award_items에서 제거할 bid_no (중복 방지)
+
+    for item in openg_failed:
+        bid_no = item.get('bidNtceNo', '')
+        if bid_no and bid_no in award_by_bidno:
+            award = award_by_bidno[bid_no]
+            item['_followup_contract'] = {
+                'winner': award.get('bidwinnrNm', ''),
+                'amount': award.get('sucsfbidAmt', ''),
+                'date':   (award.get('rlOpengDt') or
+                           award.get('fnlSucsfDate') or '')[:10],
+            }
+            bids_absorbed.add(bid_no)
+
+    # ── 2차 조회: 유찰 후 계약현황 (입찰번호 직접 조회) ─────────────────────
+    # PPSSrch(공고명) 검색에서 누락된 수의계약을 bidNtceNo 직접 조회로 탐지
+    unresolved = [item for item in openg_failed if '_followup_contract' not in item]
+
+    def fetch_by_bidno(fail_item):
+        bid_no = fail_item.get('bidNtceNo', '')
+        if not bid_no:
+            return fail_item, None
+        try:
+            r = _req.get(
+                f'{base}/getScsbidListSttusServc',
+                params={
+                    'ServiceKey': service_key, 'type': 'json',
+                    'inqryDiv': '4', 'bidNtceNo': bid_no,
+                    'pageNo': '1', 'numOfRows': '10',
+                },
+                timeout=15,
+            )
+            data = r.json()
+            if 'nkoneps' in str(data):
+                return fail_item, None
+            results = _parse_items(data)
+            if results:
+                award = results[0]
+                winner = award.get('bidwinnrNm', '')
+                amount = award.get('sucsfbidAmt', '')
+                date   = (award.get('rlOpengDt') or award.get('fnlSucsfDate') or '')[:10]
+                if winner or amount:
+                    return fail_item, {'winner': winner, 'amount': amount, 'date': date}
+            return fail_item, None
+        except Exception:
+            return fail_item, None
+
+    if unresolved:
+        with ThreadPoolExecutor(max_workers=10) as ex2:
+            futs2 = [ex2.submit(fetch_by_bidno, item) for item in unresolved]
+            for fut in as_completed(futs2):
+                fail_item, contract = fut.result()
+                if contract:
+                    fail_item['_followup_contract'] = contract
+
+    # 최종 목록 구성:
+    #   1) 수의계약에 흡수되지 않은 낙찰결과
+    #   2) 유찰 목록 (일부는 _followup_contract 포함)
+    final_items = [x for x in award_items
+                   if x.get('bidNtceNo', '') not in bids_absorbed]
+    final_items.extend(openg_failed)
+
+    def _sort_key(x):
+        return (x.get('rlOpengDt') or x.get('opengDt') or
+                x.get('fnlSucsfDate') or '')
+
+    final_items.sort(key=_sort_key, reverse=True)
+
+    return jsonify({
+        'items': final_items,
+        'query': query_nm,
+        'original_title': title,
+        'errors': list(set(errors))[:5],
+    })
 
 
 @app.route('/api/search', methods=['POST'])
@@ -1664,70 +2126,67 @@ def not_found(error):
 @app.route('/api/interest-keywords', methods=['GET', 'POST'])
 @login_required
 def api_interest_keywords():
-    """관심 키워드 조회/저장"""
+    """관심 키워드 조회/저장 (사용자별 개인화)"""
     if request.method == 'GET':
         try:
-            keywords = load_interest_keywords()
-            exclude_keywords = load_exclude_keywords()
-            budget_range = load_budget_range()
+            pref = UserPreference.query.filter_by(user_id=g.user.id).first()
+            if pref:
+                keywords = pref.get_interest_keywords()
+                exclude_keywords = pref.get_exclude_keywords()
+                budget_range = pref.get_budget_range()
+                type_weights = pref.get_type_weights()
+            else:
+                # settings.json 폴백 (UserPreference 레코드 없을 때, 레거시 마이그레이션)
+                keywords = load_interest_keywords(g.user.id)
+                exclude_keywords = load_exclude_keywords(g.user.id)
+                budget_range = load_budget_range(g.user.id)
+                type_weights = {}
             return jsonify({
                 'keywords': keywords,
                 'exclude_keywords': exclude_keywords,
-                'budget_range': budget_range
+                'budget_range': budget_range,
+                'type_weights': type_weights,
             })
         except Exception as e:
-            print(f"[오류] 관심 키워드 로드 실패: {str(e)}")
             return jsonify({'error': str(e)}), 500
 
     elif request.method == 'POST':
-        if g.user.role != 'admin':
-            return jsonify({'error': '관리자 권한이 필요합니다.'}), 403
         try:
             data = request.json
             keywords = data.get('keywords', [])
-            # 제외 키워드와 금액 범위도 함께 저장
             exclude_kws = data.get('exclude_keywords', None)
             budget_range = data.get('budget_range', None)
+            type_weights = data.get('type_weights', None)
 
-            # 설정 파일 로드 (파일이 없으면 기본 설정 사용)
-            import os
-            settings_file = 'data/settings.json'
-            os.makedirs('data', exist_ok=True)
+            pref = UserPreference.query.filter_by(user_id=g.user.id).first()
+            if not pref:
+                pref = UserPreference(user_id=g.user.id,
+                                      interest_keywords='[]',
+                                      exclude_keywords='[]')
+                db.session.add(pref)
 
-            if os.path.exists(settings_file):
-                with open(settings_file, 'r', encoding='utf-8') as f:
-                    settings = json.load(f)
-            else:
-                settings = {
-                    'crawl': {'auto_enabled': True, 'times': ['09:00', '17:00'], 'sites': {}, 'sites_config': {}},
-                    'notification': {'email_enabled': False, 'email_address': '', 'deadline_alert': False, 'deadline_days': 3},
-                    'data': {'auto_cleanup': False, 'retention_days': 30},
-                    'display': {'items_per_page': 20, 'theme': 'light'}
-                }
-
-            if 'user_preferences' not in settings:
-                settings['user_preferences'] = {}
-
-            # 관심 키워드 업데이트
-            settings['user_preferences']['interest_keywords'] = keywords
-            # 제외 키워드 업데이트 (전달된 경우만)
+            pref.interest_keywords = json.dumps(keywords, ensure_ascii=False)
             if exclude_kws is not None:
-                settings['user_preferences']['exclude_keywords'] = exclude_kws
-            # 금액 범위 업데이트 (전달된 경우만)
+                pref.exclude_keywords = json.dumps(exclude_kws, ensure_ascii=False)
             if budget_range is not None:
-                settings['user_preferences']['budget_range'] = budget_range
+                br = budget_range or {}
+                pref.budget_min = br.get('min')
+                pref.budget_max = br.get('max')
+            if type_weights is not None:
+                pref.type_weights = json.dumps(type_weights, ensure_ascii=False)
 
-            with open(settings_file, 'w', encoding='utf-8') as f:
-                json.dump(settings, f, ensure_ascii=False, indent=2)
+            db.session.commit()
 
-            return jsonify({'message': '키워드 필터가 저장되었습니다.',
-                            'keywords': keywords,
-                            'exclude_keywords': settings['user_preferences'].get('exclude_keywords', []),
-                            'budget_range': settings['user_preferences'].get('budget_range', {})})
+            return jsonify({
+                'message': '키워드 필터가 저장되었습니다.',
+                'keywords': pref.get_interest_keywords(),
+                'exclude_keywords': pref.get_exclude_keywords(),
+                'budget_range': pref.get_budget_range(),
+                'type_weights': pref.get_type_weights(),
+            })
         except Exception as e:
+            db.session.rollback()
             print(f"[오류] 키워드 필터 저장 실패: {str(e)}")
-            import traceback
-            traceback.print_exc()
             return jsonify({'error': str(e)}), 500
 
 

@@ -87,6 +87,10 @@ class Filter(db.Model):
     __tablename__ = 'filters'
 
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey('users.id'),
+        nullable=True)   # NULL = 마이그레이션 전 기존 데이터
     name = db.Column(db.String(100), nullable=False)
     is_default = db.Column(db.Boolean, default=False)
 
@@ -158,6 +162,98 @@ class CrawlLog(db.Model):
             'error_message': self.error_message}
 
 
+class TenderMemo(db.Model):
+    """공고별 공유 메모 (전체 사용자 공개)"""
+    __tablename__ = 'tender_memos'
+
+    id = db.Column(db.Integer, primary_key=True)
+    tender_id = db.Column(db.Integer, db.ForeignKey('tenders.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    tender = db.relationship('Tender', backref=db.backref('memos', lazy=True, cascade='all, delete-orphan'))
+    user = db.relationship('User', backref=db.backref('memos', lazy=True))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'tender_id': self.tender_id,
+            'user_id': self.user_id,
+            'username': self.user.username if self.user else '알 수 없음',
+            'user_role': self.user.role if self.user else 'user',
+            'content': self.content,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat(),
+        }
+
+
+class DismissedTender(db.Model):
+    """관심없음 처리된 공고 (사용자별)"""
+    __tablename__ = 'dismissed_tenders'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    tender_id = db.Column(db.Integer, db.ForeignKey('tenders.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint('user_id', 'tender_id'),)
+
+
+class UserPreference(db.Model):
+    """사용자별 개인 설정 (관심 키워드, 제외 키워드, 금액 범위)"""
+    __tablename__ = 'user_preferences'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey('users.id'),
+        unique=True,
+        nullable=False)
+    interest_keywords = db.Column(db.Text, default='[]')   # JSON array
+    exclude_keywords = db.Column(db.Text, default='[]')    # JSON array
+    budget_min = db.Column(db.BigInteger, nullable=True)
+    budget_max = db.Column(db.BigInteger, nullable=True)
+    # 사업유형별 가중치 {"교육운영": 1.5, "시설운영": 0.5, ...} 기본값 1.0
+    type_weights = db.Column(db.Text, default='{}')
+
+    user = db.relationship('User', backref=db.backref('preference', uselist=False))
+
+    def get_interest_keywords(self):
+        try:
+            raw = json.loads(self.interest_keywords or '[]')
+            keywords = []
+            for item in raw:
+                for kw in str(item).split(','):
+                    kw = kw.strip()
+                    if kw:
+                        keywords.append(kw)
+            return keywords
+        except Exception:
+            return []
+
+    def get_exclude_keywords(self):
+        try:
+            return json.loads(self.exclude_keywords or '[]')
+        except Exception:
+            return []
+
+    def get_budget_range(self):
+        result = {}
+        if self.budget_min is not None:
+            result['min'] = self.budget_min
+        if self.budget_max is not None:
+            result['max'] = self.budget_max
+        return result
+
+    def get_type_weights(self):
+        try:
+            return json.loads(self.type_weights or '{}')
+        except Exception:
+            return {}
+
+
 class Bookmark(db.Model):
     """즐겨찾기 테이블"""
     __tablename__ = 'bookmarks'
@@ -181,6 +277,10 @@ class Bookmark(db.Model):
         db.Integer,
         db.ForeignKey('tenders.id'),
         nullable=False)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey('users.id'),
+        nullable=True)   # NULL = 마이그레이션 전 기존 데이터
     user_note = db.Column(db.Text)
     label = db.Column(db.String(20), nullable=True)   # 스크랩 라벨
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -257,14 +357,21 @@ def init_db(app):
     with app.app_context():
         db.create_all()
 
-        # 스키마 마이그레이션: bookmarks.label 컬럼 추가 (없을 경우)
-        try:
-            from sqlalchemy import text
-            db.session.execute(text('ALTER TABLE bookmarks ADD COLUMN label TEXT'))
-            db.session.commit()
-            print("[DB] bookmarks.label 컬럼 추가됨")
-        except Exception:
-            db.session.rollback()  # 이미 존재하면 무시
+        # 스키마 마이그레이션
+        from sqlalchemy import text
+        migrations = [
+            ('ALTER TABLE bookmarks ADD COLUMN label TEXT',                         '[DB] bookmarks.label 추가'),
+            ('ALTER TABLE bookmarks ADD COLUMN user_id INTEGER',                    '[DB] bookmarks.user_id 추가'),
+            ('ALTER TABLE filters ADD COLUMN user_id INTEGER',                      '[DB] filters.user_id 추가'),
+            ('ALTER TABLE user_preferences ADD COLUMN type_weights TEXT DEFAULT "{}"', '[DB] user_preferences.type_weights 추가'),
+        ]
+        for sql, msg in migrations:
+            try:
+                db.session.execute(text(sql))
+                db.session.commit()
+                print(msg)
+            except Exception:
+                db.session.rollback()
 
         # 기본 관리자 계정 생성 (유저가 아무도 없을 때)
         if User.query.count() == 0:

@@ -1,57 +1,458 @@
 {% extends "base.html" %}
-
-{% block title %}필터관리 - 입찰공고 통합 검색 시스템{% endblock %}
+{% block title %}필터 관리 — 입찰공고 통합 검색{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <div class="flex justify-between items-center">
-        <h2 class="text-2xl font-bold text-gray-900">필터 관리</h2>
-        <button onclick="showCreateFilterModal()" class="btn-primary">+ 새 필터 만들기</button>
+<div class="space-y-6 max-w-3xl">
+    <h2 class="text-2xl font-bold text-gray-900">필터 관리</h2>
+
+    <!-- 공고 필터 설정 -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">공고 필터 설정</h3>
+        </div>
+        <div class="card-body">
+            <p class="text-sm text-gray-600 mb-5">
+                대시보드의 "관심 공고" 탭에 표시할 공고를 필터링합니다.<br>
+                <span class="text-xs text-gray-500">관심 키워드 중 하나라도 포함되고, 제외 키워드는 없으며, 금액 범위 조건을 만족하는 공고만 표시됩니다.</span>
+            </p>
+
+            <!-- 관심 키워드 -->
+            <div class="mb-6">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="inline-block w-3 h-3 rounded-full bg-green-500"></span>
+                    <label class="font-semibold text-sm text-gray-800">관심 키워드</label>
+                    <span class="text-xs text-gray-500">— 하나라도 포함된 공고 표시</span>
+                </div>
+                <div id="keywords-tags" class="flex flex-wrap gap-1.5 min-h-8 p-2 bg-gray-50 border border-gray-200 rounded mb-2"></div>
+                <div class="flex gap-2">
+                    <input type="text" id="new-keyword-input" class="form-input text-sm"
+                           placeholder="키워드 입력 후 Enter 또는 추가 버튼"
+                           onkeydown="if(event.key==='Enter'){addKeyword();event.preventDefault();}">
+                    <button type="button" onclick="addKeyword()" class="btn-secondary text-sm whitespace-nowrap">+ 추가</button>
+                </div>
+            </div>
+
+            <!-- 제외 키워드 -->
+            <div class="mb-6">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="inline-block w-3 h-3 rounded-full bg-red-500"></span>
+                    <label class="font-semibold text-sm text-gray-800">제외 키워드</label>
+                    <span class="text-xs text-gray-500">— 포함된 공고 숨김</span>
+                </div>
+                <div id="exclude-keywords-tags" class="flex flex-wrap gap-1.5 min-h-8 p-2 bg-gray-50 border border-gray-200 rounded mb-2"></div>
+                <div class="flex gap-2">
+                    <input type="text" id="new-exclude-keyword-input" class="form-input text-sm"
+                           placeholder="제외할 키워드 입력"
+                           onkeydown="if(event.key==='Enter'){addExcludeKeyword();event.preventDefault();}">
+                    <button type="button" onclick="addExcludeKeyword()" class="btn-secondary text-sm whitespace-nowrap">+ 추가</button>
+                </div>
+            </div>
+
+            <!-- 금액 범위 -->
+            <div class="mb-6">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="inline-block w-3 h-3 rounded-full bg-blue-500"></span>
+                    <label class="font-semibold text-sm text-gray-800">금액 범위</label>
+                    <span class="text-xs text-gray-500">— 금액 정보 없는 공고는 항상 포함</span>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <input type="number" id="budget-min" class="form-input text-sm w-32"
+                           placeholder="최소" min="0" step="1000000" oninput="updateBudgetPreview()">
+                    <select id="budget-min-unit" class="form-input text-sm w-24" onchange="updateBudgetPreview()">
+                        <option value="1">원</option>
+                        <option value="10000">만원</option>
+                        <option value="100000000">억원</option>
+                    </select>
+                    <span class="text-gray-400 text-sm">~</span>
+                    <input type="number" id="budget-max" class="form-input text-sm w-32"
+                           placeholder="최대" min="0" step="1000000" oninput="updateBudgetPreview()">
+                    <select id="budget-max-unit" class="form-input text-sm w-24" onchange="updateBudgetPreview()">
+                        <option value="1">원</option>
+                        <option value="10000">만원</option>
+                        <option value="100000000">억원</option>
+                    </select>
+                    <button type="button" onclick="clearBudgetRange()" class="text-xs text-gray-400 hover:text-red-500 underline whitespace-nowrap">초기화</button>
+                </div>
+                <p id="budget-range-preview" class="text-xs text-blue-600 mt-1 hidden"></p>
+            </div>
+
+            <!-- 사업 유형별 점수 가중치 -->
+            <div class="mb-6 mt-6 border-t pt-6">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="inline-block w-3 h-3 rounded-full bg-purple-500"></span>
+                    <label class="font-semibold text-sm text-gray-800">사업 유형 가중치</label>
+                </div>
+                <p class="text-xs text-gray-500 mb-3">
+                    점수 = 키워드 점수(45점) + <strong>사업유형 점수</strong> + 긴급도(10점) · 기본값은 <strong>보통(25점)</strong><br>
+                    <span class="font-semibold text-blue-700">최우선 45</span> / <span class="text-blue-500">선호 35</span> / 보통 25 / <span class="text-gray-400">낮음 15</span> / <span class="text-red-400">제외 0</span>점 — 높을수록 상위에 배치됩니다.
+                </p>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2" id="type-weights-grid">
+                    <!-- JS로 채워짐 -->
+                </div>
+            </div>
+
+            <button type="button" onclick="saveKeywordFilters()" class="btn-primary">필터 저장</button>
+            <span id="filter-save-msg" class="text-xs text-green-600 ml-2 hidden">저장되었습니다.</span>
+        </div>
     </div>
 
-    <!-- 필터 목록 -->
-    <div id="filters-list" class="space-y-4">
-        <!-- 동적으로 채워짐 -->
+    <!-- 필터 프리셋 관리 -->
+    <div class="card">
+        <div class="card-header flex justify-between items-center">
+            <h3 class="card-title">필터 프리셋</h3>
+            <button onclick="showCreateFilterModal()" class="btn-primary text-sm">+ 새 프리셋 만들기</button>
+        </div>
+        <div class="card-body">
+            <p class="text-sm text-gray-500 mb-4">검색 페이지에서 빠르게 적용할 수 있는 필터 조합을 저장합니다.</p>
+            <div id="filters-list" class="space-y-3">
+                <p class="text-sm text-gray-400">불러오는 중…</p>
+            </div>
+        </div>
     </div>
 </div>
 
-<!-- 필터 생성/수정 모달 (간단한 구현) -->
-<div id="filter-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-    <div class="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-screen overflow-y-auto">
-        <h3 class="text-xl font-bold mb-4" id="modal-title">새 필터 만들기</h3>
-
-        <div class="space-y-4">
+<!-- 필터 프리셋 모달 -->
+<div id="filter-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="bg-white rounded-xl p-6 max-w-lg w-full mx-4 max-h-screen overflow-y-auto shadow-xl">
+        <h3 class="text-lg font-bold mb-4" id="modal-title">새 프리셋 만들기</h3>
+        <div class="space-y-3">
             <div class="form-group">
-                <label class="form-label">필터 이름</label>
-                <input type="text" id="modal-filter-name" class="form-input">
+                <label class="form-label">프리셋 이름</label>
+                <input type="text" id="modal-filter-name" class="form-input" placeholder="예: AI 교육 관련">
             </div>
-
             <div class="form-group">
-                <label class="form-label">포함 키워드 (쉼표로 구분)</label>
-                <input type="text" id="modal-include-keywords" class="form-input">
+                <label class="form-label">포함 키워드 <span class="text-xs text-gray-400">(쉼표로 구분)</span></label>
+                <input type="text" id="modal-include-keywords" class="form-input" placeholder="AI, 교육, 소프트웨어">
             </div>
-
             <div class="form-group">
-                <label class="form-label">제외 키워드 (쉼표로 구분)</label>
-                <input type="text" id="modal-exclude-keywords" class="form-input">
+                <label class="form-label">제외 키워드 <span class="text-xs text-gray-400">(쉼표로 구분)</span></label>
+                <input type="text" id="modal-exclude-keywords" class="form-input" placeholder="채용, 폐기물">
             </div>
-
             <div class="form-group">
-                <label class="flex items-center">
-                    <input type="checkbox" id="modal-is-default" class="form-checkbox mr-2">
-                    <span class="form-label mb-0">기본 필터로 설정</span>
+                <label class="flex items-center gap-2">
+                    <input type="checkbox" id="modal-is-default" class="form-checkbox">
+                    <span class="form-label mb-0">기본 프리셋으로 설정</span>
                 </label>
             </div>
         </div>
-
-        <div class="flex gap-2 mt-6">
-            <button onclick="saveFilter()" class="btn-primary">저장</button>
-            <button onclick="closeFilterModal()" class="btn-secondary">취소</button>
+        <div class="flex gap-2 mt-5">
+            <button onclick="saveFilter()" class="btn-primary flex-1">저장</button>
+            <button onclick="closeFilterModal()" class="btn-secondary flex-1">취소</button>
         </div>
     </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
-<script src="{{ url_for('static', filename='js/filters.js') }}"></script>
+<script>
+// ── 공고 필터 설정 (키워드·금액) ──────────────────────────────────────────────
+let currentKeywords = [];
+let currentExcludeKeywords = [];
+
+// ── 사업 유형 가중치 ────────────────────────────────────────────────────────
+const BUSINESS_TYPES = [
+    { name: '교육운영',   desc: '교육·연수·훈련 운영/위탁' },
+    { name: '시설운영',   desc: '센터·시설·공간 운영/위탁' },
+    { name: '콘텐츠개발', desc: '콘텐츠·교재·영상 개발/제작' },
+    { name: '행사운영',   desc: '행사·박람회·포럼·세미나 운영' },
+    { name: '컨설팅',     desc: '자문·컨설팅·조사 용역' },
+    { name: '연구용역',   desc: '연구·분석·평가 용역' },
+];
+// value = 해당 사업유형에 부여할 점수 (직접 점수)
+const WEIGHT_OPTIONS = [
+    { value: 45, label: '최우선', cls: 'bg-blue-700 text-white border-blue-800' },
+    { value: 35, label: '선호',   cls: 'bg-blue-500 text-white border-blue-600' },
+    { value: 25, label: '보통',   cls: 'bg-blue-200 text-blue-900 border-blue-300' },
+    { value: 15, label: '낮음',   cls: 'bg-blue-50 text-blue-400 border-blue-200' },
+    { value: 0,  label: '제외',   cls: 'bg-white text-gray-400 border-gray-300' },
+];
+
+let currentTypeWeights = {};
+
+function renderTypeWeightsGrid() {
+    const grid = document.getElementById('type-weights-grid');
+    if (!grid) return;
+    grid.innerHTML = BUSINESS_TYPES.map(bt => {
+        // 저장된 값이 없으면 보통(25) 기본값
+        const rawSaved = currentTypeWeights[bt.name];
+        const weight = rawSaved != null ? Number(rawSaved) : 25;
+        const opts = WEIGHT_OPTIONS.map(w => {
+            const active = w.value === weight;
+            return `<button type="button"
+                onclick="setTypeWeight('${bt.name}', ${w.value})"
+                class="text-xs px-2 py-0.5 rounded border transition-all ${active ? w.cls + ' font-bold shadow-sm' : 'bg-white text-gray-400 border-gray-200 hover:border-gray-400 hover:text-gray-600'}"
+                >${w.label}</button>`;
+        }).join('');
+        const scoreColor = weight >= 35 ? 'text-blue-700 font-semibold' : weight === 0 ? 'text-red-400' : weight <= 15 ? 'text-gray-400' : 'text-gray-600';
+        return `<div class="flex items-center justify-between gap-2 p-2 border rounded bg-white">
+            <div class="min-w-0">
+                <span class="text-sm font-medium text-gray-800">${bt.name}</span>
+                <span class="text-xs text-gray-400 ml-1">${bt.desc}</span>
+                <span class="text-xs ${scoreColor} ml-1">→ ${weight}점</span>
+            </div>
+            <div class="flex gap-1 shrink-0">${opts}</div>
+        </div>`;
+    }).join('');
+}
+
+function setTypeWeight(typeName, weight) {
+    currentTypeWeights[typeName] = weight;
+    renderTypeWeightsGrid();
+}
+
+async function loadInterestKeywords() {
+    try {
+        const res = await fetch('/api/interest-keywords');
+        const data = await res.json();
+        currentKeywords = data.keywords || [];
+        currentExcludeKeywords = data.exclude_keywords || [];
+        currentTypeWeights = data.type_weights || {};
+        renderKeywordTags();
+        renderExcludeKeywordTags();
+        loadBudgetRangeInputs(data.budget_range || {});
+        renderTypeWeightsGrid();
+    } catch (e) { console.error(e); }
+}
+
+function escHtml(s) {
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderKeywordTags() {
+    const c = document.getElementById('keywords-tags');
+    if (!c) return;
+    if (currentKeywords.length === 0) {
+        c.innerHTML = '<span class="text-xs text-gray-400 italic">키워드가 없습니다.</span>';
+        return;
+    }
+    c.innerHTML = currentKeywords.map((kw, i) =>
+        `<span class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-green-100 text-green-800 text-xs font-medium">
+            ${escHtml(kw)}
+            <button onclick="removeKeyword(${i})" class="ml-0.5 text-green-600 hover:text-green-900 font-bold leading-none">×</button>
+        </span>`
+    ).join('');
+}
+
+function renderExcludeKeywordTags() {
+    const c = document.getElementById('exclude-keywords-tags');
+    if (!c) return;
+    if (currentExcludeKeywords.length === 0) {
+        c.innerHTML = '<span class="text-xs text-gray-400 italic">제외 키워드가 없습니다.</span>';
+        return;
+    }
+    c.innerHTML = currentExcludeKeywords.map((kw, i) =>
+        `<span class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-xs font-medium">
+            ${escHtml(kw)}
+            <button onclick="removeExcludeKeyword(${i})" class="ml-0.5 text-red-600 hover:text-red-900 font-bold leading-none">×</button>
+        </span>`
+    ).join('');
+}
+
+function addKeyword() {
+    const input = document.getElementById('new-keyword-input');
+    const kw = input.value.trim();
+    if (!kw) return;
+    if (currentKeywords.includes(kw)) { alert('이미 추가된 키워드입니다.'); return; }
+    currentKeywords.push(kw);
+    input.value = '';
+    renderKeywordTags();
+}
+
+function removeKeyword(i) { currentKeywords.splice(i, 1); renderKeywordTags(); }
+
+function addExcludeKeyword() {
+    const input = document.getElementById('new-exclude-keyword-input');
+    const kw = input.value.trim();
+    if (!kw) return;
+    if (currentExcludeKeywords.includes(kw)) { alert('이미 추가된 키워드입니다.'); return; }
+    currentExcludeKeywords.push(kw);
+    input.value = '';
+    renderExcludeKeywordTags();
+}
+
+function removeExcludeKeyword(i) { currentExcludeKeywords.splice(i, 1); renderExcludeKeywordTags(); }
+
+function decomposeAmount(amount) {
+    if (!amount) return { value: '', unit: '1' };
+    if (amount % 100000000 === 0) return { value: amount / 100000000, unit: '100000000' };
+    if (amount % 10000 === 0)     return { value: amount / 10000,     unit: '10000' };
+    return { value: amount, unit: '1' };
+}
+
+function loadBudgetRangeInputs(br) {
+    if (br.min) {
+        const { value, unit } = decomposeAmount(br.min);
+        document.getElementById('budget-min').value = value;
+        document.getElementById('budget-min-unit').value = unit;
+    }
+    if (br.max) {
+        const { value, unit } = decomposeAmount(br.max);
+        document.getElementById('budget-max').value = value;
+        document.getElementById('budget-max-unit').value = unit;
+    }
+    updateBudgetPreview();
+}
+
+function readBudgetAmount(inputId, unitId) {
+    const val  = parseFloat(document.getElementById(inputId).value);
+    const unit = parseInt(document.getElementById(unitId).value, 10);
+    return (isNaN(val) || val <= 0) ? null : val * unit;
+}
+
+function formatPrice(p) {
+    if (!p) return '';
+    if (p >= 100000000) return (p / 100000000).toFixed(1) + '억원';
+    if (p >= 10000000)  return (p / 10000000).toFixed(1) + '천만원';
+    if (p >= 10000)     return (p / 10000).toFixed(0) + '만원';
+    return p.toLocaleString() + '원';
+}
+
+function updateBudgetPreview() {
+    const minAmt = readBudgetAmount('budget-min', 'budget-min-unit');
+    const maxAmt = readBudgetAmount('budget-max', 'budget-max-unit');
+    const preview = document.getElementById('budget-range-preview');
+    if (!minAmt && !maxAmt) { preview.classList.add('hidden'); return; }
+    let msg = '적용 범위: ';
+    if (minAmt && maxAmt) msg += `${formatPrice(minAmt)} ~ ${formatPrice(maxAmt)}`;
+    else if (minAmt) msg += `${formatPrice(minAmt)} 이상`;
+    else msg += `${formatPrice(maxAmt)} 이하`;
+    preview.textContent = msg;
+    preview.classList.remove('hidden');
+}
+
+function clearBudgetRange() {
+    document.getElementById('budget-min').value = '';
+    document.getElementById('budget-max').value = '';
+    document.getElementById('budget-min-unit').value = '1';
+    document.getElementById('budget-max-unit').value = '1';
+    updateBudgetPreview();
+}
+
+async function saveKeywordFilters() {
+    const minAmt = readBudgetAmount('budget-min', 'budget-min-unit');
+    const maxAmt = readBudgetAmount('budget-max', 'budget-max-unit');
+    const res = await fetch('/api/interest-keywords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            keywords: currentKeywords,
+            exclude_keywords: currentExcludeKeywords,
+            budget_range: { min: minAmt || null, max: maxAmt || null },
+            type_weights: currentTypeWeights,
+        }),
+    });
+    if (res.ok) {
+        const msg = document.getElementById('filter-save-msg');
+        msg.classList.remove('hidden');
+        setTimeout(() => msg.classList.add('hidden'), 2000);
+    } else {
+        const d = await res.json();
+        alert('저장 실패: ' + (d.error || '오류'));
+    }
+}
+
+// ── 필터 프리셋 관리 ───────────────────────────────────────────────────────────
+let editingFilterId = null;
+
+async function loadFilters() {
+    try {
+        const res = await fetch('/api/filters');
+        const filters = await res.json();
+        const container = document.getElementById('filters-list');
+        if (!Array.isArray(filters) || filters.length === 0) {
+            container.innerHTML = '<p class="text-sm text-gray-400">저장된 프리셋이 없습니다.</p>';
+            return;
+        }
+        container.innerHTML = filters.map(f => {
+            const def = f.is_default
+                ? '<span class="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-semibold ml-1">기본값</span>'
+                : '';
+            const inc = f.include_keywords.length ? f.include_keywords.join(', ') : '없음';
+            const exc = f.exclude_keywords.length ? f.exclude_keywords.join(', ') : '없음';
+            const price = [
+                f.min_price ? '최소 ' + formatPrice(f.min_price) : '',
+                f.max_price ? '최대 ' + formatPrice(f.max_price) : '',
+            ].filter(Boolean).join(' / ') || '제한 없음';
+            return `
+            <div class="border rounded-lg px-4 py-3 bg-gray-50 hover:bg-white transition-colors">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <span class="font-semibold text-gray-800">${escHtml(f.name)}</span>${def}
+                        <div class="mt-1.5 space-y-0.5 text-xs text-gray-500">
+                            <p><span class="text-green-600 font-medium">포함:</span> ${escHtml(inc)}</p>
+                            <p><span class="text-red-500 font-medium">제외:</span> ${escHtml(exc)}</p>
+                            <p><span class="text-blue-500 font-medium">금액:</span> ${price}</p>
+                        </div>
+                    </div>
+                    <div class="flex gap-2 shrink-0 ml-3">
+                        <button onclick="editFilter(${f.id})" class="text-xs text-blue-600 hover:underline">수정</button>
+                        <button onclick="deleteFilter(${f.id})" class="text-xs text-red-500 hover:underline">삭제</button>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) { console.error(e); }
+}
+
+function showCreateFilterModal() {
+    editingFilterId = null;
+    document.getElementById('modal-title').textContent = '새 프리셋 만들기';
+    document.getElementById('modal-filter-name').value = '';
+    document.getElementById('modal-include-keywords').value = '';
+    document.getElementById('modal-exclude-keywords').value = '';
+    document.getElementById('modal-is-default').checked = false;
+    document.getElementById('filter-modal').classList.remove('hidden');
+}
+
+async function editFilter(filterId) {
+    editingFilterId = filterId;
+    try {
+        const res = await fetch('/api/filters');
+        const filters = await res.json();
+        const f = filters.find(x => x.id === filterId);
+        if (!f) return;
+        document.getElementById('modal-title').textContent = '프리셋 수정';
+        document.getElementById('modal-filter-name').value = f.name;
+        document.getElementById('modal-include-keywords').value = f.include_keywords.join(', ');
+        document.getElementById('modal-exclude-keywords').value = f.exclude_keywords.join(', ');
+        document.getElementById('modal-is-default').checked = f.is_default;
+        document.getElementById('filter-modal').classList.remove('hidden');
+    } catch (e) { console.error(e); }
+}
+
+async function saveFilter() {
+    const name = document.getElementById('modal-filter-name').value.trim();
+    if (!name) { alert('프리셋 이름을 입력하세요.'); return; }
+    const data = {
+        name,
+        include_keywords: document.getElementById('modal-include-keywords').value.split(',').map(k => k.trim()).filter(Boolean),
+        exclude_keywords: document.getElementById('modal-exclude-keywords').value.split(',').map(k => k.trim()).filter(Boolean),
+        is_default: document.getElementById('modal-is-default').checked,
+    };
+    try {
+        const res = editingFilterId
+            ? await fetch(`/api/filters/${editingFilterId}`, { method: 'PUT',  headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) })
+            : await fetch('/api/filters',                    { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+        if (res.ok) { closeFilterModal(); loadFilters(); }
+        else { const e = await res.json(); alert('저장 실패: ' + (e.error || '오류')); }
+    } catch (e) { alert('저장 중 오류가 발생했습니다.'); }
+}
+
+async function deleteFilter(filterId) {
+    if (!confirm('이 프리셋을 삭제하시겠습니까?')) return;
+    try {
+        const res = await fetch(`/api/filters/${filterId}`, { method: 'DELETE' });
+        if (res.ok) loadFilters();
+        else { const e = await res.json(); alert('삭제 실패: ' + (e.error || '오류')); }
+    } catch (e) { alert('삭제 중 오류가 발생했습니다.'); }
+}
+
+function closeFilterModal() { document.getElementById('filter-modal').classList.add('hidden'); }
+
+// ── 초기화 ───────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    loadInterestKeywords();
+    loadFilters();
+});
+</script>
 {% endblock %}
