@@ -5,8 +5,8 @@ let currentFilters = {};
 let currentKeywords = []; // 현재 검색한 키워드들
 let bookmarkedIds = new Set();
 let currentResults = [];  // 현재 검색 결과 (정렬용)
-let searchSortField = 'days';
-let searchSortDir   = 'asc';
+let searchSortField = 'announced';  // 기본: 발주일
+let searchSortDir   = 'desc';       // 기본: 최신순
 
 // 공통 정렬 함수
 // 마감일 정렬: 일반 공고(요청 방향) → 사전규격(오래 남은 순) 으로 그룹 분리
@@ -22,10 +22,8 @@ function sortItems(items) {
             return asc ? va - vb : vb - va;
         });
         if (dir === 'asc') {
-            // 오름차순: 일반(긴급순) → 사전규격(긴급순, 항상 뒤에)
             return [...byDays(regular, true), ...byDays(pre, true)];
         } else {
-            // 내림차순: 사전규격(오래 남은 순, 항상 앞에) → 일반(오래 남은 순)
             return [...byDays(pre, false), ...byDays(regular, false)];
         }
     }
@@ -33,8 +31,9 @@ function sortItems(items) {
     return [...items].sort((a, b) => {
         const ag = t => (t.agency && t.agency.includes('조달청') && t.demand_agency)
             ? t.demand_agency : (t.demand_agency || t.agency || '');
-        if (field === 'title')  { const va = a.title || '', vb = b.title || ''; return dir === 'asc' ? va.localeCompare(vb,'ko') : vb.localeCompare(va,'ko'); }
-        if (field === 'agency') { const va = ag(a), vb = ag(b);                 return dir === 'asc' ? va.localeCompare(vb,'ko') : vb.localeCompare(va,'ko'); }
+        if (field === 'title')    { const va = a.title || '', vb = b.title || ''; return dir === 'asc' ? va.localeCompare(vb,'ko') : vb.localeCompare(va,'ko'); }
+        if (field === 'agency')   { const va = ag(a), vb = ag(b);                 return dir === 'asc' ? va.localeCompare(vb,'ko') : vb.localeCompare(va,'ko'); }
+        if (field === 'announced'){ const va = a.announced_date || '', vb = b.announced_date || ''; return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va); }
         let va, vb;
         if (field === 'budget') { va = a.estimated_price ?? -1; vb = b.estimated_price ?? -1; }
         else                    { va = 0; vb = 0; }
@@ -42,36 +41,15 @@ function sortItems(items) {
     });
 }
 
-// 정렬 초기화
-function resetSearchSort() {
-    searchSortField = 'days';
-    searchSortDir   = 'asc';
-    updateSearchSortButtons();
-    if (currentResults.length) renderResults(sortItems(currentResults));
-}
-
-// 정렬 버튼 클릭
+// 정렬 헤더 클릭
 function setSearchSort(field) {
     if (searchSortField === field) {
         searchSortDir = searchSortDir === 'asc' ? 'desc' : 'asc';
     } else {
         searchSortField = field;
-        searchSortDir = (field === 'budget') ? 'desc' : 'asc';
+        searchSortDir = (field === 'budget' || field === 'announced') ? 'desc' : 'asc';
     }
-    updateSearchSortButtons();
     if (currentResults.length) renderResults(sortItems(currentResults));
-}
-
-// 버튼 상태 업데이트
-function updateSearchSortButtons() {
-    const LABELS = { title:'사업명', agency:'기관', days:'마감일', budget:'금액' };
-    Object.keys(LABELS).forEach(f => {
-        const btn = document.getElementById(`search-sort-${f}`);
-        if (!btn) return;
-        const isActive = (searchSortField === f);
-        btn.textContent = LABELS[f] + (isActive ? (searchSortDir === 'asc' ? ' ↑' : ' ↓') : '');
-        btn.classList.toggle('active', isActive);
-    });
 }
 
 // 페이지 로드 시 실행
@@ -79,10 +57,11 @@ document.addEventListener('DOMContentLoaded', function() {
     loadFilterPresets();
     loadBookmarkedIds();
 
-    // ?use_interest=1 → 관심 키워드 자동 적용 후 검색
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('use_interest') === '1') {
         applyInterestAndSearch();
+    } else if (urlParams.get('filter')) {
+        applyDashboardFilter(urlParams.get('filter'));
     }
 });
 
@@ -96,6 +75,43 @@ async function applyInterestAndSearch() {
         if (exkws) document.getElementById('exclude-keywords').value = exkws;
         if (kws || exkws) searchTenders(1);
     } catch (e) { console.error('관심 키워드 로드 실패:', e); }
+}
+
+// 대시보드 카드 클릭 시 필터 자동 적용
+function applyDashboardFilter(filter) {
+    const today = new Date();
+    // 로컬 날짜 기준으로 yyyy-mm-dd 포맷
+    const fmt = d => {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    };
+
+    if (filter === 'new') {
+        // 공고일: 어제(월요일이면 지난 금요일)~오늘
+        const from = new Date(today);
+        if (today.getDay() === 1) {
+            from.setDate(today.getDate() - 3); // 월요일 → 금요일
+        } else {
+            from.setDate(today.getDate() - 1); // 그 외 → 어제
+        }
+        document.getElementById('announced-date-from').value = fmt(from);
+        document.getElementById('announced-date-to').value   = fmt(today);
+
+    } else if (filter === 'pre') {
+        document.getElementById('status-filter').value = '사전규격';
+
+    } else if (filter === 'deadline') {
+        // 마감일: 오늘~오늘+3일
+        const to = new Date(today);
+        to.setDate(today.getDate() + 3);
+        document.getElementById('deadline-date-from').value = fmt(today);
+        document.getElementById('deadline-date-to').value   = fmt(to);
+
+    }
+    // 'all'은 별도 필터 없이 전체 검색
+    searchTenders(1);
 }
 
 async function loadBookmarkedIds() {
@@ -250,7 +266,6 @@ async function searchTenders(page = 1) {
         currentResults = data.tenders || [];
         renderResults(sortItems(currentResults));
         renderPagination(data.current_page, data.pages);
-        updateSearchSortButtons();
 
         // 결과 수 업데이트
         document.getElementById('result-count').textContent = data.total;
@@ -300,88 +315,95 @@ function highlightKeywords(text) {
     return highlightedText;
 }
 
+// 정렬 화살표 반환
+function sortArrow(field) {
+    if (searchSortField !== field) return '<span style="opacity:0.25;font-size:0.7em;">↕</span>';
+    return `<span style="color:#2563EB;font-size:0.8em;">${searchSortDir === 'asc' ? '↑' : '↓'}</span>`;
+}
+
 // 결과 렌더링
 function renderResults(tenders) {
     const container = document.getElementById('results-container');
 
     if (!tenders || tenders.length === 0) {
-        container.innerHTML = '<div class="p-6"><p class="text-gray-500 text-sm">검색 결과가 없습니다.</p></div>';
+        container.className = 'p-6';
+        container.innerHTML = '<p class="text-gray-500 text-sm">검색 결과가 없습니다.</p>';
         return;
     }
+
+    container.className = '';  // 패딩 제거 (sticky header)
+
+    const th = (field, label, width) => {
+        const active = searchSortField === field ? ' sort-active' : '';
+        return `<th class="sortable${active}" onclick="setSearchSort('${field}')" style="width:${width};">${label} ${sortArrow(field)}</th>`;
+    };
+
+    const rows = tenders.map(tender => {
+        const isPre = tender.status === '사전규격';
+        const rowClass = isPre ? 'pre-row' : '';
+
+        const statusBadge = isPre
+            ? '<span class="badge-pre">사전</span>'
+            : '<span class="badge-normal">일반</span>';
+
+        const daysLeft = tender.days_left;
+        let deadlineClass = 'deadline-normal';
+        let deadlineText = daysLeft != null ? `D-${daysLeft}` : '-';
+        if (daysLeft != null && daysLeft <= 2)      deadlineClass = 'deadline-urgent';
+        else if (daysLeft != null && daysLeft <= 5) deadlineClass = 'deadline-soon';
+
+        const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
+        const highlightedTitle = highlightKeywords(tender.title);
+        const announcedDate = tender.announced_date ? tender.announced_date.substring(5, 10) : '-';
+
+        let displayAgency, agencyTooltip;
+        if (tender.source_site === '중소벤처 24') {
+            displayAgency = tender.demand_agency || tender.agency;
+            agencyTooltip = `사업수행기관: ${displayAgency}`;
+        } else {
+            const isJodal = tender.agency && tender.agency.includes('조달청');
+            displayAgency = (isJodal && tender.demand_agency) ? tender.demand_agency : tender.agency;
+            agencyTooltip = (isJodal && tender.demand_agency)
+                ? `수요기관: ${tender.demand_agency} (발주: ${tender.agency})`
+                : (tender.agency || '');
+        }
+
+        return `
+            <tr class="${rowClass}">
+                <td style="text-align:center;width:36px;">${starButton(tender.id)}</td>
+                <td style="text-align:center;width:46px;">${statusBadge}</td>
+                <td class="title-col">
+                    <a href="/tender/${tender.id}" class="title-link" title="${tender.title.replace(/"/g,'&quot;')}">${highlightedTitle}</a>
+                </td>
+                <td class="agency-col" title="${agencyTooltip.replace(/"/g,'&quot;')}">${displayAgency}</td>
+                <td style="text-align:right;">${price}</td>
+                <td style="text-align:center;font-size:0.75rem;color:#6B7280;">${announcedDate}</td>
+                <td style="text-align:center;" class="${deadlineClass}">${deadlineText}</td>
+                <td style="text-align:center;">
+                    <div style="display:flex;gap:4px;align-items:center;justify-content:center;white-space:nowrap;">
+                        <a href="/tender/${tender.id}" class="detail-link">상세</a>
+                        ${tender.url ? `<a href="${tender.url}" target="_blank" class="origin-link">원본</a>` : ''}
+                    </div>
+                </td>
+            </tr>`;
+    }).join('');
 
     const html = `
         <table class="table table-compact">
             <thead>
                 <tr>
-                    <th style="width: 80px;">상태</th>
-                    <th style="min-width: 400px;">공고명</th>
-                    <th style="width: 180px;">발주기관</th>
-                    <th style="width: 150px;">출처</th>
-                    <th style="width: 120px;">금액</th>
-                    <th style="width: 80px;">마감</th>
-                    <th style="width: 100px;">상세</th>
+                    <th style="width:36px;"></th>
+                    <th style="width:46px;">상태</th>
+                    ${th('title',    '공고명',   'auto')}
+                    ${th('agency',   '발주기관', '150px')}
+                    ${th('budget',   '금액',     '100px')}
+                    ${th('announced','발주일',   '72px')}
+                    ${th('days',     '마감',     '66px')}
+                    <th style="width:100px;">상세</th>
                 </tr>
             </thead>
-            <tbody>
-                ${tenders.map(tender => {
-                    const statusBadge = tender.status === '사전규격'
-                        ? '<span class="badge badge-info">사전규격</span>'
-                        : '<span class="badge">일반</span>';
-
-                    const daysLeft = tender.days_left;
-                    let deadlineClass = 'text-green-600';
-                    let deadlineText = `D-${daysLeft}`;
-
-                    if (daysLeft <= 2) {
-                        deadlineClass = 'text-red-600 font-semibold';
-                    } else if (daysLeft <= 5) {
-                        deadlineClass = 'text-orange-600';
-                    }
-
-                    const price = tender.estimated_price
-                        ? formatPrice(tender.estimated_price)
-                        : '미정';
-
-                    // 키워드 강조 적용
-                    const highlightedTitle = highlightKeywords(tender.title);
-
-                    // 조달청은 발주 대행기관 → 수요기관 표시
-                    const isJodal = tender.agency && tender.agency.includes('조달청');
-                    const displayAgency = (isJodal && tender.demand_agency) ? tender.demand_agency : tender.agency;
-                    const agencyTooltip = (isJodal && tender.demand_agency)
-                        ? `수요기관: ${tender.demand_agency} (발주: ${tender.agency})`
-                        : tender.agency;
-
-                    return `
-                        <tr class="hover:bg-gray-50">
-                            <td class="text-center">${statusBadge}</td>
-                            <td class="tender-title">
-                                <a href="/tender/${tender.id}" class="font-medium text-blue-600 hover:underline">
-                                    ${highlightedTitle}
-                                </a>
-                            </td>
-                            <td class="truncate" title="${agencyTooltip}">${displayAgency}</td>
-                            <td class="text-center">
-                                <span class="text-xs px-2 py-1 bg-gray-100 rounded whitespace-nowrap">${tender.source_site}</span>
-                            </td>
-                            <td class="text-right whitespace-nowrap">${price}</td>
-                            <td class="text-center ${deadlineClass}">${deadlineText}</td>
-                            <td class="text-center">
-                                <div class="flex gap-2 justify-center items-center">
-                                    ${starButton(tender.id)}
-                                    <a href="/tender/${tender.id}" class="text-blue-600 hover:underline text-sm">상세</a>
-                                    ${tender.url
-                                        ? `<a href="${tender.url}" target="_blank" class="text-gray-600 hover:underline text-sm">원본</a>`
-                                        : ''
-                                    }
-                                </div>
-                            </td>
-                        </tr>
-                    `;
-                }).join('')}
-            </tbody>
-        </table>
-    `;
+            <tbody>${rows}</tbody>
+        </table>`;
 
     container.innerHTML = html;
 }

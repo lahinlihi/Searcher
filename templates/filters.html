@@ -83,10 +83,10 @@
                     <label class="font-semibold text-sm text-gray-800">사업 유형 가중치</label>
                 </div>
                 <p class="text-xs text-gray-500 mb-3">
-                    점수 = 키워드 점수(45점) + <strong>사업유형 점수</strong> + 긴급도(10점) · 기본값은 <strong>보통(25점)</strong><br>
-                    <span class="font-semibold text-blue-700">최우선 45</span> / <span class="text-blue-500">선호 35</span> / 보통 25 / <span class="text-gray-400">낮음 15</span> / <span class="text-red-400">제외 0</span>점 — 높을수록 상위에 배치됩니다.
+                    적합도 = 키워드(45) + <strong>사업유형</strong> + 긴급도(10) · 기본값 <strong>보통 25점</strong><br>
+                    <span class="font-semibold text-blue-700">최우선 45</span> · <span class="text-blue-500">선호 35</span> · 보통 25 · <span class="text-gray-400">낮음 15</span> · <span class="text-red-400">제외 0</span>
                 </p>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2" id="type-weights-grid">
+                <div class="grid grid-cols-2 gap-2" id="type-weights-grid">
                     <!-- JS로 채워짐 -->
                 </div>
             </div>
@@ -151,23 +151,33 @@ let currentExcludeKeywords = [];
 
 // ── 사업 유형 가중치 ────────────────────────────────────────────────────────
 const BUSINESS_TYPES = [
-    { name: '교육운영',   desc: '교육·연수·훈련 운영/위탁' },
-    { name: '시설운영',   desc: '센터·시설·공간 운영/위탁' },
-    { name: '콘텐츠개발', desc: '콘텐츠·교재·영상 개발/제작' },
-    { name: '행사운영',   desc: '행사·박람회·포럼·세미나 운영' },
-    { name: '컨설팅',     desc: '자문·컨설팅·조사 용역' },
-    { name: '연구용역',   desc: '연구·분석·평가 용역' },
+    { name: '교육운영',      desc: '교육·연수·훈련 운영 / 위탁' },
+    { name: '시설운영',      desc: '센터·시설·공간 운영 / 위탁' },
+    { name: '사업운영',      desc: '운영·지원사업 직접 수행 (교육·행사·시설 제외)' },
+    { name: '콘텐츠개발',    desc: '콘텐츠·교재·영상·시스템 개발 / 제작' },
+    { name: '행사운영',      desc: '행사·박람회·포럼·세미나 운영' },
+    { name: '컨설팅',        desc: '자문·컨설팅·조사·멘토링 용역' },
+    { name: '연구용역',      desc: '연구·분석·평가 용역 / R&D 공모' },
+    { name: '지원사업 신청', desc: '우리가 수혜 대상인 지원·바우처·융자 사업' },
 ];
 // value = 해당 사업유형에 부여할 점수 (직접 점수)
 const WEIGHT_OPTIONS = [
-    { value: 45, label: '최우선', cls: 'bg-blue-700 text-white border-blue-800' },
-    { value: 35, label: '선호',   cls: 'bg-blue-500 text-white border-blue-600' },
-    { value: 25, label: '보통',   cls: 'bg-blue-200 text-blue-900 border-blue-300' },
-    { value: 15, label: '낮음',   cls: 'bg-blue-50 text-blue-400 border-blue-200' },
-    { value: 0,  label: '제외',   cls: 'bg-white text-gray-400 border-gray-300' },
+    { value: 45, label: '최우선', activeCls: 'bg-blue-700 text-white border-blue-800 shadow' },
+    { value: 35, label: '선호',   activeCls: 'bg-blue-500 text-white border-blue-600 shadow' },
+    { value: 25, label: '보통',   activeCls: 'bg-blue-200 text-blue-900 border-blue-300' },
+    { value: 15, label: '낮음',   activeCls: 'bg-gray-200 text-gray-600 border-gray-300' },
+    { value: 0,  label: '제외',   activeCls: 'bg-red-50 text-red-500 border-red-300' },
 ];
 
 let currentTypeWeights = {};
+
+function _scoreBadgeCls(weight) {
+    if (weight >= 45) return 'bg-blue-700 text-white';
+    if (weight >= 35) return 'bg-blue-500 text-white';
+    if (weight >= 25) return 'bg-gray-200 text-gray-700';
+    if (weight >= 15) return 'bg-gray-100 text-gray-400';
+    return 'bg-red-50 text-red-400';
+}
 
 function renderTypeWeightsGrid() {
     const grid = document.getElementById('type-weights-grid');
@@ -178,19 +188,22 @@ function renderTypeWeightsGrid() {
         const weight = rawSaved != null ? Number(rawSaved) : 25;
         const opts = WEIGHT_OPTIONS.map(w => {
             const active = w.value === weight;
+            const btnCls = active
+                ? w.activeCls + ' font-bold'
+                : 'bg-white text-gray-400 border-gray-200 hover:border-gray-400 hover:text-gray-600';
             return `<button type="button"
                 onclick="setTypeWeight('${bt.name}', ${w.value})"
-                class="text-xs px-2 py-0.5 rounded border transition-all ${active ? w.cls + ' font-bold shadow-sm' : 'bg-white text-gray-400 border-gray-200 hover:border-gray-400 hover:text-gray-600'}"
+                class="py-1.5 text-xs font-medium rounded border transition-all ${btnCls}"
                 >${w.label}</button>`;
         }).join('');
-        const scoreColor = weight >= 35 ? 'text-blue-700 font-semibold' : weight === 0 ? 'text-red-400' : weight <= 15 ? 'text-gray-400' : 'text-gray-600';
-        return `<div class="flex items-center justify-between gap-2 p-2 border rounded bg-white">
-            <div class="min-w-0">
-                <span class="text-sm font-medium text-gray-800">${bt.name}</span>
-                <span class="text-xs text-gray-400 ml-1">${bt.desc}</span>
-                <span class="text-xs ${scoreColor} ml-1">→ ${weight}점</span>
+        const badgeCls = _scoreBadgeCls(weight);
+        return `<div class="p-2.5 border rounded-lg bg-white shadow-sm">
+            <div class="flex items-center justify-between mb-1">
+                <span class="text-sm font-bold text-gray-900">${bt.name}</span>
+                <span class="text-base font-bold px-2.5 py-0.5 rounded-full ${badgeCls}">${weight}점</span>
             </div>
-            <div class="flex gap-1 shrink-0">${opts}</div>
+            <div class="text-xs text-gray-400 mb-2">${bt.desc}</div>
+            <div class="grid grid-cols-5 gap-1">${opts}</div>
         </div>`;
     }).join('');
 }

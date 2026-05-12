@@ -21,8 +21,9 @@ function sortItems(items, field, dir) {
         const ag = t => (t.agency && t.agency.includes('조달청') && t.demand_agency)
             ? t.demand_agency : (t.demand_agency || t.agency || '');
         let va, vb;
-        if (field === 'title')  { va = a.title || '';  vb = b.title || '';  return dir === 'asc' ? va.localeCompare(vb,'ko') : vb.localeCompare(va,'ko'); }
-        if (field === 'agency') { va = ag(a);           vb = ag(b);          return dir === 'asc' ? va.localeCompare(vb,'ko') : vb.localeCompare(va,'ko'); }
+        if (field === 'title')    { va = a.title || '';  vb = b.title || '';  return dir === 'asc' ? va.localeCompare(vb,'ko') : vb.localeCompare(va,'ko'); }
+        if (field === 'agency')   { va = ag(a);           vb = ag(b);          return dir === 'asc' ? va.localeCompare(vb,'ko') : vb.localeCompare(va,'ko'); }
+        if (field === 'announced'){ va = a.announced_date || ''; vb = b.announced_date || ''; return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va); }
         if (field === 'days')        { va = a.days_left        ?? 99999; vb = b.days_left        ?? 99999; }
         else if (field === 'budget') { va = a.estimated_price  ?? -1;    vb = b.estimated_price  ?? -1; }
         else if (field === 'score')  { va = a.relevance_score  ?? 0;     vb = b.relevance_score  ?? 0; }
@@ -45,7 +46,7 @@ function setDashSort(section, field) {
 
 // 특정 섹션의 버튼 상태만 업데이트
 function updateDashSortButtons(section) {
-    const LABELS = { score:'점수', title:'사업명', agency:'기관', days:'마감일', budget:'금액' };
+    const LABELS = { score:'점수', title:'사업명', agency:'기관', announced:'공고일', days:'마감일', budget:'금액' };
     const s = dashSort[section];
     document.querySelectorAll(`.dash-sort-btn[data-section="${section}"]`).forEach(btn => {
         const f = btn.dataset.sort;
@@ -326,7 +327,7 @@ function renderKeywordTenders(elementId, tenders, keywords) {
         const scoreBadge = buildScoreBadge(score, matchedKeywords, businessType);
 
         const statusBadge = tender.status === '사전규격'
-            ? '<span class="tender-status-badge tender-status-pre">사전규격</span>'
+            ? '<span class="tender-status-badge tender-status-pre">사전</span>'
             : '<span class="tender-status-badge tender-status-normal">일반</span>';
 
         const daysLeft = tender.days_left;
@@ -339,6 +340,15 @@ function renderKeywordTenders(elementId, tenders, keywords) {
         const announcedDate = tender.announced_date
             ? tender.announced_date.substring(0, 10)
             : '';
+
+        let agencyLabel;
+        if (tender.source_site === '중소벤처 24') {
+            agencyLabel = `사업수행: ${tender.demand_agency || tender.agency}`;
+        } else if (tender.agency && tender.agency.includes('조달청') && tender.demand_agency) {
+            agencyLabel = `수요: ${tender.demand_agency}`;
+        } else {
+            agencyLabel = `발주: ${tender.agency}`;
+        }
 
         return `
             <div class="tender-item">
@@ -360,9 +370,8 @@ function renderKeywordTenders(elementId, tenders, keywords) {
                 </h4>
                 <div class="flex justify-between items-center text-sm text-gray-600 mt-1">
                     <div class="flex items-center gap-2">
-                        <span>${(tender.agency && tender.agency.includes('조달청') && tender.demand_agency) ? `수요: ${tender.demand_agency}` : `발주: ${tender.agency}`}</span>
-                        <span class="text-xs px-2 py-0.5 bg-gray-100 rounded">${tender.source_site}</span>
-                        ${announcedDate ? `<span class="text-xs text-gray-400">등록: ${announcedDate}</span>` : ''}
+                        <span>${agencyLabel}</span>
+                        ${announcedDate ? `<span class="text-xs text-gray-400">공고일: ${announcedDate}</span>` : ''}
                     </div>
                     <span>금액: ${price}</span>
                 </div>
@@ -388,7 +397,7 @@ function renderTenderList(elementId, tenders) {
 
     const html = tenders.map(tender => {
         const statusBadge = tender.status === '사전규격'
-            ? '<span class="tender-status-badge tender-status-pre">사전규격</span>'
+            ? '<span class="tender-status-badge tender-status-pre">사전</span>'
             : '<span class="tender-status-badge tender-status-normal">일반</span>';
 
         const daysLeft = tender.days_left;
@@ -405,14 +414,9 @@ function renderTenderList(elementId, tenders) {
             ? formatPrice(tender.estimated_price)
             : '미정';
 
-        // 키워드 강조 및 매칭 개수 계산
         const { highlightedTitle, matchCount } = highlightKeywordsInTitle(tender.title, includeKeywords);
-
-        // 매칭된 키워드 목록 (서버에서 계산된 값 사용)
         const matchedKeywords = tender.matched_keywords || [];
         const score = tender.relevance_score ?? null;
-
-        // 키워드 배지 + 적합도 점수 (매칭이 있을 때만 표시)
         const businessType = tender.business_type || '기타';
         let keywordBadge = '';
         if (matchedKeywords.length > 0) {
@@ -421,6 +425,15 @@ function renderTenderList(elementId, tenders) {
                 <span class="keyword-match-badge">키워드: ${matchedKeywords.join(', ')}</span>
                 ${scorePart}
             </span>`;
+        }
+
+        let agencyLabel;
+        if (tender.source_site === '중소벤처 24') {
+            agencyLabel = `사업수행: ${tender.demand_agency || tender.agency}`;
+        } else if (tender.agency && tender.agency.includes('조달청') && tender.demand_agency) {
+            agencyLabel = `수요: ${tender.demand_agency}`;
+        } else {
+            agencyLabel = `발주: ${tender.agency}`;
         }
 
         return `
@@ -441,10 +454,7 @@ function renderTenderList(elementId, tenders) {
                     </div>
                 </div>
                 <div class="flex justify-between items-center text-sm text-gray-600">
-                    <div class="flex items-center gap-2">
-                        <span>${(tender.agency && tender.agency.includes('조달청') && tender.demand_agency) ? `수요: ${tender.demand_agency}` : `발주: ${tender.agency}`}</span>
-                        <span class="text-xs px-2 py-0.5 bg-gray-100 rounded">${tender.source_site}</span>
-                    </div>
+                    <span>${agencyLabel}</span>
                     <span>금액: ${price}</span>
                 </div>
                 <div class="flex gap-3 mt-2 text-sm">

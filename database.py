@@ -177,6 +177,7 @@ class TenderMemo(db.Model):
     user = db.relationship('User', backref=db.backref('memos', lazy=True))
 
     def to_dict(self):
+        is_edited = bool(self.updated_at and self.created_at and self.updated_at > self.created_at)
         return {
             'id': self.id,
             'tender_id': self.tender_id,
@@ -186,6 +187,7 @@ class TenderMemo(db.Model):
             'content': self.content,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
+            'is_edited': is_edited,
         }
 
 
@@ -365,11 +367,25 @@ def init_db(app):
             ('ALTER TABLE filters ADD COLUMN user_id INTEGER',                      '[DB] filters.user_id 추가'),
             ('ALTER TABLE user_preferences ADD COLUMN type_weights TEXT DEFAULT "{}"', '[DB] user_preferences.type_weights 추가'),
         ]
+        # 중소벤처 24 공고 중 기관명이 '기타'인 것은 '중소벤처 24'로 정정
+        data_fixes = [
+            ("UPDATE tenders SET agency = '중소벤처 24' WHERE source_site = '중소벤처 24' AND agency = '기타'",
+             '[DB] 중소벤처 24 기타 기관명 → 중소벤처 24 정정'),
+        ]
         for sql, msg in migrations:
             try:
                 db.session.execute(text(sql))
                 db.session.commit()
                 print(msg)
+            except Exception:
+                db.session.rollback()
+
+        for sql, msg in data_fixes:
+            try:
+                result = db.session.execute(text(sql))
+                db.session.commit()
+                if result.rowcount:
+                    print(f'{msg} ({result.rowcount}건)')
             except Exception:
                 db.session.rollback()
 

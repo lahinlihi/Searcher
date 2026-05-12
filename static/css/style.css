@@ -129,6 +129,13 @@
     display: flex;
     align-items: center;
     gap: 1rem;
+    cursor: pointer;
+    transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+
+.stat-card:hover {
+    box-shadow: 0 4px 12px 0 rgba(0, 0, 0, 0.15);
+    transform: translateY(-1px);
 }
 
 .stat-icon {
@@ -317,24 +324,111 @@
 .table-compact {
     table-layout: fixed;
     width: 100%;
-    min-width: 1200px;
-}
-
-.table-compact td.tender-title {
-    max-width: 500px;
-    white-space: normal;
-    line-height: 1.4;
-    font-size: 0.875rem;
+    min-width: 900px;
 }
 
 .table-compact td {
     font-size: 0.8125rem;
-    padding: 0.625rem 0.75rem;
+    padding: 0.5rem 0.625rem;
+    vertical-align: middle;
+    white-space: nowrap;
+    overflow: hidden;
 }
 
 .table-compact th {
     font-size: 0.8125rem;
     padding: 0.625rem 0.75rem;
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background-color: #F9FAFB;
+}
+
+/* 공고명 — 1행 ellipsis */
+.table-compact .title-col {
+    overflow: hidden;
+}
+.table-compact .title-link {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+    color: #2563EB;
+}
+.table-compact .title-link:hover { text-decoration: underline; }
+
+/* 발주기관 — ellipsis */
+.table-compact .agency-col {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #374151;
+}
+
+/* 금액 */
+.table-compact .price-col {
+    color: #374151;
+}
+
+/* 발주일 */
+.table-compact .date-col {
+    font-size: 0.75rem;
+    color: #6B7280;
+}
+
+/* 마감 색상 */
+.table-compact .deadline-normal { color: #16A34A; }
+.table-compact .deadline-soon   { color: #EA580C; }
+.table-compact .deadline-urgent { color: #DC2626; font-weight: 600; }
+
+/* 상세/원본 링크 */
+.table-compact .detail-col {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    justify-content: center;
+}
+.detail-link  { font-size: 0.8125rem; color: #2563EB; }
+.detail-link:hover { text-decoration: underline; }
+.origin-link  { font-size: 0.8125rem; color: #6B7280; }
+.origin-link:hover { text-decoration: underline; }
+
+/* 정렬 헤더 */
+.table-compact th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+.table-compact th.sortable:hover { background-color: #F3F4F6; }
+.table-compact th.sort-active    { color: #2563EB; background-color: #EFF6FF; }
+
+/* 사전규격 행 — 파란 계열 배경으로 일반과 구분 */
+.table-compact tr.pre-row {
+    background-color: #EFF6FF;
+}
+.table-compact tr.pre-row:hover {
+    background-color: #DBEAFE;
+}
+
+/* 상태 배지 */
+.badge-pre {
+    display: inline-block;
+    padding: 0.15rem 0.45rem;
+    border-radius: 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    background-color: #2563EB;
+    color: #FFFFFF;
+    white-space: nowrap;
+}
+.badge-normal {
+    display: inline-block;
+    padding: 0.15rem 0.45rem;
+    border-radius: 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background-color: #F3F4F6;
+    color: #6B7280;
     white-space: nowrap;
 }
 

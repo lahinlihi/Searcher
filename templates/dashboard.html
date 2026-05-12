@@ -14,7 +14,7 @@
 
     <!-- 오늘의 요약 -->
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div class="stat-card">
+        <div class="stat-card" onclick="gotoSearch('new')" title="신규공고 목록 보기">
             <div class="stat-icon bg-green-100 text-green-600">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
@@ -26,7 +26,7 @@
             </div>
         </div>
 
-        <div class="stat-card">
+        <div class="stat-card" onclick="gotoSearch('pre')" title="사전규격 목록 보기">
             <div class="stat-icon bg-blue-100 text-blue-600">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
@@ -38,7 +38,7 @@
             </div>
         </div>
 
-        <div class="stat-card">
+        <div class="stat-card" onclick="gotoSearch('deadline')" title="마감임박 목록 보기 (3일 이내)">
             <div class="stat-icon bg-red-100 text-red-600">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
@@ -50,7 +50,7 @@
             </div>
         </div>
 
-        <div class="stat-card">
+        <div class="stat-card" onclick="gotoSearch('all')" title="전체 공고 목록 보기">
             <div class="stat-icon bg-purple-100 text-purple-600">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
@@ -85,11 +85,12 @@
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
                     <span class="text-xs text-gray-400">정렬:</span>
-                    <button onclick="setDashSort('pre','score')"  data-section="pre" data-sort="score"  class="sort-btn dash-sort-btn">점수</button>
-                    <button onclick="setDashSort('pre','title')"  data-section="pre" data-sort="title"  class="sort-btn dash-sort-btn">사업명</button>
-                    <button onclick="setDashSort('pre','agency')" data-section="pre" data-sort="agency" class="sort-btn dash-sort-btn">기관</button>
-                    <button onclick="setDashSort('pre','days')"   data-section="pre" data-sort="days"   class="sort-btn dash-sort-btn">마감일</button>
-                    <button onclick="setDashSort('pre','budget')" data-section="pre" data-sort="budget" class="sort-btn dash-sort-btn">금액</button>
+                    <button onclick="setDashSort('pre','score')"    data-section="pre" data-sort="score"    class="sort-btn dash-sort-btn">점수</button>
+                    <button onclick="setDashSort('pre','title')"    data-section="pre" data-sort="title"    class="sort-btn dash-sort-btn">사업명</button>
+                    <button onclick="setDashSort('pre','agency')"   data-section="pre" data-sort="agency"   class="sort-btn dash-sort-btn">기관</button>
+                    <button onclick="setDashSort('pre','announced')" data-section="pre" data-sort="announced" class="sort-btn dash-sort-btn">공고일</button>
+                    <button onclick="setDashSort('pre','days')"     data-section="pre" data-sort="days"     class="sort-btn dash-sort-btn">마감일</button>
+                    <button onclick="setDashSort('pre','budget')"   data-section="pre" data-sort="budget"   class="sort-btn dash-sort-btn">금액</button>
                 </div>
             </div>
         </div>
@@ -110,11 +111,12 @@
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
                     <span class="text-xs text-gray-400">정렬:</span>
-                    <button onclick="setDashSort('urgent','score')"  data-section="urgent" data-sort="score"  class="sort-btn dash-sort-btn">점수</button>
-                    <button onclick="setDashSort('urgent','title')"  data-section="urgent" data-sort="title"  class="sort-btn dash-sort-btn">사업명</button>
-                    <button onclick="setDashSort('urgent','agency')" data-section="urgent" data-sort="agency" class="sort-btn dash-sort-btn">기관</button>
-                    <button onclick="setDashSort('urgent','days')"   data-section="urgent" data-sort="days"   class="sort-btn dash-sort-btn">마감일</button>
-                    <button onclick="setDashSort('urgent','budget')" data-section="urgent" data-sort="budget" class="sort-btn dash-sort-btn">금액</button>
+                    <button onclick="setDashSort('urgent','score')"    data-section="urgent" data-sort="score"    class="sort-btn dash-sort-btn">점수</button>
+                    <button onclick="setDashSort('urgent','title')"    data-section="urgent" data-sort="title"    class="sort-btn dash-sort-btn">사업명</button>
+                    <button onclick="setDashSort('urgent','agency')"   data-section="urgent" data-sort="agency"   class="sort-btn dash-sort-btn">기관</button>
+                    <button onclick="setDashSort('urgent','announced')" data-section="urgent" data-sort="announced" class="sort-btn dash-sort-btn">공고일</button>
+                    <button onclick="setDashSort('urgent','days')"     data-section="urgent" data-sort="days"     class="sort-btn dash-sort-btn">마감일</button>
+                    <button onclick="setDashSort('urgent','budget')"   data-section="urgent" data-sort="budget"   class="sort-btn dash-sort-btn">금액</button>
                 </div>
             </div>
         </div>
@@ -136,11 +138,12 @@
                 <div class="flex items-center gap-2 shrink-0">
                     <div class="flex items-center gap-1">
                         <span class="text-xs text-gray-400">정렬:</span>
-                        <button onclick="setDashSort('recent','score')"  data-section="recent" data-sort="score"  class="sort-btn dash-sort-btn">점수</button>
-                        <button onclick="setDashSort('recent','title')"  data-section="recent" data-sort="title"  class="sort-btn dash-sort-btn">사업명</button>
-                        <button onclick="setDashSort('recent','agency')" data-section="recent" data-sort="agency" class="sort-btn dash-sort-btn">기관</button>
-                        <button onclick="setDashSort('recent','days')"   data-section="recent" data-sort="days"   class="sort-btn dash-sort-btn">마감일</button>
-                        <button onclick="setDashSort('recent','budget')" data-section="recent" data-sort="budget" class="sort-btn dash-sort-btn">금액</button>
+                        <button onclick="setDashSort('recent','score')"    data-section="recent" data-sort="score"    class="sort-btn dash-sort-btn">점수</button>
+                        <button onclick="setDashSort('recent','title')"    data-section="recent" data-sort="title"    class="sort-btn dash-sort-btn">사업명</button>
+                        <button onclick="setDashSort('recent','agency')"   data-section="recent" data-sort="agency"   class="sort-btn dash-sort-btn">기관</button>
+                        <button onclick="setDashSort('recent','announced')" data-section="recent" data-sort="announced" class="sort-btn dash-sort-btn">공고일</button>
+                        <button onclick="setDashSort('recent','days')"     data-section="recent" data-sort="days"     class="sort-btn dash-sort-btn">마감일</button>
+                        <button onclick="setDashSort('recent','budget')"   data-section="recent" data-sort="budget"   class="sort-btn dash-sort-btn">금액</button>
                     </div>
                     <a href="/search" class="text-blue-600 hover:underline text-sm shrink-0">전체 보기 →</a>
                 </div>
@@ -177,5 +180,10 @@
 {% endblock %}
 
 {% block extra_js %}
+<script>
+function gotoSearch(filter) {
+    window.open('/search?filter=' + filter, '_blank');
+}
+</script>
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 {% endblock %}
