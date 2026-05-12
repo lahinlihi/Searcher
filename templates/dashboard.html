@@ -66,18 +66,11 @@
     <!-- 관심 키워드 -->
     <div class="card bg-blue-50 border border-blue-200">
         <div class="card-body py-3">
-            <div class="flex items-center justify-between">
-                <div class="flex-1">
-                    <div class="flex items-center gap-3 mb-1">
-                        <h4 class="text-sm font-semibold text-blue-900">관심 공고 필터</h4>
-                        <span id="keyword-match-count" class="text-sm font-semibold text-blue-700 bg-blue-200 px-2 py-0.5 rounded-full" title="관심 키워드·금액·제외 키워드 필터에 매칭된 공고 전체 수 (대시보드 섹션별 최대 20건 표시)">0건</span>
-                        <a id="interest-all-link" href="/search?use_interest=1" class="hidden text-xs text-blue-600 hover:text-blue-800 font-medium underline underline-offset-2">모두 보기 →</a>
-                    </div>
-                    <div id="active-keywords" class="flex flex-wrap gap-2">
-                        <!-- JavaScript로 동적 생성 -->
-                    </div>
-                </div>
-                <a href="/filters" class="btn-secondary text-sm whitespace-nowrap ml-4">필터 관리</a>
+            <div class="flex items-center gap-2 mb-2">
+                <h4 class="text-sm font-semibold text-blue-900">관심 키워드</h4>
+            </div>
+            <div id="active-keywords" class="flex flex-wrap gap-2">
+                <!-- JavaScript로 동적 생성 -->
             </div>
         </div>
     </div>
@@ -85,8 +78,20 @@
     <!-- 오늘 사전규격 -->
     <div class="card">
         <div class="card-header">
-            <h3 class="card-title">사전규격 (나라장터)</h3>
-            <p class="text-sm text-gray-600 mt-1">관심 키워드 · 금액 범위 · 제외 키워드 필터 적용 (마감 전, 키워드 매칭 순)</p>
+            <div class="flex justify-between items-center flex-wrap gap-2">
+                <div>
+                    <h3 class="card-title">사전규격 (나라장터)</h3>
+                    <p class="text-sm text-gray-600 mt-1">관심 키워드 · 금액 범위 · 제외 키워드 필터 적용 (마감 전, 점수순 상위 20건)</p>
+                </div>
+                <div class="flex items-center gap-1 shrink-0">
+                    <span class="text-xs text-gray-400">정렬:</span>
+                    <button onclick="setDashSort('pre','score')"  data-section="pre" data-sort="score"  class="sort-btn dash-sort-btn">점수</button>
+                    <button onclick="setDashSort('pre','title')"  data-section="pre" data-sort="title"  class="sort-btn dash-sort-btn">사업명</button>
+                    <button onclick="setDashSort('pre','agency')" data-section="pre" data-sort="agency" class="sort-btn dash-sort-btn">기관</button>
+                    <button onclick="setDashSort('pre','days')"   data-section="pre" data-sort="days"   class="sort-btn dash-sort-btn">마감일</button>
+                    <button onclick="setDashSort('pre','budget')" data-section="pre" data-sort="budget" class="sort-btn dash-sort-btn">금액</button>
+                </div>
+            </div>
         </div>
         <div class="card-body">
             <div id="pre-tenders-list" class="scrollable-list space-y-3">
@@ -98,8 +103,20 @@
     <!-- 신규공고 (나라장터) -->
     <div class="card">
         <div class="card-header">
-            <h3 class="card-title">신규공고 (나라장터 API)</h3>
-            <p class="text-sm text-gray-600 mt-1">관심 키워드 · 금액 범위 · 제외 키워드 필터 적용 (최근 7일, 키워드 매칭 순)</p>
+            <div class="flex justify-between items-center flex-wrap gap-2">
+                <div>
+                    <h3 class="card-title">신규공고 (나라장터 API)</h3>
+                    <p class="text-sm text-gray-600 mt-1">관심 키워드 · 금액 범위 · 제외 키워드 필터 적용 (최근 7일, 점수순 상위 20건)</p>
+                </div>
+                <div class="flex items-center gap-1 shrink-0">
+                    <span class="text-xs text-gray-400">정렬:</span>
+                    <button onclick="setDashSort('urgent','score')"  data-section="urgent" data-sort="score"  class="sort-btn dash-sort-btn">점수</button>
+                    <button onclick="setDashSort('urgent','title')"  data-section="urgent" data-sort="title"  class="sort-btn dash-sort-btn">사업명</button>
+                    <button onclick="setDashSort('urgent','agency')" data-section="urgent" data-sort="agency" class="sort-btn dash-sort-btn">기관</button>
+                    <button onclick="setDashSort('urgent','days')"   data-section="urgent" data-sort="days"   class="sort-btn dash-sort-btn">마감일</button>
+                    <button onclick="setDashSort('urgent','budget')" data-section="urgent" data-sort="budget" class="sort-btn dash-sort-btn">금액</button>
+                </div>
+            </div>
         </div>
         <div class="card-body">
             <div id="urgent-tenders-list" class="scrollable-list space-y-3">
@@ -111,12 +128,22 @@
     <!-- 신규공고 -->
     <div class="card">
         <div class="card-header">
-            <div class="flex justify-between items-center">
+            <div class="flex justify-between items-center flex-wrap gap-2">
                 <div>
                     <h3 class="card-title">신규공고 (기타 채널)</h3>
-                    <p class="text-sm text-gray-600 mt-1">나라장터 외 크롤링 채널 (금~오늘, 키워드 매칭 순)</p>
+                    <p class="text-sm text-gray-600 mt-1">나라장터 외 크롤링 채널 (금~오늘, 점수순 상위 20건)</p>
                 </div>
-                <a href="/search" class="text-blue-600 hover:underline text-sm">전체 보기 →</a>
+                <div class="flex items-center gap-2 shrink-0">
+                    <div class="flex items-center gap-1">
+                        <span class="text-xs text-gray-400">정렬:</span>
+                        <button onclick="setDashSort('recent','score')"  data-section="recent" data-sort="score"  class="sort-btn dash-sort-btn">점수</button>
+                        <button onclick="setDashSort('recent','title')"  data-section="recent" data-sort="title"  class="sort-btn dash-sort-btn">사업명</button>
+                        <button onclick="setDashSort('recent','agency')" data-section="recent" data-sort="agency" class="sort-btn dash-sort-btn">기관</button>
+                        <button onclick="setDashSort('recent','days')"   data-section="recent" data-sort="days"   class="sort-btn dash-sort-btn">마감일</button>
+                        <button onclick="setDashSort('recent','budget')" data-section="recent" data-sort="budget" class="sort-btn dash-sort-btn">금액</button>
+                    </div>
+                    <a href="/search" class="text-blue-600 hover:underline text-sm shrink-0">전체 보기 →</a>
+                </div>
             </div>
         </div>
         <div class="card-body">

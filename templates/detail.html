@@ -298,7 +298,7 @@
             <div class="flex justify-between items-center flex-wrap gap-2">
                 <div>
                     <h3 class="card-title">수행이력 조회</h3>
-                    <p class="text-xs text-gray-400 mt-0.5">나라장터 낙찰결과 API · 최근 5년 · 공고명 유사검색</p>
+                    <p class="text-xs text-gray-400 mt-0.5">나라장터 공고·개찰·계약 API · 최근 5년 · 공고명 유사검색</p>
                 </div>
                 <span id="history-query-badge" class="hidden text-xs bg-blue-50 border border-blue-200 text-blue-700 px-2 py-1 rounded"></span>
             </div>
@@ -808,8 +808,8 @@ function toggleHistory() {
 
 async function loadHistory(allTypes = false) {
     const body = document.getElementById('history-body');
-    const label = allTypes ? '물품·공사 포함 조회 중...' : '나라장터 낙찰결과 조회 중 (용역)...';
-    body.innerHTML = `<div class="text-center py-8"><div class="inline-block animate-spin rounded-full h-7 w-7 border-b-2 border-blue-500 mb-3"></div><p class="text-sm text-gray-500">${label}</p><p class="text-xs text-gray-400 mt-1">최근 5년 × 월별 병렬 조회 중 (5~15초 소요)</p></div>`;
+    const label = allTypes ? '물품·공사 포함 조회 중...' : '나라장터 공고·개찰·계약 조회 중 (용역)...';
+    body.innerHTML = `<div class="text-center py-8"><div class="inline-block animate-spin rounded-full h-7 w-7 border-b-2 border-blue-500 mb-3"></div><p class="text-sm text-gray-500">${label}</p><p class="text-xs text-gray-400 mt-1">최근 5년 × 공고/개찰/계약 병렬 조회 중 (10~20초 소요)</p></div>`;
 
     try {
         const url = `/api/tenders/${TENDER_ID}/history` + (allTypes ? '?all_types=1' : '');
@@ -826,6 +826,9 @@ async function loadHistory(allTypes = false) {
 
         if (!data.items || data.items.length === 0) {
             let msg = '<p class="text-gray-400 text-sm text-center py-6">조회된 수행이력이 없습니다.</p>';
+            if (!data.pblnc_api_ok) {
+                msg += `<p class="text-xs text-amber-500 text-center mt-2">⚠ 입찰공고 API 미응답 — 개찰/낙찰 결과만 표시됩니다.</p>`;
+            }
             if (data.errors && data.errors.length) {
                 msg += `<p class="text-xs text-red-400 text-center mt-2">API 오류: ${data.errors.join(', ')}</p>`;
             }
@@ -833,16 +836,23 @@ async function loadHistory(allTypes = false) {
             return;
         }
 
-        const failCount      = data.items.filter(x => x._fail_type && !x._followup_contract).length;
-        const followupCount  = data.items.filter(x => x._followup_contract).length;
-        const failBadge      = failCount > 0
-            ? ` · <span class="text-red-500 font-semibold">${failCount}건 유찰</span>`
-            : '';
-        const followupBadge  = followupCount > 0
-            ? ` · <span class="text-amber-600 font-semibold">${followupCount}건 유찰→수의계약</span>`
-            : '';
-        let html = `<p class="text-xs text-gray-400 mb-3">총 ${data.items.length}건 조회됨 (최신순)${failBadge}${followupBadge}</p>`;
-        html += `<div class="overflow-x-auto"><table class="w-full text-sm border-collapse">
+        // 상태별 카운트
+        const cntMap = { '낙찰': 0, 'fail': 0, '계약': 0, '미공개': 0 };
+        data.items.forEach(x => { if (x._status in cntMap) cntMap[x._status]++; });
+        const badges = [];
+        if (cntMap['낙찰'])   badges.push(`<span class="text-blue-600 font-semibold">${cntMap['낙찰']}건 낙찰</span>`);
+        if (cntMap['계약'])   badges.push(`<span class="text-green-600 font-semibold" title="낙찰결과 없는 건에 대해 계약현황 API로 확인된 건">${cntMap['계약']}건 계약(현황)</span>`);
+        if (cntMap['fail'])   badges.push(`<span class="text-red-500 font-semibold">${cntMap['fail']}건 유찰</span>`);
+        if (cntMap['미공개']) badges.push(`<span class="text-gray-400 font-semibold">${cntMap['미공개']}건 미공개</span>`);
+        const badgeStr = badges.length ? ` · ${badges.join(' · ')}` : '';
+
+        let pblncWarn = '';
+        if (!data.pblnc_api_ok) {
+            pblncWarn = `<p class="text-xs text-amber-500 mt-1">⚠ 입찰공고 API 미응답 — 공고 기반 목록 불완전할 수 있습니다.</p>`;
+        }
+
+        let html = `<p class="text-xs text-gray-400 mb-1">총 ${data.items.length}건 조회됨 (최신순)${badgeStr}</p>${pblncWarn}`;
+        html += `<div class="overflow-x-auto mt-2"><table class="w-full text-sm border-collapse">
             <thead>
                 <tr class="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
                     <th class="px-3 py-2 text-left border-b font-semibold">개찰일</th>
@@ -857,80 +867,107 @@ async function loadHistory(allTypes = false) {
             <tbody>`;
 
         data.items.forEach((item, i) => {
-            const failType = item._fail_type || null;  // 'sole_bidder' | 'no_bidder' | 'unknown' | null
-            const isFail = failType !== null;
-            const openDt = (isFail
-                ? item.opengDt
-                : (item.rlOpengDt || item.fnlSucsfDate || '')
-            ).substring(0, 10);
+            const status   = item._status   || '낙찰';   // '낙찰' | 'fail' | '계약' | '미공개'
+            const failType = item._fail_type || null;    // 'sole_bidder' | 'no_bidder' | 'unknown'
+            const fc       = item._followup_contract || null;
 
-            const nmRaw = item.bidNtceNm || '';
-            const nm = nmRaw.length > 40 ? nmRaw.substring(0, 40) + '…' : nmRaw;
-            const org = item.dminsttNm || '-';
-            const bidNo = item.bidNtceNo || '';
-            const bidSeq = item.bidNtceOrd || '000';
-            const g2bUrl = bidNo
-                ? `https://www.g2b.go.kr/pt/menu/selectSubFrame.do?framesrc=/pt/menu/frameTgong.do?targetUrl=https://www.g2b.go.kr:8101/ep/invitation/publish/bidInfoDtl.do?bidno=${bidNo}%26bidseq=${bidSeq}`
-                : '';
-            const nmHtml = bidNo
-                ? `<a href="${g2bUrl}" target="_blank" class="${isFail ? 'text-orange-600 hover:underline' : 'text-blue-600 hover:underline'}" title="${nmRaw}">${nm}</a>`
-                : `<span title="${nmRaw}">${nm}</span>`;
+            // ── 날짜 결정 ──────────────────────────────────────────────────
+            const rawDt =
+                item.rlOpengDt    ||   // 낙찰결과 실개찰일
+                item.opengDt      ||   // 개찰결과 개찰일 or 공고 예정개찰일
+                item.fnlSucsfDate ||   // 낙찰일
+                item.bidNtceDt    ||   // 공고일 (미공개 폴백)
+                '';
+            const openDt = rawDt.substring(0, 10);
 
-            const typeBadge = item._bid_type !== '용역'
+            // ── 공고명 / 링크 ──────────────────────────────────────────────
+            const nmRaw  = item.bidNtceNm || '';
+            const nm     = nmRaw.length > 40 ? nmRaw.substring(0, 40) + '…' : nmRaw;
+            const bidNo  = item.bidNtceNo || '';
+            const bidSeq = (item.bidNtceOrd || '0').padStart(3, '0');
+            // API 응답에 포함된 공식 나라장터 URL 사용 (공고 원문 보기와 동일)
+            const g2bUrl = item.bidNtceUrl || item.bidNtceDtlUrl || '';
+            const linkCls =
+                status === 'fail'    ? 'text-orange-600 hover:underline' :
+                status === '미공개'  ? 'text-gray-500 hover:underline'   :
+                status === '계약'    ? 'text-green-700 hover:underline'   :
+                'text-blue-600 hover:underline';
+            const nmHtml = g2bUrl
+                ? `<a href="${g2bUrl}" target="_blank" class="${linkCls}" title="${nmRaw}">${nm}</a>`
+                : `<span class="${linkCls}" title="${nmRaw}">${nm}</span>`;
+
+            const typeBadge = item._bid_type && item._bid_type !== '용역'
                 ? `<span class="text-xs bg-gray-100 text-gray-500 px-1 rounded ml-1">${item._bid_type}</span>`
                 : '';
 
-            let winnerCell, amtCell, cntCell, statusCell, rowBg;
-            const fc = item._followup_contract || null;  // 수의계약 정보
+            // ── 기관명 ─────────────────────────────────────────────────────
+            const org = item.dminsttNm || item.ntceInsttNm || '-';
 
-            if (isFail) {
-                // ── 유찰 (단독응찰 / 무응찰 / 기타) ──────────────────────────
+            let winnerCell, amtCell, cntCell, statusCell, rowBg;
+
+            if (status === '미공개') {
+                // ── 미공개: 공고만 있고 개찰/낙찰 데이터 없음 ──────────────
+                winnerCell = `<span class="text-gray-300 text-xs">-</span>`;
+                amtCell    = `<span class="text-gray-300 text-xs">-</span>`;
+                cntCell    = `<span class="text-gray-300 text-xs">-</span>`;
+                statusCell = `<span class="text-xs font-semibold border px-1.5 py-0.5 rounded bg-gray-50 text-gray-400 border-gray-200">미공개</span>`;
+                rowBg      = 'bg-gray-50 hover:bg-gray-100';
+
+            } else if (status === '계약') {
+                // ── 계약: 유찰 또는 미공개 후 계약현황 확인 ──────────────
+                const contractWinner = fc ? (fc.winner || '-') : '-';
+                const contractAmt    = fc && fc.amount ? formatAmtKr(parseInt(fc.amount)) : '-';
+                // 유찰 시 원래 투찰자 정보
                 const corpInfo = item.opengCorpInfo || '';
-                const parts = corpInfo.split('^');
+                const bidderNm = corpInfo ? (corpInfo.split('^')[0] || '').trim() : '';
+                const isSame   = bidderNm && contractWinner.includes(bidderNm.substring(0, 4));
+                const cnt      = item.prtcptCnum != null ? item.prtcptCnum : '-';
+
+                winnerCell = `<div class="leading-tight">
+                    <span class="font-medium text-green-700">${contractWinner}</span>
+                    ${failType === 'sole_bidder' && isSame
+                        ? '<span class="text-xs text-gray-400 ml-1">(단독응찰자)</span>'
+                        : (bidderNm && !isSame ? `<div class="text-xs text-gray-400">투찰: ${bidderNm}</div>` : '')}
+                </div>`;
+                amtCell    = `<span class="text-green-700 font-semibold whitespace-nowrap">${contractAmt}</span>`;
+                cntCell    = cnt !== '-'
+                    ? `<span class="text-gray-500">${cnt}</span>`
+                    : `<span class="text-gray-300">-</span>`;
+
+                const prevLabel =
+                    failType === 'sole_bidder' ? '단독응찰' :
+                    failType === 'no_bidder'   ? '무응찰'   :
+                    failType === 'unknown'     ? '유찰'     : '';
+                statusCell = `<div class="leading-tight text-center" title="낙찰결과 없음 → 계약현황 API 조회로 확인">
+                    <div class="text-xs font-semibold border px-1.5 py-0.5 rounded bg-green-50 text-green-700 border-green-300">계약${prevLabel ? `(${prevLabel})` : ''}</div>
+                    <div class="text-xs text-gray-400 mt-0.5">현황조회</div>
+                    ${fc && fc.date ? `<div class="text-xs text-gray-400">${fc.date}</div>` : ''}
+                </div>`;
+                rowBg = 'bg-green-50 hover:bg-green-100';
+
+            } else if (status === 'fail') {
+                // ── 유찰: 단독응찰 / 무응찰 / 기타 ──────────────────────
+                const corpInfo = item.opengCorpInfo || '';
+                const parts    = corpInfo.split('^');
                 const bidderNm = (parts[0] || '').trim();
                 const bidAmt   = parts[3] ? formatAmtKr(parseInt(parts[3])) : '-';
-                const cnt = item.prtcptCnum != null ? item.prtcptCnum : '-';
+                const cnt      = item.prtcptCnum != null ? item.prtcptCnum : '-';
 
-                if (fc) {
-                    // ── 유찰 후 수의계약 체결 ──────────────────────────────
-                    const contractWinner = fc.winner || '-';
-                    const contractAmt    = fc.amount ? formatAmtKr(parseInt(fc.amount)) : '-';
-                    const isSameBidder   = bidderNm && contractWinner.includes(bidderNm.substring(0, 4));
+                winnerCell = bidderNm
+                    ? `<span class="text-gray-600 text-xs">${bidderNm}</span>`
+                    : `<span class="text-gray-400 text-xs">-</span>`;
+                amtCell    = `<span class="text-orange-600 whitespace-nowrap">${bidAmt}</span>`;
+                cntCell    = `<span class="${cnt == 0 ? 'text-gray-400' : 'text-red-500 font-bold'}">${cnt}</span>`;
 
-                    winnerCell = `<div class="leading-tight">
-                        <span class="font-medium text-green-700">${contractWinner}</span>
-                        ${isSameBidder
-                            ? '<span class="text-xs text-gray-400 ml-1">(단독응찰자)</span>'
-                            : (bidderNm ? `<div class="text-xs text-gray-400">투찰: ${bidderNm}</div>` : '')}
-                    </div>`;
-                    amtCell  = `<span class="text-green-700 font-semibold whitespace-nowrap">${contractAmt}</span>`;
-                    cntCell  = `<span class="text-gray-500">${cnt}</span>`;
+                const { label: fLabel, cls: fCls } =
+                    failType === 'sole_bidder' ? { label: '단독응찰', cls: 'bg-red-50 text-red-600 border-red-200' } :
+                    failType === 'no_bidder'   ? { label: '무응찰',   cls: 'bg-gray-100 text-gray-500 border-gray-300' } :
+                                                  { label: '유찰',    cls: 'bg-orange-50 text-orange-500 border-orange-200' };
+                statusCell = `<span class="text-xs font-semibold border px-1.5 py-0.5 rounded ${fCls}">${fLabel}</span>`;
+                rowBg = 'bg-red-50 hover:bg-red-100';
 
-                    const failLabel =
-                        failType === 'sole_bidder' ? '단독응찰' :
-                        failType === 'no_bidder'   ? '무응찰' : '유찰';
-                    statusCell = `<div class="leading-tight text-center">
-                        <div class="text-xs font-semibold border px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border-amber-300">${failLabel} → 수의계약</div>
-                        ${fc.date ? `<div class="text-xs text-gray-400 mt-0.5">계약 ${fc.date}</div>` : ''}
-                    </div>`;
-                    rowBg = 'bg-amber-50 hover:bg-amber-100';
-                } else {
-                    // ── 순수 유찰 ───────────────────────────────────────────
-                    winnerCell = bidderNm
-                        ? `<span class="text-gray-600 text-xs">${bidderNm}</span>`
-                        : `<span class="text-gray-400 text-xs">-</span>`;
-                    amtCell  = `<span class="text-orange-600 whitespace-nowrap">${bidAmt}</span>`;
-                    cntCell  = `<span class="${cnt == 0 ? 'text-gray-400' : 'text-red-500 font-bold'}">${cnt}</span>`;
-
-                    const { label, cls } =
-                        failType === 'sole_bidder' ? { label: '단독응찰 유찰', cls: 'bg-red-50 text-red-600 border-red-200' } :
-                        failType === 'no_bidder'   ? { label: '무응찰',        cls: 'bg-gray-100 text-gray-500 border-gray-300' } :
-                                                      { label: '유찰(불명)',    cls: 'bg-orange-50 text-orange-500 border-orange-200' };
-                    statusCell = `<span class="text-xs font-semibold border px-1.5 py-0.5 rounded ${cls}">${label}</span>`;
-                    rowBg = 'bg-red-50 hover:bg-red-100';
-                }
             } else {
-                // ── 정상 낙찰 ────────────────────────────────────────────────
+                // ── 낙찰 ────────────────────────────────────────────────
                 const winner = item.bidwinnrNm || '-';
                 const amt    = item.sucsfbidAmt ? formatAmtKr(parseInt(item.sucsfbidAmt)) : '-';
                 const cnt    = item.prtcptCnum || '-';

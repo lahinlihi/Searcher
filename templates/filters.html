@@ -344,7 +344,8 @@ async function saveKeywordFilters() {
     if (res.ok) {
         const msg = document.getElementById('filter-save-msg');
         msg.classList.remove('hidden');
-        setTimeout(() => msg.classList.add('hidden'), 2000);
+        // 1.2초 후 대시보드로 이동 → 변경된 가중치가 즉시 반영된 결과 확인
+        setTimeout(() => { window.location.href = '/'; }, 1200);
     } else {
         const d = await res.json();
         alert('저장 실패: ' + (d.error || '오류'));

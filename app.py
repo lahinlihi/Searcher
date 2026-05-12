@@ -35,6 +35,7 @@ _BUSINESS_TYPE_CATEGORIES = [
         '아카데미 운영', '캠프 운영',
         # 역량강화 운영
         '역량강화 프로그램', '역량강화교육', '역량강화 교육',
+        '역량강화 사업', '역량강화사업', '역량강화 지원사업',
         # 교육 지원·수행 용역
         '교육 지원 용역', '교육지원 용역', '교육지원용역',
         '교육 용역', '교육용역', '연수 용역', '연수용역',
@@ -45,6 +46,13 @@ _BUSINESS_TYPE_CATEGORIES = [
         # 교육 운영기관/수행기관 선정 (우리가 운영기관으로 참여하는 경우)
         '교육 운영기관', '교육 위탁기관', '교육 수행기관',
         '연수 기관 선정', '교육운영 위탁',
+        # 인력양성·인재육성 (기타채널: 과기정통부·NIA·정보통신산업진흥원 등)
+        '인력양성', '인력 양성', '양성 교육', '교육 사업',
+        '연수사업', '인력교류사업', '훈련사업',
+        '인재양성', '인재 양성', '전문인력 양성',
+        # 강사·튜터 관련
+        '강사 양성', '강사양성', '튜터 양성', '교강사',
+        '강사 풀', '강사풀', '강사 Pool',
     ]),
     ('시설운영', 40, [
         # 센터/시설/공간 + 운영/위탁
@@ -69,6 +77,19 @@ _BUSINESS_TYPE_CATEGORIES = [
         '강의 콘텐츠', '이러닝 콘텐츠', '온라인 콘텐츠',
         '교육자료 개발', '교육 자료 개발',
         '동영상 강의 제작',
+        # 콘텐츠 제작지원 (기타채널: 한국콘텐츠진흥원·정보통신산업진흥원 등)
+        '콘텐츠 제작', '콘텐츠제작', '콘텐츠 제작지원', '콘텐츠제작지원',
+        '디지털콘텐츠', '디지털 콘텐츠',
+        '제작 지원사업', '제작지원사업',
+        # 시스템·서비스 개발·구축 (SW/IT 분야 콘텐츠 유형)
+        '시스템 개발', '시스템개발', '플랫폼 개발', '플랫폼개발',
+        '서비스 개발', '서비스개발', '앱 개발', '앱개발',
+        'SW 개발', '소프트웨어 개발',
+        # IT 시스템·서비스 구축 (NIA·과기정통부·정보통신산업진흥원 스타일)
+        '시스템 구축', '시스템구축', '플랫폼 구축', '플랫폼구축',
+        '서비스 구축', '서비스개선', '서비스 개선', '서비스 확대',
+        '데이터셋 구축', '데이터 구축', 'ISP 사업',
+        '디지털 서비스', '디지털서비스',
     ]),
     ('행사운영', 30, [
         # 행사/이벤트 + 운영/개최/진행
@@ -83,6 +104,13 @@ _BUSINESS_TYPE_CATEGORIES = [
         '워크숍 운영', '워크샵 운영',
         '토론회 운영', '토론회 개최',
         '경진대회 운영', '대회 운영', '대회 개최',
+        # 스타트업·투자 관련 행사 (기타채널: 정보통신산업진흥원·콘텐츠진흥원 등)
+        '쇼케이스 운영', '쇼케이스 개최', '쇼케이스 참가',
+        '투자유치 쇼케이스', '투자 유치 행사', '비즈매칭',
+        '데모데이 운영', '해커톤 운영', '해커톤 개최',
+        '공모전 운영', '공모전 개최', '경연대회 운영',
+        '피칭 행사', '피칭 대회',
+        '페스티벌 운영', '페스티벌 개최',
     ]),
     ('컨설팅', 20, [
         # 복합 패턴 우선
@@ -103,6 +131,22 @@ _BUSINESS_TYPE_CATEGORIES = [
         '수요조사', '수요 조사',
         '기초연구', '정책연구', '기획연구',
         '학술 용역', '연구 보고서',
+        # 연구개발·기술개발 과제 공모 (기타채널: 과기정통부·NIA 등)
+        '연구개발사업', '연구개발 사업', '기술개발사업', '기술개발 사업',
+        '원천기술개발', '원천기술 개발',
+        '신규과제 공모', '신규 과제 공모', '과제 공모',
+        '위탁연구', '위탁 연구',
+        'R&D 사업', 'R&D사업',
+        # 방안 수립·분석·평가 연구 (NIA 스타일)
+        '방안 수립', '방안 연구', '방안수립',
+        '연구 수행', '연구 추진',
+        '분석 연구', '연구 분석',
+        # 용역·실증·과제 사업 (NIA/과기정통부 공모 스타일)
+        '용역사업', '용역 사업',
+        '실증사업', '실증 사업', '개발·실증', '개발 실증',
+        '신규 공모', '사업 공모', '사업 참여 공고',
+        '과제 모집', '신규과제 모집',
+        '장학금 사업',
     ]),
 ]
 
@@ -1082,15 +1126,15 @@ def api_dashboard():
                 'keyword_match': keyword_match_count},
             'pre_tenders': [
                 {**t.to_dict(interest_keywords=include_keywords),
-                 **dict(zip(('relevance_score', 'business_type'), _score_and_type(t, include_keywords)))}
+                 **dict(zip(('relevance_score', 'business_type'), _score_and_type(t, include_keywords, user_type_weights)))}
                 for t in pre_tenders],
             'urgent_tenders': [
                 {**t.to_dict(interest_keywords=include_keywords),
-                 **dict(zip(('relevance_score', 'business_type'), _score_and_type(t, include_keywords)))}
+                 **dict(zip(('relevance_score', 'business_type'), _score_and_type(t, include_keywords, user_type_weights)))}
                 for t in urgent_tenders],
             'recent_tenders': [
                 {**t.to_dict(interest_keywords=include_keywords),
-                 **dict(zip(('relevance_score', 'business_type'), _score_and_type(t, include_keywords)))}
+                 **dict(zip(('relevance_score', 'business_type'), _score_and_type(t, include_keywords, user_type_weights)))}
                 for t in recent_tenders],
             'include_keywords': include_keywords,
             'exclude_keywords': exclude_keywords}
@@ -1625,10 +1669,23 @@ def api_dismissed_ids():
 @app.route('/api/tenders/<int:tender_id>/history')
 @login_required
 def api_tender_history(tender_id):
-    """공고 수행이력 조회 - 나라장터 낙찰결과 API (최근 5년, 월별 병렬 조회)"""
+    """공고 수행이력 조회
+
+    조회 흐름:
+    1단계. 입찰공고 목록 (과거 5년, 공고명 유사검색) — 공고 기반 목록 구성
+    2단계. 개찰결과 + 낙찰결과 (과거 5년, 공고명 유사검색) — 상태 판별
+    3단계. 유찰/미공개 건에 대해 입찰번호 직접 조회 → 계약현황 확인
+
+    최종 상태 분류:
+    - 낙찰  : 낙찰결과 또는 낙찰 개찰결과 확인됨
+    - 단독응찰 : 개찰결과 유찰, prtcptCnum=1
+    - 무응찰 : 개찰결과 유찰, prtcptCnum=0
+    - 계약  : 유찰 또는 미공개 상태인데 계약현황 확인됨
+    - 미공개 : 공고는 있으나 개찰/낙찰/계약 데이터 없음
+    """
     import requests as _req
     import re as _re
-    from datetime import datetime as _dt, timedelta as _td
+    from datetime import datetime as _dt
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import calendar as _cal
 
@@ -1638,18 +1695,17 @@ def api_tender_history(tender_id):
     if not service_key:
         return jsonify({'error': 'API 키가 설정되지 않았습니다.'}), 500
 
-    # 공고명에서 메타정보 제거 → 핵심 사업명만 추출
+    # ── 공고명 정제: 메타정보 제거 → 핵심 사업명 추출 ─────────────────────────
     title = tender.title or ''
     clean = title
-
-    # ① 대괄호 내용 전체 제거 ([재공고] [일반용역] [긴급] [사전규격공개] 등)
+    # ① 대괄호 내용 전체 제거 ([재공고] [사전규격공개] 등)
     clean = _re.sub(r'\[[^\]]+\]', '', clean)
-    # ② 소괄호 내 메타 키워드 제거 (재공고·재입찰·긴급·사전규격 등, 20자 이내)
-    _META_PAREN = re.compile(
-        r'\(\s*(?:재공고|재입찰|긴급|사전규격공개|사전규격|일반용역|추가공고|정정공고|공고|변경)\s*\)',
-        re.IGNORECASE,
+    # ② 소괄호 내 메타 키워드 제거 (입찰재공고·재공고·긴급 등)
+    clean = _re.sub(
+        r'\(\s*(?:입찰재공고|입찰공고|입찰|재공고|재입찰|긴급|사전규격공개|사전규격'
+        r'|일반용역|추가공고|정정공고|공고|변경)\s*\)',
+        '', clean, flags=_re.IGNORECASE,
     )
-    clean = _META_PAREN.sub('', clean)
     # ③ 연도·회차·차년도 제거
     clean = _re.sub(r'\d{4}년도?', '', clean)
     clean = _re.sub(r"'\d{2}년도?", '', clean)
@@ -1657,41 +1713,42 @@ def api_tender_history(tender_id):
     clean = _re.sub(r'제\s*\d+\s*회차?', '', clean)
     clean = _re.sub(r'\d+\s*차년도', '', clean)
     clean = _re.sub(r'\d+\s*차\b', '', clean)
-    # ④ 앞부분 재공고·재입찰 표기 제거
-    clean = _re.sub(r'^\(?\s*(재공고|재입찰)\s*\)?[\s-]*', '', clean)
+    # ④ 선두 재공고/재입찰/입찰재공고 표기 제거
+    clean = _re.sub(r'^\(?\s*(?:입찰재공고|입찰공고|재공고|재입찰)\s*\)?[\s-]*', '', clean)
     clean = _re.sub(r'\s+', ' ', clean).strip()
     query_nm = clean[:60] if len(clean) > 60 else clean
 
-    # API 최대 허용 범위: ~31일. 5년 × 12개월 = 60 구간으로 나눠 병렬 조회
+    # ── 조회 기간: 최근 5년 × 월별 ────────────────────────────────────────────
     now = _dt.now()
-    months = []  # (year, month) 목록 (최근 5년)
+    months = []
     for offset in range(60):
-        y = now.year
-        m = now.month - offset
+        y, m = now.year, now.month - offset
         while m <= 0:
             m += 12
             y -= 1
         months.append((y, m))
 
-    base = 'http://apis.data.go.kr/1230000/as/ScsbidInfoService'
+    BID_BASE    = 'http://apis.data.go.kr/1230000/ad/BidPublicInfoService'   # /ad/ (입찰공고)
+    RESULT_BASE = 'http://apis.data.go.kr/1230000/as/ScsbidInfoService'       # /as/ (낙찰/개찰결과)
+    CNTRCT_BASE = 'https://apis.data.go.kr/1230000/ao/CntrctInfoService'     # /ao/ (계약현황)
+
     all_types = request.args.get('all_types') == '1'
 
-    # (endpoint, bid_type_label, result_kind)
-    # result_kind: 'award' = 낙찰결과, 'openg' = 개찰결과(유찰감지용)
+    # (kind, base_url, endpoint, bid_type_label)
     ops = [
-        ('getScsbidListSttusServcPPSSrch',        '용역', 'award'),
-        ('getOpengResultListInfoServcPPSSrch',     '용역', 'openg'),  # 유찰 감지
+        ('pblnc', BID_BASE,    'getBidPblancListInfoServcPPSSrch',   '용역'),  # 공고 목록
+        ('openg', RESULT_BASE, 'getOpengResultListInfoServcPPSSrch', '용역'),  # 개찰결과
+        ('award', RESULT_BASE, 'getScsbidListSttusServcPPSSrch',     '용역'),  # 낙찰결과
     ]
     if all_types:
         ops += [
-            ('getScsbidListSttusThngPPSSrch',     '물품', 'award'),
-            ('getScsbidListSttusCnstwkPPSSrch',   '공사', 'award'),
+            ('award', RESULT_BASE, 'getScsbidListSttusThngPPSSrch',   '물품'),
+            ('award', RESULT_BASE, 'getScsbidListSttusCnstwkPPSSrch', '공사'),
         ]
 
     def _parse_items(data):
-        """API 응답에서 item 리스트 추출 (리스트/딕셔너리/None 모두 처리)"""
         body = data.get('response', {}).get('body', {})
-        raw = body.get('items')
+        raw  = body.get('items')
         if isinstance(raw, list):
             return raw
         if isinstance(raw, dict):
@@ -1699,13 +1756,13 @@ def api_tender_history(tender_id):
             return [inner] if isinstance(inner, dict) else inner
         return []
 
-    def fetch_month(op, bid_type, kind, year, month):
+    def fetch_month(kind, base, ep, bid_type, year, month):
         last_day = _cal.monthrange(year, month)[1]
         bdt = f'{year}{month:02d}010000'
         edt = f'{year}{month:02d}{last_day:02d}2359'
         try:
             r = _req.get(
-                f'{base}/{op}',
+                f'{base}/{ep}',
                 params={
                     'ServiceKey': service_key, 'type': 'json',
                     'inqryDiv': '1', 'inqryBgnDt': bdt, 'inqryEndDt': edt,
@@ -1716,139 +1773,209 @@ def api_tender_history(tender_id):
             data = r.json()
             if 'nkoneps' in str(data):
                 return kind, bid_type, [], None
-            raw = _parse_items(data)
-            for item in raw:
+            items = _parse_items(data)
+            for item in items:
+                item['_kind']     = kind
                 item['_bid_type'] = bid_type
-                item['_kind'] = kind
-            return kind, bid_type, raw, None
+            return kind, bid_type, items, None
         except Exception as e:
             return kind, bid_type, [], str(e)
 
-    seen_award_ids = set()   # 낙찰결과 입찰공고번호 (중복 제거용)
-    seen_openg_ids = set()   # 개찰결과 입찰공고번호
-    award_items = []         # 낙찰 성공 목록
-    openg_failed = []        # 단독응찰 유찰 목록
-
+    pblnc_by_no = {}   # bidNtceNo → 입찰공고 데이터
+    openg_by_no = {}   # bidNtceNo → 개찰결과 데이터
+    award_by_no = {}   # bidNtceNo → 낙찰결과 데이터
+    pblnc_errors = []
     errors = []
 
-    # 병렬 조회 (최대 20 스레드)
-    futures = []
+    # ── 1단계: 병렬 조회 (공고 + 개찰 + 낙찰) ────────────────────────────────
     with ThreadPoolExecutor(max_workers=20) as ex:
-        for op, bid_type, kind in ops:
-            for y, m in months:
-                futures.append(ex.submit(fetch_month, op, bid_type, kind, y, m))
-
+        futures = [
+            ex.submit(fetch_month, kind, base, ep, bid_type, y, m)
+            for kind, base, ep, bid_type in ops
+            for y, m in months
+        ]
         for fut in as_completed(futures):
             kind, bid_type, items, err = fut.result()
             if err:
-                errors.append(f'{bid_type}: {err}')
+                (pblnc_errors if kind == 'pblnc' else errors).append(
+                    f'{bid_type}/{kind}: {err}'
+                )
                 continue
-
             for item in items:
                 bid_no = item.get('bidNtceNo', '')
                 if not bid_no:
                     continue
+                if kind == 'pblnc' and bid_no not in pblnc_by_no:
+                    pblnc_by_no[bid_no] = item
+                elif kind == 'openg' and bid_no not in openg_by_no:
+                    openg_by_no[bid_no] = item
+                elif kind == 'award' and bid_no not in award_by_no:
+                    award_by_no[bid_no] = item
 
-                if kind == 'award':
-                    if bid_no not in seen_award_ids:
-                        seen_award_ids.add(bid_no)
-                        award_items.append(item)
-                else:  # 'openg' - 개찰결과: 유찰(단독응찰·무응찰) 수집
-                    progrs = item.get('progrsDivCdNm', '')
-                    cnt = int(item.get('prtcptCnum') or 0)
-                    if progrs == '유찰':
-                        if bid_no not in seen_openg_ids:
-                            seen_openg_ids.add(bid_no)
-                            if cnt == 0:
-                                item['_fail_type'] = 'no_bidder'    # 무응찰
-                            elif cnt == 1:
-                                item['_fail_type'] = 'sole_bidder'  # 단독응찰
-                            else:
-                                item['_fail_type'] = 'unknown'      # 기타 유찰
-                            openg_failed.append(item)
+    # 공고 API 실패 시 결과 기반으로 폴백 (기존 동작 유지)
+    pblnc_api_ok = bool(pblnc_by_no) or not pblnc_errors
+    if not pblnc_by_no:
+        for bid_no, item in {**openg_by_no, **award_by_no}.items():
+            pblnc_by_no.setdefault(bid_no, item)
 
-    # ── 유찰 후 수의계약 탐지 ────────────────────────────────────────────────
-    # 낙찰결과 항목을 입찰공고번호로 인덱싱
-    award_by_bidno = {
-        x.get('bidNtceNo'): x
-        for x in award_items
-        if x.get('bidNtceNo')
-    }
-    # 유찰 항목을 낙찰결과 항목과 입찰공고번호로 매칭
-    # → 같은 번호가 낙찰결과에도 있으면 "유찰 후 수의계약" 으로 처리
-    bids_absorbed = set()  # award_items에서 제거할 bid_no (중복 방지)
+    # ── 2단계: 공고별 상태 결정 ──────────────────────────────────────────────
+    final_items = []
+    needs_contract_check = []   # 계약현황 확인이 필요한 항목
 
-    for item in openg_failed:
-        bid_no = item.get('bidNtceNo', '')
-        if bid_no and bid_no in award_by_bidno:
-            award = award_by_bidno[bid_no]
-            item['_followup_contract'] = {
-                'winner': award.get('bidwinnrNm', ''),
-                'amount': award.get('sucsfbidAmt', ''),
-                'date':   (award.get('rlOpengDt') or
-                           award.get('fnlSucsfDate') or '')[:10],
-            }
-            bids_absorbed.add(bid_no)
+    for bid_no, ann in pblnc_by_no.items():
+        award = award_by_no.get(bid_no)
+        openg = openg_by_no.get(bid_no)
 
-    # ── 2차 조회: 유찰 후 계약현황 (입찰번호 직접 조회) ─────────────────────
-    # PPSSrch(공고명) 검색에서 누락된 수의계약을 bidNtceNo 직접 조회로 탐지
-    unresolved = [item for item in openg_failed if '_followup_contract' not in item]
+        if award:
+            # 낙찰결과 존재 → 낙찰
+            item = dict(award)
+            item['_status'] = '낙찰'
+            final_items.append(item)
 
-    def fetch_by_bidno(fail_item):
-        bid_no = fail_item.get('bidNtceNo', '')
-        if not bid_no:
-            return fail_item, None
+        elif openg:
+            # 개찰결과 존재 → progrsDivCdNm 기반 판별
+            progrs = openg.get('progrsDivCdNm', '')
+            cnt    = int(openg.get('prtcptCnum') or 0)
+
+            if progrs == '유찰':
+                item = dict(openg)
+                item['_fail_type'] = (
+                    'no_bidder'   if cnt == 0 else
+                    'sole_bidder' if cnt == 1 else
+                    'unknown'
+                )
+                item['_status'] = 'fail'
+                item['_ann']    = ann
+                needs_contract_check.append(item)
+                final_items.append(item)
+            else:
+                # 낙찰 또는 기타 (개찰결과에서 확인)
+                item = dict(openg)
+                item['_status'] = '낙찰'
+                final_items.append(item)
+
+        else:
+            # 개찰/낙찰 데이터 없음 → 미공개 (계약현황 체크 후 갱신 가능)
+            item = dict(ann)
+            item['_status'] = '미공개'
+            needs_contract_check.append(item)
+            final_items.append(item)
+
+    # ── 3단계: 계약현황 확인 (유찰·미공개 대상, 공고명으로 CntrctInfoService PPSSrch) ──
+    _today_str   = datetime.now().strftime('%Y%m%d')
+    _5yr_ago_str = str(int(_today_str[:4]) - 5) + _today_str[4:]
+
+    def _parse_corp_list(corp_raw):
+        """corpList 파싱: [순번^주계약체^단독^업체명^...] → 업체명"""
+        if not corp_raw:
+            return ''
+        try:
+            inner = corp_raw.strip('[]')
+            parts = inner.split('^')
+            return parts[3] if len(parts) > 3 else ''
+        except Exception:
+            return ''
+
+    def _names_match(bid_nm, cntrct_nm):
+        """공고명과 계약명 유사도 체크 - 주요 키워드 2개 이상 겹치면 일치"""
+        stopwords = {'및', '의', '을', '를', '이', '가', '에', '에서', '으로', '로',
+                     '용역', '사업', '위탁', '운영', '관리', '지원', '추진', '수행'}
+        def keywords(nm):
+            return {w for w in nm.split() if len(w) >= 2 and w not in stopwords}
+        b = keywords(bid_nm)
+        c = keywords(cntrct_nm)
+        if not b or not c:
+            return False
+        overlap = b & c
+        return len(overlap) >= min(2, len(b))
+
+    # 공고명에서 제거할 접두어 패턴
+    import re as _re
+    _NM_PREFIX = _re.compile(
+        r'^\s*[\(\[（【]?\s*(입찰공고|재공고|입찰재공고|재입찰|긴급공고|수정공고)\s*[\)\]）】]?\s*'
+    )
+
+    def fetch_contract(item):
+        ntce_nm = item.get('bidNtceNm', '')
+        if not ntce_nm:
+            return item, None
+        # 접두어 제거 후 검색어 구성 (예: "(입찰재공고) 2023년..." → "2023년...")
+        clean_nm = _NM_PREFIX.sub('', ntce_nm).strip()
+        words = clean_nm.split()
+        search_kw = ' '.join(words[:4]) if len(words) >= 4 else clean_nm
+        if len(search_kw) < 4:
+            return item, None
+        # 날짜 범위: 공고일 ~ 공고일+1년 (단, 오늘 이후 공고는 스킵)
+        raw_dt = (item.get('bidNtceDt') or item.get('opengDt') or
+                  item.get('rlOpengDt') or '')
+        search_from = _re.sub(r'[^0-9]', '', raw_dt)[:8] if raw_dt else ''
+        if not search_from or search_from > _today_str:
+            return item, None   # 미래 공고 또는 날짜 불명 → 계약 없음
+        try:
+            y1 = str(int(search_from[:4]) + 1) + search_from[4:]
+            search_to = min(y1, _today_str)
+        except Exception:
+            search_to = _today_str
         try:
             r = _req.get(
-                f'{base}/getScsbidListSttusServc',
+                f'{CNTRCT_BASE}/getCntrctInfoListServcPPSSrch',
                 params={
                     'ServiceKey': service_key, 'type': 'json',
-                    'inqryDiv': '4', 'bidNtceNo': bid_no,
+                    'inqryDiv': '1',
+                    'inqryBgnDate': search_from,    # YYYYMMDD (8자)
+                    'inqryEndDate': search_to,
+                    'cntrctNm': search_kw,
                     'pageNo': '1', 'numOfRows': '10',
                 },
-                timeout=15,
+                timeout=30,
             )
+            if r.status_code in (401, 403):
+                return item, None
             data = r.json()
-            if 'nkoneps' in str(data):
-                return fail_item, None
             results = _parse_items(data)
-            if results:
-                award = results[0]
-                winner = award.get('bidwinnrNm', '')
-                amount = award.get('sucsfbidAmt', '')
-                date   = (award.get('rlOpengDt') or award.get('fnlSucsfDate') or '')[:10]
+            for r0 in results:
+                c_nm = r0.get('cntrctNm', '')
+                if not _names_match(ntce_nm, c_nm):
+                    continue
+                winner = _parse_corp_list(r0.get('corpList', ''))
+                amount = r0.get('thtmCntrctAmt', '') or r0.get('totCntrctAmt', '')
+                date   = r0.get('cntrctDate', '')
+                method = r0.get('cntrctCnclsMthdNm', '')  # 수의계약, 경쟁계약 등
                 if winner or amount:
-                    return fail_item, {'winner': winner, 'amount': amount, 'date': date}
-            return fail_item, None
+                    return item, {
+                        'winner': winner, 'amount': amount,
+                        'date': date, 'cntrct_nm': c_nm, 'method': method,
+                    }
+            return item, None
         except Exception:
-            return fail_item, None
+            return item, None
 
-    if unresolved:
+    if needs_contract_check:
         with ThreadPoolExecutor(max_workers=10) as ex2:
-            futs2 = [ex2.submit(fetch_by_bidno, item) for item in unresolved]
+            futs2 = [ex2.submit(fetch_contract, item) for item in needs_contract_check]
             for fut in as_completed(futs2):
-                fail_item, contract = fut.result()
+                item, contract = fut.result()
                 if contract:
-                    fail_item['_followup_contract'] = contract
+                    item['_status']            = '계약'
+                    item['_followup_contract'] = contract
 
-    # 최종 목록 구성:
-    #   1) 수의계약에 흡수되지 않은 낙찰결과
-    #   2) 유찰 목록 (일부는 _followup_contract 포함)
-    final_items = [x for x in award_items
-                   if x.get('bidNtceNo', '') not in bids_absorbed]
-    final_items.extend(openg_failed)
-
+    # ── 정렬: 개찰일/공고일 기준 최신순 ──────────────────────────────────────
     def _sort_key(x):
-        return (x.get('rlOpengDt') or x.get('opengDt') or
-                x.get('fnlSucsfDate') or '')
+        return (
+            x.get('rlOpengDt')    or
+            x.get('opengDt')      or
+            x.get('fnlSucsfDate') or
+            x.get('bidNtceDt')    or ''
+        )
 
     final_items.sort(key=_sort_key, reverse=True)
 
     return jsonify({
-        'items': final_items,
-        'query': query_nm,
+        'items':          final_items,
+        'query':          query_nm,
         'original_title': title,
-        'errors': list(set(errors))[:5],
+        'errors':         list(set(errors + pblnc_errors))[:5],
+        'pblnc_api_ok':   pblnc_api_ok,
     })
 
 

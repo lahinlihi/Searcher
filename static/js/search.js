@@ -4,6 +4,75 @@ let currentPage = 1;
 let currentFilters = {};
 let currentKeywords = []; // 현재 검색한 키워드들
 let bookmarkedIds = new Set();
+let currentResults = [];  // 현재 검색 결과 (정렬용)
+let searchSortField = 'days';
+let searchSortDir   = 'asc';
+
+// 공통 정렬 함수
+// 마감일 정렬: 일반 공고(요청 방향) → 사전규격(오래 남은 순) 으로 그룹 분리
+function sortItems(items) {
+    if (!items || !items.length) return items;
+    const field = searchSortField, dir = searchSortDir;
+
+    if (field === 'days') {
+        const regular = items.filter(t => t.status !== '사전규격');
+        const pre     = items.filter(t => t.status === '사전규격');
+        const byDays  = (arr, asc) => [...arr].sort((a, b) => {
+            const va = a.days_left ?? 99999, vb = b.days_left ?? 99999;
+            return asc ? va - vb : vb - va;
+        });
+        if (dir === 'asc') {
+            // 오름차순: 일반(긴급순) → 사전규격(긴급순, 항상 뒤에)
+            return [...byDays(regular, true), ...byDays(pre, true)];
+        } else {
+            // 내림차순: 사전규격(오래 남은 순, 항상 앞에) → 일반(오래 남은 순)
+            return [...byDays(pre, false), ...byDays(regular, false)];
+        }
+    }
+
+    return [...items].sort((a, b) => {
+        const ag = t => (t.agency && t.agency.includes('조달청') && t.demand_agency)
+            ? t.demand_agency : (t.demand_agency || t.agency || '');
+        if (field === 'title')  { const va = a.title || '', vb = b.title || ''; return dir === 'asc' ? va.localeCompare(vb,'ko') : vb.localeCompare(va,'ko'); }
+        if (field === 'agency') { const va = ag(a), vb = ag(b);                 return dir === 'asc' ? va.localeCompare(vb,'ko') : vb.localeCompare(va,'ko'); }
+        let va, vb;
+        if (field === 'budget') { va = a.estimated_price ?? -1; vb = b.estimated_price ?? -1; }
+        else                    { va = 0; vb = 0; }
+        return dir === 'asc' ? va - vb : vb - va;
+    });
+}
+
+// 정렬 초기화
+function resetSearchSort() {
+    searchSortField = 'days';
+    searchSortDir   = 'asc';
+    updateSearchSortButtons();
+    if (currentResults.length) renderResults(sortItems(currentResults));
+}
+
+// 정렬 버튼 클릭
+function setSearchSort(field) {
+    if (searchSortField === field) {
+        searchSortDir = searchSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        searchSortField = field;
+        searchSortDir = (field === 'budget') ? 'desc' : 'asc';
+    }
+    updateSearchSortButtons();
+    if (currentResults.length) renderResults(sortItems(currentResults));
+}
+
+// 버튼 상태 업데이트
+function updateSearchSortButtons() {
+    const LABELS = { title:'사업명', agency:'기관', days:'마감일', budget:'금액' };
+    Object.keys(LABELS).forEach(f => {
+        const btn = document.getElementById(`search-sort-${f}`);
+        if (!btn) return;
+        const isActive = (searchSortField === f);
+        btn.textContent = LABELS[f] + (isActive ? (searchSortDir === 'asc' ? ' ↑' : ' ↓') : '');
+        btn.classList.toggle('active', isActive);
+    });
+}
 
 // 페이지 로드 시 실행
 document.addEventListener('DOMContentLoaded', function() {
@@ -177,9 +246,11 @@ async function searchTenders(page = 1) {
             return;
         }
 
-        // 결과 렌더링
-        renderResults(data.tenders);
+        // 결과 저장 후 정렬 적용하여 렌더링
+        currentResults = data.tenders || [];
+        renderResults(sortItems(currentResults));
         renderPagination(data.current_page, data.pages);
+        updateSearchSortButtons();
 
         // 결과 수 업데이트
         document.getElementById('result-count').textContent = data.total;

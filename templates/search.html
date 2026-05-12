@@ -98,12 +98,21 @@
     <div class="card">
         <div class="card-header">
             <div class="flex justify-between items-center">
-                <div>
+                <div class="flex items-center gap-3 flex-wrap">
                     <h3 class="card-title">검색 결과 (<span id="result-count">0</span>건)</h3>
-                    <p id="keyword-info" class="text-xs text-gray-500 mt-1"></p>
+                    <!-- 정렬 바 -->
+                    <div class="flex items-center gap-1">
+                        <span class="text-xs text-gray-400 shrink-0">정렬:</span>
+                        <button onclick="resetSearchSort()" class="sort-btn" style="color:#6B7280;">초기화</button>
+                        <button id="search-sort-title"  onclick="setSearchSort('title')"  class="sort-btn">사업명</button>
+                        <button id="search-sort-agency" onclick="setSearchSort('agency')" class="sort-btn">기관</button>
+                        <button id="search-sort-days"   onclick="setSearchSort('days')"   class="sort-btn active">마감일 ↑</button>
+                        <button id="search-sort-budget" onclick="setSearchSort('budget')" class="sort-btn">금액</button>
+                    </div>
                 </div>
                 <button onclick="exportExcel()" class="btn-success">Excel 다운로드</button>
             </div>
+            <p id="keyword-info" class="text-xs text-gray-500 mt-1"></p>
         </div>
         <div class="card-body p-0">
             <div id="results-wrapper" class="scrollable-results">
