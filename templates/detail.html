@@ -924,17 +924,29 @@ async function loadHistory(allTypes = false) {
             const openDt = rawDt.substring(0, 10);
 
             // 공고명 / 링크
-            const nmRaw  = item.bidNtceNm || '';
-            const nm     = nmRaw.length > 38 ? nmRaw.substring(0, 38) + '…' : nmRaw;
-            const g2bUrl = item.bidNtceUrl || item.bidNtceDtlUrl || '';
+            const nmRaw   = item.bidNtceNm || '';
+            const nm      = nmRaw.length > 38 ? nmRaw.substring(0, 38) + '…' : nmRaw;
+            const bidNo   = item.bidNtceNo  || '';
+            const bidSeq  = (item.bidNtceOrd || '0').toString().padStart(3, '0');
+
+            // ① API가 직접 URL을 반환한 경우 그대로 사용
+            // ② 없으면 bidNtceNo로 나라장터 공고상세 URL 직접 구성
+            //    taskClCd: 5=용역, 1=물품, 3=공사 (기본 용역)
+            const _apiUrl = item.bidNtceUrl || item.bidNtceDtlUrl || '';
+            const g2bUrl  = _apiUrl
+                ? _apiUrl
+                : (bidNo
+                    ? `https://www.g2b.go.kr:8101/ep/invitation/publish/bidInfoDtl.do?bidno=${bidNo}&bidSeq=${bidSeq}&taskClCd=5`
+                    : '');
+
             const linkCls =
                 status === 'fail'     ? 'text-orange-600 hover:underline' :
                 status === '상세없음' ? 'text-gray-500 hover:underline'   :
                 status === '계약'     ? 'text-green-700 hover:underline'  :
                 'text-blue-600 hover:underline';
             const nmHtml = g2bUrl
-                ? `<a href="${g2bUrl}" target="_blank" class="${linkCls}" title="${nmRaw}">${nm}</a>`
-                : `<span class="text-gray-600" title="${nmRaw}">${nm || item.bidNtceNo || '-'}</span>`;
+                ? `<a href="${g2bUrl}" target="_blank" class="${linkCls} underline decoration-dotted" title="나라장터 공고 보기 (${bidNo})">${nm || bidNo}</a>`
+                : `<span class="text-gray-600" title="${nmRaw}">${nm || bidNo || '-'}</span>`;
 
             // 기관명
             const org = item.dminsttNm || item.ntceInsttNm || '-';
