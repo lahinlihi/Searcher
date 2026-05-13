@@ -287,8 +287,13 @@ class CrawlScheduler:
                 unique_tenders, duplicate_count = mark_duplicates_in_db(
                     self.app, all_tenders)
 
-                # DB에 저장
+                # DB에 저장 (신규 INSERT + 기존 UPDATE)
                 new_count = 0
+                update_count = 0
+                all_by_number = {t['tender_number']: t for t in all_tenders if t.get('tender_number')}
+                unique_numbers = {t['tender_number'] for t in unique_tenders if t.get('tender_number')}
+
+                # 1) 신규 공고 INSERT
                 for tender_data in unique_tenders:
                     tender = Tender(
                         title=tender_data['title'],
@@ -304,10 +309,46 @@ class CrawlScheduler:
                         is_sme_only=tender_data.get('is_sme_only', False),
                         source_site=tender_data['source_site'],
                         url=tender_data.get('url'),
-                        is_duplicate=tender_data.get('is_duplicate', False)
+                        is_duplicate=tender_data.get('is_duplicate', False),
+                        extra_data=tender_data.get('extra_data'),
+                        business_number=tender_data.get('business_number'),
                     )
                     db.session.add(tender)
                     new_count += 1
+
+                # 2) 기존 공고 UPDATE — extra_data 및 주요 필드 갱신
+                update_numbers = [num for num, td in all_by_number.items()
+                                   if num not in unique_numbers and td.get('extra_data')]
+                if update_numbers:
+                    existing_records = Tender.query.filter(
+                        Tender.tender_number.in_(update_numbers)).all()
+                    existing_map = {t.tender_number: t for t in existing_records}
+                    for num in update_numbers:
+                        td = all_by_number[num]
+                        ex = existing_map.get(num)
+                        if not ex:
+                            continue
+                        changed = False
+                        if not ex.extra_data and td.get('extra_data'):
+                            ex.extra_data = td['extra_data']
+                            changed = True
+                        if td.get('deadline_date') and ex.deadline_date != td['deadline_date']:
+                            ex.deadline_date = td['deadline_date']
+                            changed = True
+                        if td.get('opening_date') and ex.opening_date != td['opening_date']:
+                            ex.opening_date = td['opening_date']
+                            changed = True
+                        if td.get('status') and ex.status != td['status']:
+                            ex.status = td['status']
+                            changed = True
+                        if td.get('url') and not ex.url:
+                            ex.url = td['url']
+                            changed = True
+                        if td.get('business_number') and not ex.business_number:
+                            ex.business_number = td['business_number']
+                            changed = True
+                        if changed:
+                            update_count += 1
 
                 db.session.commit()
 
@@ -323,6 +364,7 @@ class CrawlScheduler:
                 print("[스케줄러] 크롤링 완료")
                 print(f"  - 총 수집: {len(all_tenders)}건")
                 print(f"  - 새 공고: {new_count}건")
+                print(f"  - 업데이트: {update_count}건")
                 print(f"  - 중복 제거: {duplicate_count}건")
 
                 # 크롤링 후 코드 변경사항 자동 push (data/는 .gitignore 제외)
@@ -409,8 +451,13 @@ class CrawlScheduler:
                 unique_tenders, duplicate_count = mark_duplicates_in_db(
                     self.app, all_tenders)
 
-                # DB에 저장
+                # DB에 저장 (신규 INSERT + 기존 UPDATE)
                 new_count = 0
+                update_count = 0
+                all_by_number = {t['tender_number']: t for t in all_tenders if t.get('tender_number')}
+                unique_numbers = {t['tender_number'] for t in unique_tenders if t.get('tender_number')}
+
+                # 1) 신규 공고 INSERT
                 for tender_data in unique_tenders:
                     tender = Tender(
                         title=tender_data['title'],
@@ -426,10 +473,46 @@ class CrawlScheduler:
                         is_sme_only=tender_data.get('is_sme_only', False),
                         source_site=tender_data['source_site'],
                         url=tender_data.get('url'),
-                        is_duplicate=tender_data.get('is_duplicate', False)
+                        is_duplicate=tender_data.get('is_duplicate', False),
+                        extra_data=tender_data.get('extra_data'),
+                        business_number=tender_data.get('business_number'),
                     )
                     db.session.add(tender)
                     new_count += 1
+
+                # 2) 기존 공고 UPDATE — extra_data 및 주요 필드 갱신
+                update_numbers = [num for num, td in all_by_number.items()
+                                   if num not in unique_numbers and td.get('extra_data')]
+                if update_numbers:
+                    existing_records = Tender.query.filter(
+                        Tender.tender_number.in_(update_numbers)).all()
+                    existing_map = {t.tender_number: t for t in existing_records}
+                    for num in update_numbers:
+                        td = all_by_number[num]
+                        ex = existing_map.get(num)
+                        if not ex:
+                            continue
+                        changed = False
+                        if not ex.extra_data and td.get('extra_data'):
+                            ex.extra_data = td['extra_data']
+                            changed = True
+                        if td.get('deadline_date') and ex.deadline_date != td['deadline_date']:
+                            ex.deadline_date = td['deadline_date']
+                            changed = True
+                        if td.get('opening_date') and ex.opening_date != td['opening_date']:
+                            ex.opening_date = td['opening_date']
+                            changed = True
+                        if td.get('status') and ex.status != td['status']:
+                            ex.status = td['status']
+                            changed = True
+                        if td.get('url') and not ex.url:
+                            ex.url = td['url']
+                            changed = True
+                        if td.get('business_number') and not ex.business_number:
+                            ex.business_number = td['business_number']
+                            changed = True
+                        if changed:
+                            update_count += 1
 
                 db.session.commit()
 
@@ -445,12 +528,14 @@ class CrawlScheduler:
                 print("[수동 크롤링] 완료")
                 print(f"  - 총 수집: {len(all_tenders)}건")
                 print(f"  - 새 공고: {new_count}건")
+                print(f"  - 업데이트: {update_count}건")
                 print(f"  - 중복 제거: {duplicate_count}건")
 
                 return {
                     'success': True,
                     'total_found': len(all_tenders),
                     'new_tenders': new_count,
+                    'updated_tenders': update_count,
                     'duplicate_count': duplicate_count,
                     'site_results': site_results
                 }

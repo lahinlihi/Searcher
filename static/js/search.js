@@ -36,6 +36,7 @@ function sortItems(items) {
         if (field === 'announced'){ const va = a.announced_date || '', vb = b.announced_date || ''; return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va); }
         let va, vb;
         if (field === 'budget') { va = a.estimated_price ?? -1; vb = b.estimated_price ?? -1; }
+        else if (field === 'memo') { va = a.memo_count ?? 0; vb = b.memo_count ?? 0; }
         else                    { va = 0; vb = 0; }
         return dir === 'asc' ? va - vb : vb - va;
     });
@@ -47,7 +48,7 @@ function setSearchSort(field) {
         searchSortDir = searchSortDir === 'asc' ? 'desc' : 'asc';
     } else {
         searchSortField = field;
-        searchSortDir = (field === 'budget' || field === 'announced') ? 'desc' : 'asc';
+        searchSortDir = (field === 'budget' || field === 'announced' || field === 'memo') ? 'desc' : 'asc';
     }
     if (currentResults.length) renderResults(sortItems(currentResults));
 }
@@ -240,6 +241,7 @@ async function searchTenders(page = 1) {
     const announcedDateTo = document.getElementById('announced-date-to').value;
     const deadlineDateFrom = document.getElementById('deadline-date-from').value;
     const deadlineDateTo = document.getElementById('deadline-date-to').value;
+    const includeExpired = document.getElementById('include-expired').checked;
 
     try {
         const params = new URLSearchParams({
@@ -251,7 +253,8 @@ async function searchTenders(page = 1) {
             announced_date_from: announcedDateFrom,
             announced_date_to: announcedDateTo,
             deadline_date_from: deadlineDateFrom,
-            deadline_date_to: deadlineDateTo
+            deadline_date_to: deadlineDateTo,
+            include_expired: includeExpired ? '1' : '0'
         });
 
         const response = await fetch(`/api/tenders?${params}`);
@@ -287,7 +290,8 @@ async function searchTenders(page = 1) {
             announcedDateFrom,
             announcedDateTo,
             deadlineDateFrom,
-            deadlineDateTo
+            deadlineDateTo,
+            includeExpired
         });
 
         // 스크롤을 맨 위로 이동
@@ -338,19 +342,39 @@ function renderResults(tenders) {
         return `<th class="sortable${active}" onclick="setSearchSort('${field}')" style="width:${width};">${label} ${sortArrow(field)}</th>`;
     };
 
-    const rows = tenders.map(tender => {
-        const isPre = tender.status === '사전규격';
-        const rowClass = isPre ? 'pre-row' : '';
+    // 만료 여부 판단: days_left < 0 이면 마감된 공고
+    const isExpiredTender = t => t.days_left !== null && t.days_left < 0;
 
-        const statusBadge = isPre
-            ? '<span class="badge-pre">사전</span>'
-            : '<span class="badge-normal">일반</span>';
+    const makeRow = (tender) => {
+        const isPre    = tender.status === '사전규격';
+        const isExpired = isExpiredTender(tender);
+
+        let rowClass, statusBadge;
+        if (isExpired && isPre) {
+            rowClass    = 'expired-pre-row';
+            statusBadge = '<span class="badge-expired-pre">사전↓</span>';
+        } else if (isExpired) {
+            rowClass    = 'expired-row';
+            statusBadge = '<span class="badge-expired">마감</span>';
+        } else if (isPre) {
+            rowClass    = 'pre-row';
+            statusBadge = '<span class="badge-pre">사전</span>';
+        } else {
+            rowClass    = '';
+            statusBadge = '<span class="badge-normal">일반</span>';
+        }
 
         const daysLeft = tender.days_left;
         let deadlineClass = 'deadline-normal';
-        let deadlineText = daysLeft != null ? `D-${daysLeft}` : '-';
-        if (daysLeft != null && daysLeft <= 2)      deadlineClass = 'deadline-urgent';
-        else if (daysLeft != null && daysLeft <= 5) deadlineClass = 'deadline-soon';
+        let deadlineText;
+        if (isExpired) {
+            deadlineClass = '';
+            deadlineText = `<span style="color:#9CA3AF;font-size:0.7rem;">D+${Math.abs(daysLeft)}</span>`;
+        } else {
+            deadlineText = daysLeft != null ? `D-${daysLeft}` : '-';
+            if (daysLeft != null && daysLeft <= 2)      deadlineClass = 'deadline-urgent';
+            else if (daysLeft != null && daysLeft <= 5) deadlineClass = 'deadline-soon';
+        }
 
         const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
         const highlightedTitle = highlightKeywords(tender.title);
@@ -368,12 +392,23 @@ function renderResults(tenders) {
                 : (tender.agency || '');
         }
 
+        const titleStyle = isExpired ? ' style="color:#9CA3AF;"' : '';
+
+        const memoBadge = (tender.memo_count > 0)
+            ? `<span style="font-size:0.6rem;color:#7C3AED;font-weight:700;line-height:1;" title="메모 ${tender.memo_count}개">✎${tender.memo_count}</span>`
+            : '';
+
         return `
             <tr class="${rowClass}">
-                <td style="text-align:center;width:36px;">${starButton(tender.id)}</td>
+                <td style="text-align:center;width:36px;">
+                    <div style="display:flex;flex-direction:column;align-items:center;gap:1px;">
+                        ${starButton(tender.id)}
+                        ${memoBadge}
+                    </div>
+                </td>
                 <td style="text-align:center;width:46px;">${statusBadge}</td>
                 <td class="title-col">
-                    <a href="/tender/${tender.id}" class="title-link" title="${tender.title.replace(/"/g,'&quot;')}">${highlightedTitle}</a>
+                    <a href="/tender/${tender.id}" class="title-link"${titleStyle} title="${tender.title.replace(/"/g,'&quot;')}">${highlightedTitle}</a>
                 </td>
                 <td class="agency-col" title="${agencyTooltip.replace(/"/g,'&quot;')}">${displayAgency}</td>
                 <td style="text-align:right;">${price}</td>
@@ -386,13 +421,42 @@ function renderResults(tenders) {
                     </div>
                 </td>
             </tr>`;
-    }).join('');
+    };
+
+    const sectionDivider = (label, count) =>
+        `<tr class="section-divider"><td colspan="8">🔖 ${label} (${count}건)</td></tr>`;
+
+    // 그룹 분류
+    const activeTenders  = tenders.filter(t => !isExpiredTender(t));
+    const expiredPre     = tenders.filter(t => isExpiredTender(t) && t.status === '사전규격');
+    const expiredGeneral = tenders.filter(t => isExpiredTender(t) && t.status !== '사전규격');
+    const hasExpired     = expiredPre.length > 0 || expiredGeneral.length > 0;
+
+    let rows = '';
+
+    // 진행중 공고
+    if (activeTenders.length > 0) {
+        if (hasExpired) rows += sectionDivider('진행중', activeTenders.length);
+        rows += activeTenders.map(makeRow).join('');
+    }
+
+    // 마감된 사전규격
+    if (expiredPre.length > 0) {
+        rows += sectionDivider('마감된 사전규격', expiredPre.length);
+        rows += expiredPre.map(makeRow).join('');
+    }
+
+    // 마감된 일반공고
+    if (expiredGeneral.length > 0) {
+        rows += sectionDivider('마감된 일반공고', expiredGeneral.length);
+        rows += expiredGeneral.map(makeRow).join('');
+    }
 
     const html = `
         <table class="table table-compact">
             <thead>
                 <tr>
-                    <th style="width:36px;"></th>
+                    ${th('memo', '✎', '36px')}
                     <th style="width:46px;">상태</th>
                     ${th('title',    '공고명',   'auto')}
                     ${th('agency',   '발주기관', '150px')}
@@ -574,11 +638,26 @@ function displayActiveFilters(filters) {
             </span>
         `;
         hasFilters = true;
-    } else if (!filters.announcedDateFrom && !filters.announcedDateTo) {
+    } else if (!filters.announcedDateFrom && !filters.announcedDateTo && !filters.includeExpired) {
         // 날짜 필터가 전혀 없으면 기본 범위 표시
         html += `
             <span class="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-700 text-sm rounded-full">
                 <span>📅 기본: 마감일 오늘~30일 이내</span>
+            </span>
+        `;
+        hasFilters = true;
+    }
+
+    // 마감 공고 포함
+    if (filters.includeExpired) {
+        html += `
+            <span class="inline-flex items-center gap-1 px-3 py-1 bg-red-100 text-red-800 text-sm rounded-full">
+                <span>🔒 마감 공고 포함</span>
+                <button onclick="removeFilter('include-expired', '')" class="hover:bg-red-200 rounded-full p-0.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
             </span>
         `;
         hasFilters = true;
@@ -617,6 +696,8 @@ function removeFilter(type, value) {
     } else if (type === 'deadline-date') {
         document.getElementById('deadline-date-from').value = '';
         document.getElementById('deadline-date-to').value = '';
+    } else if (type === 'include-expired') {
+        document.getElementById('include-expired').checked = false;
     }
 
     // 다시 검색
@@ -633,6 +714,7 @@ function resetFilters() {
     document.getElementById('announced-date-to').value = '';
     document.getElementById('deadline-date-from').value = '';
     document.getElementById('deadline-date-to').value = '';
+    document.getElementById('include-expired').checked = false;
 
     // 적용된 필터 표시 숨김
     document.getElementById('active-filters-container').classList.add('hidden');

@@ -410,6 +410,33 @@
     background-color: #DBEAFE;
 }
 
+/* 마감된 행 */
+.table-compact tr.expired-row {
+    background-color: #FFF7F7;
+}
+.table-compact tr.expired-row:hover {
+    background-color: #FEE2E2;
+}
+.table-compact tr.expired-pre-row {
+    background-color: #FDF4FF;
+}
+.table-compact tr.expired-pre-row:hover {
+    background-color: #F3E8FF;
+}
+
+/* 섹션 구분 행 */
+.table-compact tr.section-divider td {
+    background-color: #F9FAFB;
+    padding: 5px 12px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #6B7280;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border-top: 2px solid #E5E7EB;
+    border-bottom: 1px solid #E5E7EB;
+}
+
 /* 상태 배지 */
 .badge-pre {
     display: inline-block;
@@ -429,6 +456,27 @@
     font-weight: 500;
     background-color: #F3F4F6;
     color: #6B7280;
+    white-space: nowrap;
+}
+/* 마감 배지 */
+.badge-expired-pre {
+    display: inline-block;
+    padding: 0.15rem 0.45rem;
+    border-radius: 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    background-color: #E9D5FF;
+    color: #6D28D9;
+    white-space: nowrap;
+}
+.badge-expired {
+    display: inline-block;
+    padding: 0.15rem 0.45rem;
+    border-radius: 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    background-color: #FECACA;
+    color: #991B1B;
     white-space: nowrap;
 }
 

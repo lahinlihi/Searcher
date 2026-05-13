@@ -9,6 +9,9 @@ from .base_crawler import BaseCrawler
 from datetime import datetime, timedelta
 import requests
 import json
+import re as _re_biz
+
+_G2B_BIZ_PATTERN = _re_biz.compile(r'^[A-Z]\d+[A-Z]+(\d+)$')
 
 
 class G2BPreSpecCrawler(BaseCrawler):
@@ -231,11 +234,30 @@ class G2BPreSpecCrawler(BaseCrawler):
             else:
                 url = "https://www.g2b.go.kr"
 
+            # 추가 API 필드 저장
+            import json as _json
+            extra = {
+                'bfSpecRgstNo':       bf_spec_rgst_no,                        # 사전규격등록번호
+                'asignBdgtAmt':       item.get('asignBdgtAmt', ''),           # 배정예산금액
+                'prdctClsfcNo':       item.get('prdctClsfcNo', ''),           # 품목분류번호
+                'prdctClsfcNoNm':     item.get('prdctClsfcNoNm', ''),         # 품목분류번호명
+                'prdlstNm':           item.get('prdlstNm', ''),               # 품명
+                'cntrctCnclsMthdNm':  item.get('cntrctCnclsMthdNm', ''),      # 계약방법명
+                'orderInsttNm':       item.get('orderInsttNm', ''),           # 발주기관명
+                'ntceInsttNm':        item.get('ntceInsttNm', ''),            # 공고기관명
+                'bidPrtcptLmtYn':     item.get('bidPrtcptLmtYn', ''),         # 입찰참가제한여부
+                'rgnlmtdYn':          item.get('rgnlmtdYn', ''),             # 지역제한여부
+                'rcptDt':             item.get('rcptDt', ''),                 # 접수일시
+                'opninRgstClseDt':    item.get('opninRgstClseDt', ''),        # 의견등록마감일시
+            }
+
+            _biz_m = _G2B_BIZ_PATTERN.match(tender_number or '')
             tender = {
                 'title': self.clean_text(title)[:200],
                 'agency': self.clean_text(agency)[:100],
                 'demand_agency': demand_agency,
                 'tender_number': tender_number,
+                'business_number': _biz_m.group(1) if _biz_m else None,
                 'announced_date': announced_date,
                 'deadline_date': deadline_date,
                 'opening_date': None,
@@ -244,7 +266,8 @@ class G2BPreSpecCrawler(BaseCrawler):
                 'status': '사전규격',  # 상태를 사전규격으로 설정
                 'is_sme_only': False,
                 'source_site': self.site_name,
-                'url': url
+                'url': url,
+                'extra_data': _json.dumps(extra, ensure_ascii=False),
             }
 
             return tender

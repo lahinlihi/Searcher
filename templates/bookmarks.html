@@ -26,6 +26,11 @@
                 class="tab-btn px-5 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">
                 ✕ 관심없음 <span id="dismissed-count" class="ml-1 text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">-</span>
             </button>
+            <button id="tab-memos"
+                onclick="switchTab('memos')"
+                class="tab-btn px-5 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+                ✎ 메모 공고 <span id="memos-count" class="ml-1 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full">-</span>
+            </button>
         </nav>
     </div>
 
@@ -43,6 +48,16 @@
         <div class="card-body">
             <p class="text-xs text-gray-500 mb-3">✕ 버튼으로 숨긴 공고 목록입니다. 복원하면 다시 대시보드에 표시됩니다.</p>
             <div id="dismissed-list" class="space-y-3">
+                <p class="text-gray-400 text-sm text-center py-8">불러오는 중...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 메모 공고 목록 -->
+    <div id="panel-memos" class="card hidden">
+        <div class="card-body">
+            <p class="text-xs text-gray-500 mb-3">✎ 메모가 작성된 공고 목록입니다. 모든 사용자가 공유합니다.</p>
+            <div id="memos-list" class="space-y-3">
                 <p class="text-gray-400 text-sm text-center py-8">불러오는 중...</p>
             </div>
         </div>

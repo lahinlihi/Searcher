@@ -73,10 +73,15 @@
                     </div>
                 </div>
 
-                <!-- 검색 버튼 -->
-                <div class="flex gap-2">
+                <!-- 검색 버튼 + 마감 공고 포함 옵션 -->
+                <div class="flex items-center gap-4 flex-wrap">
                     <button onclick="searchTenders()" class="btn-primary">검색</button>
                     <button onclick="resetFilters()" class="btn-secondary">초기화</button>
+                    <label class="flex items-center gap-2 cursor-pointer select-none text-sm text-gray-600 hover:text-gray-900">
+                        <input type="checkbox" id="include-expired"
+                            class="w-4 h-4 rounded border-gray-300 text-red-500 accent-red-500 cursor-pointer">
+                        <span>마감일이 지난 공고 표시</span>
+                    </label>
                 </div>
             </div>
         </div>

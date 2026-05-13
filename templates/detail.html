@@ -12,7 +12,7 @@
     </div>
 
     <!-- 공고 제목 -->
-    <div class="card">
+    <div class="card overflow-hidden">
         <div class="card-header">
             <div class="flex justify-between items-start gap-3">
                 <h2 class="text-2xl font-bold text-gray-900">{{ tender.title }}</h2>
@@ -20,7 +20,7 @@
                         class="shrink-0 text-3xl leading-none transition-colors"
                         title="관심공고 추가">☆</button>
             </div>
-            <div class="flex gap-2 mt-2">
+            <div class="flex gap-2 mt-2 flex-wrap">
                 {% if tender.status == '사전규격' %}
                 <span class="badge badge-info">사전규격</span>
                 {% else %}
@@ -32,7 +32,6 @@
                 {% endif %}
 
                 {% if is_expired %}
-                {# 일반입찰이고 마감일이 지난 경우 #}
                 <span class="badge bg-gray-400 text-white">마감기한 지남</span>
                 {% elif days_left <= 2 %}
                 <span class="badge bg-red-600 text-white">마감 임박 (D-{{ days_left }})</span>
@@ -47,91 +46,546 @@
                 {% endif %}
             </div>
         </div>
-        <div class="card-body">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <!-- 기본 정보 -->
-                <div class="space-y-3">
-                    <h3 class="font-semibold text-lg border-b pb-2">기본 정보</h3>
 
-                    <div class="flex items-center">
-                        <span class="text-gray-600 w-32 flex-shrink-0">공고번호</span>
-                        <span class="font-medium" id="tender-number">{{ tender.tender_number }}</span>
-                        <button onclick="copyTenderNumber()" class="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-600 rounded hover:bg-blue-200">
-                            복사
-                        </button>
-                    </div>
+        <!-- ① 핵심 지표 5박스 -->
+        {# 공고 종류 판별 — title에서 감지 #}
+        {% set _t_lower = tender.title | lower %}
+        {% set _is_urgent  = '긴급' in _t_lower %}
+        {% set _is_re      = '재공고' in _t_lower or '재입찰' in _t_lower %}
+        {% set _is_modify  = '수정공고' in _t_lower or '정정공고' in _t_lower or '취소공고' in _t_lower %}
+        {% if _is_urgent %}{% set _ntce_kind = '긴급공고' %}
+        {% elif _is_re %}{% set _ntce_kind = '재공고' %}
+        {% elif _is_modify %}{% set _ntce_kind = '수정공고' %}
+        {% else %}{% set _ntce_kind = '일반공고' %}{% endif %}
 
-                    {% if tender.demand_agency and tender.demand_agency != tender.agency %}
-                    <div class="flex items-start">
-                        <span class="text-gray-600 w-32 flex-shrink-0">수요기관</span>
-                        <span class="font-semibold text-blue-700 flex items-center gap-1">
-                            {{ tender.demand_agency }}
-                            <span class="text-xs font-normal bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">실수요</span>
-                        </span>
-                    </div>
-                    {% endif %}
+        <div class="grid grid-cols-2 md:grid-cols-5 border-t border-b bg-gray-50 divide-x divide-gray-200">
 
-                    <div class="flex">
-                        <span class="text-gray-600 w-32 flex-shrink-0">발주기관</span>
-                        <span class="font-medium {% if tender.demand_agency and tender.demand_agency != tender.agency %}text-gray-500{% endif %}">{{ tender.agency }}</span>
-                    </div>
+            {# ── 1. 배정예산 ── #}
+            <div class="p-4 col-span-1">
+                {% set _presmpt_kpi = extra.get('presmptPrce', '') %}
+                {% set _assign_kpi  = extra.get('asignBdgtAmt', '') %}
+                {% if _assign_kpi and _assign_kpi != '0' %}
+                <div class="text-xs font-medium text-gray-500 mb-1">배정예산 <span class="text-[10px] bg-blue-100 text-blue-500 px-1 py-0.5 rounded font-normal">부가세 포함</span></div>
+                <div class="text-lg font-bold text-blue-700 leading-snug tabular-nums">{{ '{:,}'.format(_assign_kpi | int) }}<span class="text-sm font-semibold ml-0.5">원</span></div>
+                <div class="text-xs text-gray-400 mt-0.5">{{ _assign_kpi | int | format_price }}</div>
+                {% elif _presmpt_kpi and _presmpt_kpi != '0' %}
+                <div class="text-xs font-medium text-gray-500 mb-1">추정가격 <span class="text-[10px] bg-gray-200 text-gray-500 px-1 py-0.5 rounded font-normal">부가세 별도</span></div>
+                <div class="text-lg font-bold text-blue-700 leading-snug tabular-nums">{{ '{:,}'.format(_presmpt_kpi | int) }}<span class="text-sm font-semibold ml-0.5">원</span></div>
+                <div class="text-xs text-gray-400 mt-0.5">{{ _presmpt_kpi | int | format_price }}</div>
+                {% elif tender.estimated_price %}
+                <div class="text-xs font-medium text-gray-500 mb-1">배정예산</div>
+                <div class="text-lg font-bold text-blue-700 leading-snug tabular-nums">{{ '{:,}'.format(tender.estimated_price) }}<span class="text-sm font-semibold ml-0.5">원</span></div>
+                <div class="text-xs text-gray-400 mt-0.5">{{ tender.estimated_price | format_price }}</div>
+                {% else %}
+                <div class="text-xs font-medium text-gray-500 mb-1">배정예산</div>
+                <div class="text-base font-bold text-gray-400">미정</div>
+                {% endif %}
+            </div>
 
-                    <div class="flex">
-                        <span class="text-gray-600 w-32 flex-shrink-0">출처</span>
-                        <span class="font-medium">{{ tender.source_site }}</span>
-                    </div>
+            {# ── 2. 입찰방식 (전자입찰/비전자 등) ── #}
+            <div class="p-4">
+                <div class="text-xs font-medium text-gray-500 mb-1">입찰방식</div>
+                {% set _bidMthd = extra.get('bidPblancMthdNm','') or tender.bid_method or '' %}
+                <div class="text-xl font-bold text-gray-800 leading-snug">{{ _bidMthd or '—' }}</div>
+                {% if tender.is_sme_only %}
+                <div class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded mt-1 inline-block font-semibold">중소기업 전용</div>
+                {% endif %}
+            </div>
 
-                    {% if tender.bid_method %}
-                    <div class="flex">
-                        <span class="text-gray-600 w-32 flex-shrink-0">입찰방식</span>
-                        <span class="font-medium">{{ tender.bid_method }}</span>
-                    </div>
-                    {% endif %}
+            {# ── 3. 공고 상태 (일반공고/긴급/재공고 등) ── #}
+            <div class="p-4">
+                <div class="text-xs font-medium text-gray-500 mb-1">상태</div>
+                {% if _is_urgent %}
+                <div class="text-xl font-bold text-red-600 leading-snug">{{ _ntce_kind }}</div>
+                {% elif _is_re %}
+                <div class="text-xl font-bold text-orange-600 leading-snug">{{ _ntce_kind }}</div>
+                {% elif _is_modify %}
+                <div class="text-xl font-bold text-yellow-600 leading-snug">{{ _ntce_kind }}</div>
+                {% else %}
+                <div class="text-xl font-bold text-gray-700 leading-snug">{{ _ntce_kind }}</div>
+                {% endif %}
+            </div>
 
-                    {% if tender.estimated_price %}
-                    <div class="flex">
-                        <span class="text-gray-600 w-32 flex-shrink-0">추정가격</span>
-                        <span class="font-medium text-blue-600">{{ tender.estimated_price | format_price }}</span>
-                    </div>
-                    {% endif %}
+            {# ── 4. 입찰 마감 ── #}
+            <div class="p-4">
+                <div class="text-xs font-medium text-gray-500 mb-1">{% if tender.status == '사전규격' %}의견등록 마감{% else %}입찰마감{% endif %}</div>
+                {% if tender.deadline_date %}
+                <div class="text-base font-bold {% if is_expired %}text-gray-400{% elif days_left <= 2 %}text-red-600{% elif days_left <= 5 %}text-orange-500{% else %}text-gray-800{% endif %} whitespace-nowrap tabular-nums">
+                    {{ tender.deadline_date.strftime('%Y-%m-%d') }} <span class="font-semibold">{{ tender.deadline_date.strftime('%H:%M') }}</span>
                 </div>
+                {% else %}
+                <div class="text-base font-bold text-gray-400">미정</div>
+                {% endif %}
+            </div>
 
-                <!-- 일정 정보 -->
-                <div class="space-y-3">
-                    <h3 class="font-semibold text-lg border-b pb-2">일정 정보</h3>
+            {# ── 5. 마감까지 ── #}
+            <div class="p-4">
+                <div class="text-xs font-medium text-gray-500 mb-1">마감까지</div>
+                {% if is_expired %}
+                <div class="text-lg font-bold text-gray-400">종료됨</div>
+                {% elif tender.deadline_date %}
+                <div class="font-bold {% if days_left <= 2 %}text-red-600{% elif days_left <= 5 %}text-orange-500{% else %}text-green-600{% endif %} whitespace-nowrap" id="dday-box">
+                    <span class="text-xl">D-{{ days_left }}</span><span class="text-sm font-semibold ml-1" id="dday-hours"></span>
+                </div>
+                {% else %}
+                <div class="text-lg font-bold text-gray-400">-</div>
+                {% endif %}
+            </div>
 
-                    {% if tender.announced_date %}
-                    <div class="flex">
-                        <span class="text-gray-600 w-32 flex-shrink-0">공고일시</span>
-                        <span class="font-medium">{{ tender.announced_date.strftime('%Y-%m-%d %H:%M') if tender.announced_date else '-' }}</span>
+        </div>
+
+        <div class="card-body">
+            <!-- ② 상태 배너 (5가지 상태) -->
+            {% if tender.status == '사전규격' %}
+                {% if not is_expired %}
+                {# 상태 1: 사전규격 진행중 — 파란색 #}
+                <div id="countdown-banner" class="mb-5 px-5 py-4 rounded-xl flex items-center gap-4 bg-blue-50 border-2 border-blue-200 text-blue-900">
+                    <span class="text-3xl shrink-0">📋</span>
+                    <div class="flex-1 min-w-0">
+                        <div class="font-bold text-lg leading-tight">사전 규격 중입니다.</div>
+                        <div class="text-sm text-blue-700 mt-1">
+                            의견등록 마감까지 <strong id="countdown-text" class="font-extrabold tabular-nums">계산 중…</strong>
+                        </div>
                     </div>
-                    {% endif %}
-
-                    {% if tender.deadline_date %}
-                    <div class="flex">
-                        <span class="text-gray-600 w-32 flex-shrink-0">마감일시</span>
-                        <span class="font-medium {% if days_left <= 2 %}text-red-600{% elif days_left <= 5 %}text-orange-600{% endif %}">
-                            {{ tender.deadline_date.strftime('%Y-%m-%d %H:%M') if tender.deadline_date else '-' }}
-                        </span>
+                </div>
+                {% else %}
+                {# 상태 2: 사전규격 마감 — JS가 연관 본공고 확인 후 상태 3-1로 변경 가능 #}
+                <div id="countdown-banner" class="mb-5 px-5 py-4 rounded-xl flex items-center gap-4 bg-gray-100 border-2 border-gray-200 text-gray-600">
+                    <span class="text-3xl shrink-0" id="banner-icon">📋</span>
+                    <div class="flex-1 min-w-0" id="banner-content">
+                        <div class="font-bold text-lg leading-tight" id="banner-title">사전규격이 마감되었습니다.</div>
+                        <div class="text-sm text-gray-400 mt-1" id="banner-sub">본 입찰 공고 확인 중…</div>
                     </div>
-                    {% endif %}
-
-                    {% if tender.opening_date %}
-                    <div class="flex">
-                        <span class="text-gray-600 w-32 flex-shrink-0">개찰일시</span>
-                        <span class="font-medium">{{ tender.opening_date.strftime('%Y-%m-%d %H:%M') if tender.opening_date else '-' }}</span>
+                </div>
+                {% endif %}
+            {% else %}
+                {% if not is_expired %}
+                {# 상태 3-2: 입찰 진행중 — 초록색 #}
+                <div id="countdown-banner" class="mb-5 px-5 py-4 rounded-xl flex items-center gap-4 bg-emerald-50 border-2 border-emerald-200 text-emerald-900">
+                    <span class="text-3xl shrink-0">📬</span>
+                    <div class="flex-1 min-w-0">
+                        <div class="font-bold text-lg leading-tight">현재 입찰 중입니다.</div>
+                        <div class="text-sm text-emerald-700 mt-1">
+                            마감까지 <strong id="countdown-text" class="font-extrabold tabular-nums">계산 중…</strong>
+                        </div>
                     </div>
-                    {% endif %}
+                </div>
+                {% else %}
+                {# 상태 4: 입찰 마감 — 연한 빨강 #}
+                <div id="countdown-banner" class="mb-5 px-5 py-4 rounded-xl flex items-center gap-4 bg-red-50 border-2 border-red-200 text-red-900">
+                    <span class="text-3xl shrink-0">🔒</span>
+                    <div class="flex-1 min-w-0">
+                        <div class="font-bold text-lg leading-tight">입찰이 마감되었습니다.</div>
+                        <div class="text-sm text-red-400 mt-1">이 공고는 입찰이 종료된 과거 공고입니다.</div>
+                    </div>
+                </div>
+                {% endif %}
+            {% endif %}
 
-                    <div class="flex">
-                        <span class="text-gray-600 w-32 flex-shrink-0">등록일</span>
-                        <span class="text-sm text-gray-500">{{ tender.created_at.strftime('%Y-%m-%d %H:%M') if tender.created_at else '-' }}</span>
+            <!-- ③ 공고 메타 정보 한 줄 (공고번호 | 공고기관 | 수요기관 | 출처) -->
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500 mb-5 pb-4 border-b">
+                <span class="flex items-center gap-1">
+                    <span class="text-gray-400 text-xs">공고번호</span>
+                    <span class="font-medium text-gray-700" id="tender-number">{{ tender.tender_number }}</span>
+                    <button onclick="copyTenderNumber()" class="px-1.5 py-0.5 text-xs bg-blue-100 text-blue-600 rounded hover:bg-blue-200">복사</button>
+                </span>
+                <span class="text-gray-300 hidden md:inline">|</span>
+                {% set ntceInsttNm = extra.get('ntceInsttNm', '') %}
+                {% if ntceInsttNm and ntceInsttNm != tender.agency %}
+                <span class="flex items-center gap-1">
+                    <span class="text-gray-400 text-xs">공고기관</span>
+                    <span class="font-medium text-gray-700">{{ ntceInsttNm }}</span>
+                </span>
+                <span class="text-gray-300 hidden md:inline">|</span>
+                {% endif %}
+                <span class="flex items-center gap-1">
+                    <span class="text-gray-400 text-xs">{% if tender.demand_agency and tender.demand_agency != tender.agency %}수요기관{% else %}발주기관{% endif %}</span>
+                    <span class="font-semibold text-blue-700">{{ tender.demand_agency or tender.agency }}</span>
+                    {% if tender.demand_agency and tender.demand_agency != tender.agency %}
+                    <span class="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">실수요</span>
+                    {% endif %}
+                </span>
+                <span class="text-gray-300 hidden md:inline">|</span>
+                <span class="flex items-center gap-1">
+                    <span class="text-gray-400 text-xs">출처</span>
+                    <span class="text-gray-600">{{ tender.source_site }}</span>
+                </span>
+                <span class="ml-auto text-xs text-gray-400">등록 {{ tender.created_at.strftime('%Y-%m-%d') if tender.created_at else '' }}</span>
+            </div>
+
+            {% if tender.status == '사전규격' %}
+            <!-- ④-A 사전규격 전용: 일정 정보 -->
+            <div class="space-y-3">
+                <h3 class="font-semibold text-base border-b pb-2 text-gray-700">일정 정보</h3>
+                {% if tender.announced_date %}
+                <div class="flex"><span class="text-gray-500 w-36 flex-shrink-0 text-sm">사전규격 공개일</span>
+                    <span class="font-medium text-sm">{{ tender.announced_date.strftime('%Y-%m-%d %H:%M') }}</span></div>
+                {% endif %}
+                {% if tender.deadline_date %}
+                <div class="flex"><span class="text-gray-500 w-36 flex-shrink-0 text-sm">의견등록 마감일</span>
+                    <span class="font-medium text-sm {% if days_left <= 2 and not is_expired %}text-red-600{% elif days_left <= 5 and not is_expired %}text-orange-500{% endif %}">
+                        {{ tender.deadline_date.strftime('%Y-%m-%d %H:%M') }}</span></div>
+                {% endif %}
+                {% if tender.opening_date %}
+                <div class="flex"><span class="text-gray-500 w-36 flex-shrink-0 text-sm">납품(완수) 기한</span>
+                    <span class="font-medium text-sm">{{ tender.opening_date.strftime('%Y-%m-%d %H:%M') }}</span></div>
+                {% endif %}
+            </div>
+
+            {% else %}
+            <!-- ④-B 일반공고 전용: 가격·일정 + 입찰조건·참가자격 (레퍼런스 레이아웃) -->
+
+            <!-- 가격·일정 -->
+            <div class="mb-6">
+                <h3 class="font-semibold text-base border-b pb-2 text-gray-700 mb-4">가격 · 일정</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+
+                    <!-- ── 가격 박스 + 계산기 ── -->
+                    <div class="flex flex-col h-full gap-3">
+                        {% set _presmpt = extra.get('presmptPrce', '') %}
+                        {% set _vat     = extra.get('VAT', '') %}
+                        {% set _assign  = extra.get('asignBdgtAmt', '') %}
+                        {% set _has_vat_confirmed = (_assign and _assign != '0') %}
+                        {% if (_presmpt and _presmpt != '0') or tender.estimated_price %}
+
+                        {# ── 메인 가격 박스 ── #}
+                        {% if _has_vat_confirmed %}
+                        {# G2B: 배정예산(부가세 포함) 확인됨 #}
+                        <div class="flex rounded-xl overflow-hidden border-2 border-blue-400">
+                            <div class="shrink-0 w-20 bg-blue-600 flex items-center justify-center py-4">
+                                <span class="text-sm font-bold text-white leading-tight text-center">가격</span>
+                            </div>
+                            <div class="flex-1 bg-white px-5 py-4">
+                                <div class="flex items-center gap-1.5 mb-1">
+                                    <span class="text-[11px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-semibold">부가세 포함</span>
+                                </div>
+                                <div class="text-3xl font-extrabold tracking-tight text-blue-700 leading-none">
+                                    {{ '{:,}'.format(_assign | int) }}<span class="text-xl ml-1 font-bold">원</span>
+                                </div>
+                                <div class="text-sm text-gray-400 mt-1">{{ _assign | int | format_price }}</div>
+                            </div>
+                        </div>
+                        {% elif _presmpt and _presmpt != '0' %}
+                        {# 추정가격만 있음 #}
+                        <div class="flex rounded-xl overflow-hidden border-2 border-blue-400">
+                            <div class="shrink-0 w-20 bg-blue-600 flex items-center justify-center py-4">
+                                <span class="text-sm font-bold text-white leading-tight text-center">가격</span>
+                            </div>
+                            <div class="flex-1 bg-white px-5 py-4">
+                                <div class="flex items-center gap-1.5 mb-1">
+                                    <span class="text-[11px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-semibold">부가세 별도</span>
+                                </div>
+                                <div class="text-3xl font-extrabold tracking-tight text-blue-700 leading-none">
+                                    {{ '{:,}'.format(_presmpt | int) }}<span class="text-xl ml-1 font-bold">원</span>
+                                </div>
+                                <div class="text-sm text-gray-400 mt-1">{{ _presmpt | int | format_price }}</div>
+                            </div>
+                        </div>
+                        {% else %}
+                        {# 구형: estimated_price만 있음 #}
+                        <div class="flex rounded-xl overflow-hidden border-2 border-blue-400">
+                            <div class="shrink-0 w-20 bg-blue-600 flex items-center justify-center py-4">
+                                <span class="text-sm font-bold text-white leading-tight text-center">가격</span>
+                            </div>
+                            <div class="flex-1 bg-white px-5 py-4">
+                                <div class="text-3xl font-extrabold tracking-tight text-blue-700 leading-none">
+                                    {{ '{:,}'.format(tender.estimated_price) }}<span class="text-xl ml-1 font-bold">원</span>
+                                </div>
+                                <div class="text-sm text-gray-400 mt-1">{{ tender.estimated_price | format_price }}</div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        {# ── 보조 가격 정보 테이블 ── #}
+                        <table class="w-full text-sm border rounded-lg overflow-hidden">
+                            <tbody>
+                                {% if _has_vat_confirmed %}
+                                {% if _presmpt and _presmpt != '0' %}
+                                <tr class="border-b">
+                                    <td class="px-3 py-2 text-gray-500 bg-gray-50 whitespace-nowrap">배정예산</td>
+                                    <td class="px-3 py-2 font-medium">{{ '{:,}'.format(_presmpt | int) }}원</td>
+                                </tr>
+                                <tr>
+                                    <td class="px-3 py-2 text-gray-500 bg-gray-50">부가세 (10%)</td>
+                                    <td class="px-3 py-2 font-medium">
+                                        {{ '{:,}'.format(_vat | int) if _vat and _vat != '0' else '{:,}'.format((_assign | int) - (_presmpt | int)) }}원
+                                    </td>
+                                </tr>
+                                {% endif %}
+                                {% elif _presmpt and _presmpt != '0' %}
+                                <tr>
+                                    <td class="px-3 py-2 text-gray-500 bg-gray-50">부가세 (10%)</td>
+                                    <td class="px-3 py-2 font-medium">
+                                        {{ '{:,}'.format(_vat | int) if _vat and _vat != '0' else '{:,}'.format((_presmpt | int * 0.1) | int) }}원
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td class="px-3 py-2 text-gray-500 bg-gray-50 whitespace-nowrap">추정가격 <span class="text-[10px] font-normal">(환산)</span></td>
+                                    <td class="px-3 py-2 font-medium">{{ '{:,}'.format((tender.estimated_price / 1.1) | int) }}원 <span class="text-xs text-gray-400">부가세 별도</span></td>
+                                </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+
+                        {# ── 투찰 비율 계산기 (남은 높이 채우기) ── #}
+                        <div class="border border-gray-200 rounded-xl p-4 bg-gray-50 flex flex-col flex-1">
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-xs font-semibold text-gray-500 tracking-wide">투찰 비율 계산기</span>
+                                <div class="flex items-center gap-1.5">
+                                    <input type="number" id="bid-rate-input" min="70" max="100" step="0.1"
+                                        value="{{ extra.get('sucsfbidLwltRate','') or '88' }}"
+                                        class="w-16 text-center text-sm font-semibold border border-gray-300 rounded-md px-1.5 py-0.5 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
+                                    <span class="text-sm text-gray-500 font-medium">%</span>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2 mb-3">
+                                <span class="text-[10px] text-gray-400 shrink-0">70%</span>
+                                <input type="range" id="bid-rate-slider" min="70" max="100" step="0.1"
+                                    value="{{ extra.get('sucsfbidLwltRate','') or '88' }}"
+                                    class="flex-1 h-2 rounded-full cursor-pointer accent-blue-600">
+                                <span class="text-[10px] text-gray-400 shrink-0">100%</span>
+                            </div>
+                            {# 투찰금액 박스 — 남은 공간 채우기 #}
+                            <div class="flex rounded-xl overflow-hidden border-2 border-blue-400 flex-1 min-h-[7rem]">
+                                <div class="shrink-0 w-20 bg-blue-600 flex items-center justify-center">
+                                    <span class="text-sm font-bold text-white leading-tight text-center">투찰금액</span>
+                                </div>
+                                <div class="flex-1 bg-white px-5 flex flex-col justify-center">
+                                    {% if _has_vat_confirmed %}
+                                    <div class="flex items-center gap-1.5 mb-1">
+                                        <span class="text-[11px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-semibold">부가세 포함</span>
+                                    </div>
+                                    {% endif %}
+                                    <div class="text-3xl font-extrabold tracking-tight text-blue-700 leading-none" id="bid-amount-display">—</div>
+                                    <div class="text-sm text-gray-400 mt-1" id="bid-amount-approx"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {% else %}
+                        <div class="border border-gray-200 rounded-xl p-5 text-center text-gray-400">추정가격 미정</div>
+                        {% endif %}
+                    </div>
+
+                    <!-- ── 일정 타임라인 (연결선 + 애니메이션) ── -->
+                    {# h-full로 왼쪽 컬럼과 높이 맞춤 #}
+                    <div>
+                        {# ── 타임라인 매크로 ── #}
+                        {# st 계산 후 dot 색상·레이블·텍스트 색상을 설정 #}
+                        {% macro trow(label, dt, is_dl=false, dday=0, sublabel='', is_event=false) %}
+                        {% if dt %}
+                        {# is_event=true: 순간 이벤트 (개찰 등) — 완료/대기만, 진행중 없음 #}
+                        {% if is_event %}
+                        {% set st = 'done' if dt <= now_dt else 'pending' %}
+                        {% else %}
+                        {% set st = 'done' if dt <= now_dt else ('urgent' if is_dl and dday <= 5 else ('active' if is_dl or (dt - now_dt).days <= 7 else 'pending')) %}
+                        {% endif %}
+                        <div class="relative pl-6 pb-4 last:pb-0">
+                            {# 현재 단계 강조 배경 #}
+                            {% if st in ('active','urgent') %}
+                            <div class="absolute inset-0 -mx-2 rounded-lg {% if st == 'active' %}bg-blue-50{% else %}bg-red-50{% endif %} opacity-60"></div>
+                            {% endif %}
+                            {# Dot + 애니메이션 #}
+                            <div class="absolute top-[7px]" style="left:-5px; z-index:10">
+                                {# 현재 단계 ping 애니메이션 #}
+                                {% if st == 'active' %}
+                                <span class="absolute inline-flex h-3 w-3 rounded-full bg-blue-300 animate-ping opacity-75"></span>
+                                {% elif st == 'urgent' %}
+                                <span class="absolute inline-flex h-3 w-3 rounded-full bg-red-300 animate-ping opacity-75"></span>
+                                {% endif %}
+                                <span class="relative flex w-3 h-3 rounded-full
+                                    {% if st == 'done' %}bg-green-400
+                                    {% elif st == 'active' %}bg-blue-500 ring-2 ring-blue-200
+                                    {% elif st == 'urgent' %}bg-red-500 ring-2 ring-red-200
+                                    {% else %}bg-gray-300{% endif %}">
+                                </span>
+                            </div>
+                            {# 텍스트 #}
+                            <div class="relative flex items-center gap-2 flex-wrap">
+                                <span class="text-sm {% if st == 'done' %}font-medium text-gray-500{% elif st == 'active' %}font-bold text-blue-700{% elif st == 'urgent' %}font-bold text-red-600{% else %}font-medium text-gray-400{% endif %}">{{ label }}</span>
+                                {% if sublabel %}<span class="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">({{ sublabel }})</span>{% endif %}
+                                {% if st == 'done' %}<span class="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-semibold">완료</span>
+                                {% elif st == 'active' %}<span class="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold">진행중</span>
+                                {% elif st == 'urgent' %}<span class="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-bold">D-{{ dday }}</span>
+                                {% endif %}
+                            </div>
+                            <div class="relative text-xs mt-0.5
+                                {% if st == 'done' %}text-gray-400
+                                {% elif st == 'active' %}text-blue-500 font-medium
+                                {% elif st == 'urgent' %}text-red-500 font-medium
+                                {% else %}text-gray-300{% endif %}">
+                                {{ dt.strftime('%Y.%m.%d %H:%M') }}
+                            </div>
+                        </div>
+                        {% endif %}
+                        {% endmacro %}
+
+                        {# 날짜 없는 단계 (제안서평가 등) #}
+                        {% macro trow_nodate(label, note='') %}
+                        <div class="relative pl-6 pb-4 last:pb-0">
+                            <div class="absolute top-[7px]" style="left:-5px; z-index:10">
+                                <span class="relative flex w-3 h-3 rounded-full bg-gray-300"></span>
+                            </div>
+                            <div class="relative flex items-center gap-2">
+                                <span class="text-sm font-medium text-gray-400">{{ label }}</span>
+                            </div>
+                            {% if note %}<div class="relative text-xs text-gray-400 mt-0.5 italic">{{ note }}</div>{% endif %}
+                        </div>
+                        {% endmacro %}
+
+                        {# 세로 연결선이 있는 타임라인 컨테이너 #}
+                        {% set now_dt = now() %}
+                        {% set is_negotiated = '협상' in extra.get('sucsfbidMthdNm', '') %}
+
+                        <div class="relative border-l-2 border-gray-200 ml-[5px]">
+
+                            {# 1. 공고개시 #}
+                            {{ trow('공고개시', tender.announced_date) }}
+
+                            {# 2. 현장설명 (있는 경우만) #}
+                            {% set _dt = parse_g2b_dt(extra.get('dcmtgOprtnDt', '')) %}
+                            {{ trow('현장설명', _dt, sublabel=extra.get('dcmtgOprtnPlce', '')) }}
+
+                            {# 3. 입찰참가자격 등록 #}
+                            {% set _dt = parse_g2b_dt(extra.get('bidQlfctRgstDt', '')) %}
+                            {{ trow('입찰참가자격 등록', _dt) }}
+
+                            {# 4. 입찰보증서 접수 (나라장터 표준 단계) #}
+                            {% if extra and tender.deadline_date %}
+                            {{ trow('입찰보증서 접수', tender.deadline_date, is_dl=true, dday=days_left) }}
+                            {% endif %}
+
+                            {# 5. 제안서 제출 (협상 시) #}
+                            {% if is_negotiated and tender.deadline_date %}
+                            {% set _begin = parse_g2b_dt(extra.get('bidBeginDt', '')) %}
+                            {{ trow('제안서 제출', tender.deadline_date, is_dl=true, dday=days_left,
+                                   sublabel=_begin.strftime('%Y.%m.%d %H:%M') + ' 개시' if _begin else '') }}
+                            {% endif %}
+
+                            {# 6. 입찰서 제출 #}
+                            {% set _begin = parse_g2b_dt(extra.get('bidBeginDt', '')) %}
+                            {{ trow('입찰서 제출', tender.deadline_date, is_dl=true, dday=days_left,
+                                   sublabel=_begin.strftime('%Y.%m.%d %H:%M') + ' 개시' if _begin else '') }}
+
+                            {# 7. 제안서 평가 (협상 시) #}
+                            {% if is_negotiated %}
+                            {% set _tp_dt = parse_g2b_dt(extra.get('tpEvalApplClseDt', '')) %}
+                            {% if _tp_dt %}{{ trow('제안서 평가', _tp_dt) }}
+                            {% else %}{{ trow_nodate('제안서 평가', '수요기관 담당자에게 문의') }}{% endif %}
+                            {% endif %}
+
+                            {# 8. 공동수급협정서 마감 (있는 경우만) #}
+                            {% set _dt = parse_g2b_dt(extra.get('cmmnSpldmdAgrmntClseDt', '')) %}
+                            {{ trow('공동수급협정서 마감', _dt) }}
+
+                            {# 9. PQ 신청 마감 (있는 경우만) #}
+                            {% set _dt = parse_g2b_dt(extra.get('pqApplDocRcptDt', '')) %}
+                            {{ trow('PQ 신청 마감', _dt) }}
+
+                            {# 10. 개찰 (순간 이벤트 — 완료/대기만) #}
+                            {{ trow('개찰', tender.opening_date, is_event=true) }}
+                        </div>
                     </div>
                 </div>
             </div>
 
+            <!-- 입찰 조건 · 참가자격 -->
+            <div>
+                <h3 class="font-semibold text-base border-b pb-2 text-gray-700 mb-4">입찰 조건 · 참가자격</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+                    {# ── 공통 매크로 ── #}
+                    {# 행 출력 — val이 있으면 표시, 없으면 '해당사항 없음' (always=false이면 val이 없을 때 행 자체를 숨김) #}
+                    {% macro info_row(label, val, always=true) %}
+                    {% if always or val %}
+                    <tr class="border-b last:border-b-0">
+                        <td class="px-3 py-2.5 text-gray-500 bg-gray-50 w-36 align-top text-sm leading-snug whitespace-nowrap">{{ label }}</td>
+                        <td class="px-3 py-2.5 text-sm text-gray-800 font-medium">
+                            {%- if val -%}{{ val }}{%- else -%}<span class="text-gray-400 font-normal">해당사항 없음</span>{%- endif -%}
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% endmacro %}
+                    {# API 값 표시 헬퍼 — Y/N은 예/아니오로, 나머지 텍스트는 그대로 출력 #}
+                    {%- macro apival(v) -%}
+                    {%- if v == 'Y' -%}예{%- elif v == 'N' -%}아니오{%- else -%}{{ v }}{%- endif -%}
+                    {%- endmacro -%}
+
+                    <!-- ① 입찰 조건 테이블 -->
+                    <div>
+                        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">입찰 조건</div>
+                        <table class="w-full text-sm border rounded-lg overflow-hidden">
+                            <tbody>
+                                {# 입찰방법 (전자입찰 등) — bidPblancMthdNm #}
+                                {% set _bidMthd = extra.get('bidPblancMthdNm','') %}
+                                <tr class="border-b">
+                                    <td class="px-3 py-2.5 text-gray-500 bg-gray-50 w-36 text-sm whitespace-nowrap">입찰방법</td>
+                                    <td class="px-3 py-2.5">
+                                        {% if _bidMthd %}
+                                        <span class="inline-block bg-blue-100 text-blue-700 text-xs font-semibold px-2 py-0.5 rounded">{{ _bidMthd }}</span>
+                                        {% else %}<span class="text-gray-400 text-sm">해당사항 없음</span>{% endif %}
+                                    </td>
+                                </tr>
+                                {# 낙찰방법 — sucsfbidMthdNm (+ 낙찰하한율) #}
+                                {% set _smtd = extra.get('sucsfbidMthdNm','') %}
+                                {% set _lwr  = extra.get('sucsfbidLwltRate','') %}
+                                {{ info_row('낙찰방법', _smtd + (' (하한율 ' + _lwr + '%)' if _lwr else '')) }}
+                                {# 계약방법 — cntrctCnclsMthdNm #}
+                                {{ info_row('계약방법', extra.get('cntrctCnclsMthdNm','')) }}
+                                {# 예정가격결정방법 — prearngPrceDcsnMthdNm #}
+                                {{ info_row('예정가격결정방법', extra.get('prearngPrceDcsnMthdNm',''), always=false) }}
+                                {# 공동수급 — jntcontrYn + jntcontrTypNm #}
+                                {% set _jnt    = extra.get('jntcontrYn','') %}
+                                {% set _jntTyp = extra.get('jntcontrTypNm','') %}
+                                {% set _jntVal = (apival(_jnt) + (' · ' + _jntTyp if _jntTyp else '')) if _jnt else '' %}
+                                {{ info_row('공동수급', _jntVal, always=false) }}
+                                {# 개찰장소 — opengPlce #}
+                                {{ info_row('개찰장소', extra.get('opengPlce',''), always=false) }}
+                                {# 국제입찰 — intrbidYn (API 텍스트 그대로, Y/N이면 변환) #}
+                                {{ info_row('국제입찰', apival(extra.get('intrbidYn',''))) }}
+                                {# 서비스 구분 — srvceDivNm #}
+                                {{ info_row('서비스 구분', extra.get('srvceDivNm',''), always=false) }}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- ② 참가자격 테이블 -->
+                    <div>
+                        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">참가자격</div>
+                        <table class="w-full text-sm border rounded-lg overflow-hidden">
+                            <tbody>
+                                {# 실적제한 — arsltCmptYn (API가 '아니오'/'예' 또는 Y/N 반환) #}
+                                {{ info_row('실적제한', apival(extra.get('arsltCmptYn',''))) }}
+                                {# 제조여부 — mnfctYn (API가 '구분없음' 등 텍스트 또는 Y/N 반환) #}
+                                {{ info_row('제조여부', apival(extra.get('mnfctYn',''))) }}
+                                {# 지역제한 — rgnLmtBidLocplcJdgmBssNm 또는 rgnlmtdYn #}
+                                {% set _rgnNm = extra.get('rgnLmtBidLocplcJdgmBssNm','') %}
+                                {% set _rgnYn = extra.get('rgnlmtdYn','') %}
+                                {{ info_row('지역제한', _rgnNm if _rgnNm else apival(_rgnYn)) }}
+                                {# 업종제한 — indstrytyLmtYn (API가 '투찰제한' 등 텍스트 반환) #}
+                                {{ info_row('업종제한', apival(extra.get('indstrytyLmtYn',''))) }}
+                                {# 업종제한사항 — indstrytyNm 우선, 없으면 pubPrcrmntClsfcNm #}
+                                {% set _indNm = extra.get('indstrytyNm','') or extra.get('pubPrcrmntClsfcNm','') %}
+                                {{ info_row('업종제한사항', _indNm, always=false) }}
+                                {# 물품분류제한여부 — prdctClsfcLmtYn #}
+                                {{ info_row('물품분류제한여부', apival(extra.get('prdctClsfcLmtYn',''))) }}
+                                {# 중소기업 전용 #}
+                                {% if tender.is_sme_only %}
+                                <tr class="border-b last:border-b-0">
+                                    <td class="px-3 py-2.5 text-gray-500 bg-gray-50 w-36 text-sm whitespace-nowrap">중소기업</td>
+                                    <td class="px-3 py-2.5"><span class="inline-block bg-amber-100 text-amber-700 text-xs font-semibold px-2 py-0.5 rounded">중소기업 전용</span></td>
+                                </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
             <!-- 외부 링크 -->
-            <div class="mt-6 pt-6 border-t flex flex-wrap gap-3 items-center">
+            <div class="mt-5 pt-4 border-t flex flex-wrap gap-3 items-center">
                 {% if tender.url %}
                 <a href="{{ tender.url }}" target="_blank" class="btn-primary inline-block">
                     공고 원문 보기 →
@@ -140,29 +594,6 @@
                 <button onclick="toggleHistory()" id="history-toggle-btn" class="btn-secondary text-sm">
                     🔍 수행이력 조회
                 </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 추가 정보 -->
-    <div class="card">
-        <div class="card-header">
-            <h3 class="card-title">추가 정보</h3>
-        </div>
-        <div class="card-body">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                <div>
-                    <span class="text-gray-600">중소기업 전용</span>
-                    <p class="font-medium mt-1">{{ '예' if tender.is_sme_only else '아니오' }}</p>
-                </div>
-                <div>
-                    <span class="text-gray-600">중복 여부</span>
-                    <p class="font-medium mt-1">{{ '중복' if tender.is_duplicate else '정상' }}</p>
-                </div>
-                <div>
-                    <span class="text-gray-600">공고 상태</span>
-                    <p class="font-medium mt-1">{{ tender.status }}</p>
-                </div>
             </div>
         </div>
     </div>
@@ -316,9 +747,7 @@
         </div>
         <div class="card-body space-y-4">
             <!-- 메모 목록 -->
-            <div id="memos-list" class="space-y-3">
-                <p class="text-gray-400 text-sm text-center py-4">불러오는 중...</p>
-            </div>
+            <div id="memos-list" class="space-y-3"></div>
 
             <!-- 새 메모 작성 -->
             <div class="border-t pt-4">
@@ -609,12 +1038,12 @@ async function loadMemos() {
         const memos = await res.json();
         const container = document.getElementById('memos-list');
         if (!memos.length) {
-            container.innerHTML = '<p class="text-gray-400 text-sm text-center py-4">등록된 메모가 없습니다.</p>';
+            container.innerHTML = '';
             return;
         }
         container.innerHTML = memos.map(m => renderMemo(m)).join('');
     } catch (e) {
-        document.getElementById('memos-list').innerHTML = '<p class="text-red-500 text-sm">메모 불러오기 실패</p>';
+        // 실패 시 조용히 빈칸 유지
     }
 }
 
@@ -769,10 +1198,36 @@ async function toggleBookmark() {
 // ── 연관 공고 로드 ────────────────────────────────────────────────────────────
 (async function loadRelated() {
     const tenderId = {{ tender.id }};
+    const isPreSpecExpired = {{ 'true' if (tender.status == '사전규격' and is_expired) else 'false' }};
     try {
         const resp = await fetch(`/api/tender/${tenderId}/related`);
         const list = await resp.json();
-        if (!list || list.length === 0) return;  // 연관 공고 없으면 숨김 유지
+
+        // 사전규격 마감 상태일 때: 연관 본공고 확인해서 배너 상태 업데이트
+        if (isPreSpecExpired) {
+            const bannerTitle = document.getElementById('banner-title');
+            const bannerSub   = document.getElementById('banner-sub');
+            const bannerIcon  = document.getElementById('banner-icon');
+            const banner      = document.getElementById('countdown-banner');
+            // 활성 본공고 (사전규격이 아니고 마감 안 된 것)
+            const activeBid = list && list.find(t => t.status !== '사전규격' && t.days_left !== null && t.days_left >= 0);
+            if (activeBid && banner) {
+                // 상태 3-1: 사전규격 → 본공고 입찰중
+                banner.className = 'mb-5 px-5 py-4 rounded-xl flex items-center gap-4 bg-emerald-50 border-2 border-emerald-200 text-emerald-900';
+                if (bannerIcon) bannerIcon.textContent = '📬';
+                if (bannerTitle) bannerTitle.textContent = '현재 입찰 중입니다.';
+                if (bannerSub) {
+                    const dText = activeBid.days_left === 0 ? '오늘 마감' : `마감 D-${activeBid.days_left}`;
+                    bannerSub.className = 'text-sm text-emerald-700 mt-1 flex items-center gap-2 flex-wrap';
+                    bannerSub.innerHTML = `${dText} &nbsp;<a href="/tender/${activeBid.id}" class="inline-flex items-center gap-1 bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full hover:bg-emerald-700 transition-colors">본 공고 바로가기 →</a>`;
+                }
+            } else {
+                // 상태 2: 본공고 없음 또는 이미 마감
+                if (bannerSub) bannerSub.textContent = '본 입찰 공고가 아직 올라오지 않았습니다.';
+            }
+        }
+
+        if (!list || list.length === 0) return;  // 연관 공고 없으면 카드 숨김 유지
 
         const container = document.getElementById('related-list');
         const card      = document.getElementById('related-card');
@@ -816,6 +1271,108 @@ async function toggleBookmark() {
     } catch (e) {
         console.debug('연관 공고 로드 실패:', e);
     }
+})();
+
+// ── 투찰 비율 계산기 ───────────────────────────────────────────────────────────
+(function() {
+    // 투찰금액 기준: asignBdgtAmt(부가세 포함, 확인됨) > presmptPrce*1.1(추정) > estimated_price
+    {% if extra.get('asignBdgtAmt') and extra.get('asignBdgtAmt') != '0' %}
+    var basePrice = {{ extra.get('asignBdgtAmt') | int }};  // 배정예산(부가세 포함, API 확인)
+    {% elif extra.get('presmptPrce') and extra.get('presmptPrce') != '0' %}
+    var basePrice = Math.round({{ extra.get('presmptPrce') | int }} * 1.1);  // 추정가격 × 1.1(부가세 추정)
+    {% else %}
+    var basePrice = {{ tender.estimated_price or 0 }};  // estimated_price
+    {% endif %}
+    if (!basePrice) return;
+    var defaultRate = parseFloat("{{ extra.get('sucsfbidLwltRate', '') or '88' }}") || 88;
+
+    var slider  = document.getElementById('bid-rate-slider');
+    var inp     = document.getElementById('bid-rate-input');
+    var aDisp   = document.getElementById('bid-amount-display');
+    var approx  = document.getElementById('bid-amount-approx');
+    if (!slider) return;
+
+    function formatKorean(n) {
+        /* 금액을 한글 단위로: 8억 4천만원, 7억 6천 3백 63만원 */
+        var eok  = Math.floor(n / 100000000);
+        var man  = Math.floor((n % 100000000) / 10000);
+        function manStr(m) {
+            var cheon = Math.floor(m / 1000);
+            var baek  = Math.floor((m % 1000) / 100);
+            var sub   = m % 100;
+            var p = [];
+            if (cheon) p.push(cheon + '천');
+            if (baek)  p.push(baek  + '백');
+            if (sub)   p.push(String(sub));
+            return p.join(' ') + '만';
+        }
+        if (eok > 0) return (man > 0) ? eok + '억 ' + manStr(man) + '원' : eok + '억원';
+        if (man > 0) return manStr(man) + '원';
+        return n.toLocaleString('ko-KR') + '원';
+    }
+
+    function calc(rate) {
+        rate = Math.max(70, Math.min(100, rate));
+        var amount = Math.round(basePrice * rate / 100);
+        if (aDisp) aDisp.textContent = amount.toLocaleString('ko-KR') + '원';
+        if (approx) approx.textContent = formatKorean(amount);
+    }
+
+    slider.value = defaultRate;
+    inp.value    = defaultRate.toFixed(1);
+    calc(defaultRate);
+
+    slider.addEventListener('input', function() {
+        var v = parseFloat(this.value);
+        inp.value = v.toFixed(1);
+        calc(v);
+    });
+    inp.addEventListener('change', function() {
+        var v = parseFloat(this.value) || defaultRate;
+        v = Math.max(70, Math.min(100, v));
+        this.value   = v.toFixed(1);
+        slider.value = v;
+        calc(v);
+    });
+    inp.addEventListener('input', function() {
+        var v = parseFloat(this.value);
+        if (!isNaN(v)) { slider.value = Math.min(100, Math.max(70, v)); calc(v); }
+    });
+})();
+
+// ── 마감 카운트다운 타이머 ─────────────────────────────────────────────────────
+(function() {
+    const deadlineIso = "{{ tender.deadline_date.strftime('%Y-%m-%dT%H:%M:%S') if tender.deadline_date else '' }}";
+    if (!deadlineIso) return;
+    const deadline = new Date(deadlineIso);
+
+    function fmt(ms) {
+        if (ms <= 0) return '마감됨';
+        const s  = Math.floor(ms / 1000);
+        const m  = Math.floor(s  / 60);
+        const h  = Math.floor(m  / 60);
+        const d  = Math.floor(h  / 24);
+        const rh = h  % 24;
+        const rm = m  % 60;
+        const rs = s  % 60;
+        if (d > 0) return `${d}일 ${rh}시간 ${rm}분`;
+        if (h > 0) return `${h}시간 ${rm}분 ${rs}초`;
+        return `${rm}분 ${rs}초`;
+    }
+
+    function tick() {
+        const rem = deadline - Date.now();
+        const txt = document.getElementById('countdown-text');
+        const hrs = document.getElementById('dday-hours');
+        if (txt) txt.textContent = rem > 0 ? fmt(rem) : '마감됨';
+        if (hrs && rem > 0) {
+            const h = Math.floor(rem / 3600000) % 24;
+            const m = Math.floor(rem / 60000) % 60;
+            hrs.textContent = `· ${h}시간 ${m}분`;
+        }
+    }
+    tick();
+    setInterval(tick, 1000);
 })();
 
 function copyTenderNumber() {
@@ -929,15 +1486,10 @@ async function loadHistory(allTypes = false) {
             const bidNo   = item.bidNtceNo  || '';
             const bidSeq  = (item.bidNtceOrd || '0').toString().padStart(3, '0');
 
-            // ① API가 직접 URL을 반환한 경우 그대로 사용
-            // ② 없으면 bidNtceNo로 나라장터 공고상세 URL 직접 구성
-            //    taskClCd: 5=용역, 1=물품, 3=공사 (기본 용역)
-            const _apiUrl = item.bidNtceUrl || item.bidNtceDtlUrl || '';
-            const g2bUrl  = _apiUrl
-                ? _apiUrl
-                : (bidNo
-                    ? `https://www.g2b.go.kr:8101/ep/invitation/publish/bidInfoDtl.do?bidno=${bidNo}&bidSeq=${bidSeq}&taskClCd=5`
-                    : '');
+            // 차세대 나라장터(2025.01~) 공고 직접 링크 — 비로그인 시 SSO 로그인 후 이동
+            const g2bUrl = bidNo
+                ? `https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=${bidNo}&bidPbancOrd=${bidSeq}`
+                : '';
 
             const linkCls =
                 status === 'fail'     ? 'text-orange-600 hover:underline' :
@@ -994,7 +1546,11 @@ async function loadHistory(allTypes = false) {
                 // 낙찰
                 const winner = item._winner_nm || item.bidwinnrNm || '-';
                 const amt    = (item.sucsfbidAmt ? formatAmtKr(parseInt(item.sucsfbidAmt)) : null) || presmptAmt || '-';
-                winnerCell = `<span class="font-medium text-gray-800">${winner}</span>${cntBadge}`;
+                // 개찰 1순위와 실제 낙찰자가 다른 경우 (적격심사 탈락 등)
+                const candidateNote = (item._openg_candidate && item._openg_candidate !== winner)
+                    ? `<div class="text-xs text-orange-500 mt-0.5" title="개찰 시 1순위 투찰자가 적격심사에서 탈락하여 차순위로 낙찰된 경우">⚠ 개찰 1순위: ${item._openg_candidate}</div>`
+                    : '';
+                winnerCell = `<span class="font-medium text-gray-800">${winner}</span>${cntBadge}${candidateNote}`;
                 amtCell    = `<span class="text-blue-700 font-semibold">${amt}</span>`;
                 statusCell = `<span class="text-xs font-semibold border px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border-blue-200">낙찰</span>`;
                 rowBg = i % 2 === 0 ? 'bg-white' : 'bg-gray-50';

@@ -36,6 +36,12 @@ class Tender(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     is_duplicate = db.Column(db.Boolean, default=False)
 
+    # 추가 API 데이터 (G2B 등 — JSON 직렬화)
+    extra_data = db.Column(db.Text, nullable=True)
+
+    # 사업번호 — G2B에서 사전규격·입찰공고 연계에 사용 (tender_number 공통 접미 숫자)
+    business_number = db.Column(db.String(50), nullable=True, index=True)
+
     # 관계
     bookmarks = db.relationship(
         'Bookmark',
@@ -366,6 +372,7 @@ def init_db(app):
             ('ALTER TABLE bookmarks ADD COLUMN user_id INTEGER',                    '[DB] bookmarks.user_id 추가'),
             ('ALTER TABLE filters ADD COLUMN user_id INTEGER',                      '[DB] filters.user_id 추가'),
             ('ALTER TABLE user_preferences ADD COLUMN type_weights TEXT DEFAULT "{}"', '[DB] user_preferences.type_weights 추가'),
+            ('ALTER TABLE tenders ADD COLUMN business_number TEXT',                 '[DB] tenders.business_number 추가'),
         ]
         # 중소벤처 24 공고 중 기관명이 '기타'인 것은 '중소벤처 24'로 정정
         data_fixes = [
@@ -388,6 +395,30 @@ def init_db(app):
                     print(f'{msg} ({result.rowcount}건)')
             except Exception:
                 db.session.rollback()
+
+        # business_number 역산 채우기 — G2B tender_number 접미 숫자 추출
+        try:
+            import re as _re_biz
+            _biz_pattern = _re_biz.compile(r'^[A-Z]\d+[A-Z]+(\d+)$')
+            _needs_fill = db.session.execute(
+                text("SELECT id, tender_number FROM tenders WHERE business_number IS NULL AND tender_number IS NOT NULL")
+            ).fetchall()
+            if _needs_fill:
+                _filled = 0
+                for row in _needs_fill:
+                    m = _biz_pattern.match(row[1])
+                    if m:
+                        db.session.execute(
+                            text("UPDATE tenders SET business_number = :biz WHERE id = :id"),
+                            {'biz': m.group(1), 'id': row[0]}
+                        )
+                        _filled += 1
+                db.session.commit()
+                if _filled:
+                    print(f'[DB] business_number 역산 채우기: {_filled}건')
+        except Exception as _e:
+            db.session.rollback()
+            print(f'[DB] business_number 채우기 오류: {_e}')
 
         # 기본 관리자 계정 생성 (유저가 아무도 없을 때)
         if User.query.count() == 0:

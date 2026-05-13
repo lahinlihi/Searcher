@@ -9,6 +9,9 @@ from .base_crawler import BaseCrawler
 from datetime import datetime, timedelta
 import requests
 import json
+import re as _re_biz
+
+_G2B_BIZ_PATTERN = _re_biz.compile(r'^[A-Z]\d+[A-Z]+(\d+)$')
 
 
 class G2BApiCrawler(BaseCrawler):
@@ -265,11 +268,58 @@ class G2BApiCrawler(BaseCrawler):
             # 공고 상태
             status = item.get('ntceKindNm', '일반')
 
+            # 추가 API 필드 (상세 페이지 표시용)
+            extra = {
+                # 기관 정보
+                'ntceInsttNm':               item.get('ntceInsttNm', ''),              # 공고기관
+                # 가격 정보
+                'asignBdgtAmt':              item.get('asignBdgtAmt', ''),             # 배정예산
+                'presmptPrce':               item.get('presmptPrce', ''),              # 추정가격(원본)
+                'VAT':                       item.get('VAT', ''),                      # 부가세 (API 직접 제공)
+                # 입찰방법 (전자입찰 여부)
+                'bidPblancMthdNm':           item.get('bidPblancMthdNm', '') or item.get('bidMthdNm', '') or item.get('elctrnBidYn', ''),  # 입찰방법(전자입찰 등)
+                # 낙찰/계약
+                'sucsfbidMthdNm':            item.get('sucsfbidMthdNm', ''),           # 낙찰방법
+                'sucsfbidLwltRate':          item.get('sucsfbidLwltRate', ''),         # 낙찰하한율
+                'cntrctCnclsMthdNm':         item.get('cntrctCnclsMthdNm', ''),        # 계약방법
+                'prearngPrceDcsnMthdNm':     item.get('prearngPrceDcsnMthdNm', ''),   # 예정가격결정방법
+                # 개찰/입찰
+                'opengPlce':                 item.get('opengPlce', ''),                # 개찰장소
+                'intrbidYn':                 item.get('intrbidYn', ''),               # 국제입찰여부
+                'srvceDivNm':                item.get('srvceDivNm', ''),              # 서비스구분
+                'jntcontrYn':                item.get('jntcontrYn', ''),              # 공동도급여부
+                'jntcontrTypNm':             item.get('jntcontrTypNm', '') or item.get('jntcontrFomCdNm', ''),  # 공동수급 구성방식
+                'bidPrtcptLmtYn':            item.get('bidPrtcptLmtYn', ''),          # 입찰참가제한
+                'bidPrtcptFeePaymntYn':      item.get('bidPrtcptFeePaymntYn', ''),    # 입찰참가비 납부여부
+                'bidGrntymnyPaymntYn':       item.get('bidGrntymnyPaymntYn', ''),     # 입찰보증금 납부여부
+                # 타임라인 일정
+                'bidBeginDt':                item.get('bidBeginDt', ''),              # 입찰서 개시일시
+                'bidQlfctRgstDt':            item.get('bidQlfctRgstDt', ''),          # 자격등록 마감일시
+                'dcmtgOprtnDt':              item.get('dcmtgOprtnDt', ''),            # 현장설명회 일시
+                'dcmtgOprtnPlce':            item.get('dcmtgOprtnPlce', ''),          # 현장설명회 장소
+                'cmmnSpldmdAgrmntClseDt':    item.get('cmmnSpldmdAgrmntClseDt', ''), # 공동수급협정서 마감
+                'pqApplDocRcptDt':           item.get('pqApplDocRcptDt', ''),         # PQ 신청 마감
+                'tpEvalApplClseDt':          item.get('tpEvalApplClseDt', ''),        # TP 평가 신청 마감
+                # 참가자격
+                'rgnlmtdYn':                 item.get('rgnlmtdYn', ''),              # 지역제한여부 (텍스트 또는 Y/N)
+                'rgnLmtBidLocplcJdgmBssNm':  item.get('rgnLmtBidLocplcJdgmBssNm', ''), # 지역제한 기준명
+                'indstrytyLmtYn':            item.get('indstrytyLmtYn', ''),          # 업종제한여부 (텍스트 또는 Y/N)
+                'indstrytyNm':               item.get('indstrytyNm', '') or item.get('indstrytyLmtNm', ''),  # 업종제한사항 전체 텍스트
+                'pubPrcrmntClsfcNm':         item.get('pubPrcrmntClsfcNm', ''),       # 품목분류명
+                'mnfctYn':                   item.get('mnfctYn', ''),                 # 제조여부 (텍스트 또는 Y/N)
+                'arsltCmptYn':               item.get('arsltCmptYn', ''),             # 실적제한여부 (텍스트 또는 Y/N)
+                'prdctClsfcLmtYn':           item.get('prdctClsfcLmtYn', ''),         # 물품분류제한여부
+                'dsgntCmptYn':               item.get('dsgntCmptYn', ''),             # 지정경쟁여부
+            }
+
+            import json as _json
+            _biz_m = _G2B_BIZ_PATTERN.match(tender_number or '')
             tender = {
                 'title': self.clean_text(title)[:200],
                 'agency': self.clean_text(agency)[:100],
                 'demand_agency': demand_agency,
                 'tender_number': tender_number,
+                'business_number': _biz_m.group(1) if _biz_m else None,
                 'announced_date': announced_date,
                 'deadline_date': deadline_date,
                 'opening_date': opening_date,
@@ -278,8 +328,8 @@ class G2BApiCrawler(BaseCrawler):
                 'status': status,
                 'is_sme_only': is_sme_only,
                 'source_site': self.site_name,
-                'url': url
-                # category 필드는 DB 모델에 없으므로 제외
+                'url': url,
+                'extra_data': _json.dumps(extra, ensure_ascii=False),
             }
 
             return tender
@@ -335,13 +385,21 @@ class G2BApiCrawler(BaseCrawler):
                 ':',
             '')
 
+        # G2B API 네이티브 포맷 우선 시도 (공백 포함, 시간 완전 보존)
+        s = str(date_str).strip()
+        for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                pass
+
+        # 숫자만 추출하여 컴팩트 포맷 파싱 (공백·특수문자 완전 제거)
+        digits = ''.join(c for c in date_str if c.isdigit())
         try:
-            # YYYYMMDD 형식 (8자리)
-            if len(date_str) >= 8:
-                return datetime.strptime(date_str[:8], '%Y%m%d')
-            # YYYYMMDDHHMM 형식 (12자리)
-            elif len(date_str) >= 12:
-                return datetime.strptime(date_str[:12], '%Y%m%d%H%M')
+            if len(digits) >= 12:
+                return datetime.strptime(digits[:12], '%Y%m%d%H%M')
+            elif len(digits) >= 8:
+                return datetime.strptime(digits[:8], '%Y%m%d')
         except ValueError:
             pass
 

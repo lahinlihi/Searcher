@@ -239,6 +239,23 @@ _KOREAN_LOCATIONS = sorted([
 app = Flask(__name__)
 app.config.from_object(Config)
 app.secret_key = settings_manager.get('secret_key') or 'change-me-in-production-please'
+app.jinja_env.globals['now'] = datetime.now
+
+
+def _parse_g2b_dt(s):
+    """G2B API 날짜 문자열을 datetime으로 파싱 (Jinja2 global)"""
+    if not s:
+        return None
+    s = str(s).strip()
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y%m%d%H%M%S', '%Y%m%d%H%M', '%Y%m%d'):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            pass
+    return None
+
+
+app.jinja_env.globals['parse_g2b_dt'] = _parse_g2b_dt
 
 
 @app.after_request
@@ -712,16 +729,33 @@ def smart_sort_tenders(tenders, interest_keywords=None):
 
 @app.template_filter('format_price')
 def format_price_filter(price):
-    """가격 포맷 필터"""
+    """금액을 한글 단위로 표현: 8억 4천만원, 7억 6천 3백 63만원 등"""
     if not price:
         return '미정'
+    price = int(price)
+    if price <= 0:
+        return '0원'
 
-    if price >= 100000000:
-        return f'{price / 100000000:.1f}억원'
-    elif price >= 10000000:
-        return f'{price / 10000000:.1f}천만원'
-    elif price >= 10000:
-        return f'{price / 10000:.0f}만원'
+    eok = price // 100_000_000
+    man = (price % 100_000_000) // 10_000
+
+    def _man_str(m):
+        """만 단위 숫자를 한글 단위 문자열로 변환. 예: 4000→4천, 7200→7천 2백, 6363→6천 3백 63"""
+        cheon = m // 1000
+        baek  = (m % 1000) // 100
+        sub   = m % 100        # 십·일 자리를 숫자로 그대로 표기
+        parts = []
+        if cheon: parts.append(f'{cheon}천')
+        if baek:  parts.append(f'{baek}백')
+        if sub:   parts.append(str(sub))
+        return ' '.join(parts) + '만'
+
+    if eok > 0:
+        if man == 0:
+            return f'{eok}억원'
+        return f'{eok}억 {_man_str(man)}원'
+    elif man > 0:
+        return _man_str(man) + '원'
     else:
         return f'{price:,}원'
 
@@ -925,6 +959,7 @@ def logs_page():
 @login_required
 def tender_detail(tender_id):
     """공고 상세 페이지"""
+    import json as _json
     tender = Tender.query.get_or_404(tender_id)
 
     # 마감까지 남은 일수 계산
@@ -933,10 +968,19 @@ def tender_detail(tender_id):
         delta = tender.deadline_date - datetime.now()
         days_left = delta.days
 
-    # 일반입찰이고 마감일이 지났으면 is_expired=True (사전규격은 항상 False)
-    is_expired = (tender.status != '사전규격') and (days_left < 0)
+    # 마감일이 지났으면 is_expired=True (사전규격 포함)
+    is_expired = days_left < 0
 
-    return render_template('detail.html', tender=tender, days_left=days_left, is_expired=is_expired)
+    # extra_data 파싱 (G2B 추가 필드)
+    extra = {}
+    if tender.extra_data:
+        try:
+            extra = _json.loads(tender.extra_data)
+        except Exception:
+            pass
+
+    return render_template('detail.html', tender=tender, days_left=days_left,
+                           is_expired=is_expired, extra=extra)
 
 
 @app.route('/admin/users')
@@ -950,52 +994,66 @@ def admin_users_page():
 @login_required
 def api_tender_related(tender_id):
     """
-    연관 공고 검색: 같은 채널 + 같은 수요기관 기준.
-    나라장터는 사전규격·API를 같은 채널로 묶어 처리.
+    연관 공고 검색.
+    우선순위:
+      1) 사업번호(business_number) 기반 — G2B 사전규격↔입찰공고 정확 연계
+      2) 채널 + 수요기관 + 제목 핵심어 기반 (폴백)
     """
     import re as _re2
 
     tender = Tender.query.get_or_404(tender_id)
 
     # ── 1. 채널 패밀리 결정 ──────────────────────────────────────
-    G2B_SITES = {'나라장터', '나라장터 사전규격', '나라장터 API'}
-    if tender.source_site in G2B_SITES:
-        site_filter = Tender.source_site.in_(list(G2B_SITES))
+    if tender.source_site and tender.source_site.startswith('나라장터'):
+        site_filter = Tender.source_site.like('나라장터%')
     else:
         site_filter = Tender.source_site == tender.source_site
 
-    # ── 2. 수요기관 결정 (실수요기관 우선, 없으면 공고기관) ──────
-    search_agency = tender.demand_agency or tender.agency
-    agency_filter = db.or_(
-        Tender.demand_agency == search_agency,
-        db.and_(Tender.demand_agency == None, Tender.agency == search_agency),
-        Tender.agency == search_agency,
-    ) if search_agency else None
+    # ── 2-A. 사업번호 기반 검색 (G2B 우선) ──────────────────────
+    biz_results = []
+    if tender.business_number:
+        biz_results = Tender.query.filter(
+            Tender.id != tender_id,
+            Tender.business_number == tender.business_number,
+            site_filter,
+        ).order_by(
+            db.case((Tender.status != tender.status, 0), else_=1),
+            Tender.announced_date.desc()
+        ).limit(8).all()
 
-    # ── 3. 제목 핵심어 추출 (연도·회차·메타태그 제거) ──────────
-    raw = tender.title or ''
-    raw = _re2.sub(r'\[[^\]]+\]', '', raw)          # [대괄호] 제거
-    raw = _re2.sub(r'\d{4}년도?', '', raw)
-    raw = _re2.sub(r"'\d{2}년도?", '', raw)
-    raw = _re2.sub(r'제\s*\d+\s*회차?', '', raw)
-    raw = _re2.sub(r'\d+\s*차년도', '', raw)
-    raw = _re2.sub(r'\d+\s*차\b', '', raw)
-    raw = _re2.sub(r'^\(?\s*(재공고|재입찰)\s*\)?[\s-]*', '', raw)
-    raw = _re2.sub(r'\s+', ' ', raw).strip()
-    title_key = raw[:20] if len(raw) > 20 else raw
+    # ── 2-B. 폴백: 수요기관 + 제목 핵심어 ──────────────────────
+    title_results = []
+    if not biz_results:
+        search_agency = tender.demand_agency or tender.agency
+        agency_filter = db.or_(
+            Tender.demand_agency == search_agency,
+            db.and_(Tender.demand_agency == None, Tender.agency == search_agency),
+            Tender.agency == search_agency,
+        ) if search_agency else None
 
-    # ── 4. 쿼리 ──────────────────────────────────────────────────
-    filters = [Tender.id != tender_id, site_filter]
-    if agency_filter is not None:
-        filters.append(agency_filter)
-    if title_key:
-        filters.append(Tender.title.contains(title_key))
+        raw = tender.title or ''
+        raw = _re2.sub(r'\[[^\]]+\]', '', raw)
+        raw = _re2.sub(r'\d{4}년도?', '', raw)
+        raw = _re2.sub(r"'\d{2}년도?", '', raw)
+        raw = _re2.sub(r'제\s*\d+\s*회차?', '', raw)
+        raw = _re2.sub(r'\d+\s*차년도', '', raw)
+        raw = _re2.sub(r'\d+\s*차\b', '', raw)
+        raw = _re2.sub(r'^\(?\s*(재공고|재입찰)\s*\)?[\s-]*', '', raw)
+        raw = _re2.sub(r'\s+', ' ', raw).strip()
+        title_key = raw[:20] if len(raw) > 20 else raw
 
-    related = Tender.query.filter(*filters).order_by(
-        # 상태가 다른 것(사전규격 ↔ 일반) 우선
-        db.case((Tender.status != tender.status, 0), else_=1),
-        Tender.announced_date.desc()
-    ).limit(8).all()
+        filters = [Tender.id != tender_id, site_filter]
+        if agency_filter is not None:
+            filters.append(agency_filter)
+        if title_key:
+            filters.append(Tender.title.contains(title_key))
+
+        title_results = Tender.query.filter(*filters).order_by(
+            db.case((Tender.status != tender.status, 0), else_=1),
+            Tender.announced_date.desc()
+        ).limit(8).all()
+
+    related = biz_results or title_results
 
     result = []
     for t in related:
@@ -1009,6 +1067,7 @@ def api_tender_related(tender_id):
             'source_site': t.source_site,
             'deadline_date': t.deadline_date.strftime('%Y-%m-%d') if t.deadline_date else None,
             'days_left': dl,
+            'business_number': t.business_number,
         })
     return jsonify(result)
 
@@ -1213,6 +1272,7 @@ def api_tenders():
         announced_date_to = request.args.get('announced_date_to', '')
         deadline_date_from = request.args.get('deadline_date_from', '')
         deadline_date_to = request.args.get('deadline_date_to', '')
+        include_expired = request.args.get('include_expired', '0') == '1'
 
         # 수의계약은 검색 결과에서 기본 제외
         query = Tender.query.filter(~Tender.bid_method.contains('수의계약'))
@@ -1292,12 +1352,14 @@ def api_tenders():
 
         # 기본 날짜 범위 설정 (마감일 기준 오늘부터 1달)
         # 사용자가 날짜 필터를 하나도 지정하지 않은 경우에만 적용
+        # include_expired=True이면 기본 날짜 필터를 적용하지 않음 (마감된 공고 포함)
         if not (
                 announced_date_from or announced_date_to or deadline_date_from or deadline_date_to):
-            today = datetime.now()
-            one_month_later = today + timedelta(days=30)
-            query = query.filter(Tender.deadline_date >= today)
-            query = query.filter(Tender.deadline_date <= one_month_later)
+            if not include_expired:
+                today = datetime.now()
+                one_month_later = today + timedelta(days=30)
+                query = query.filter(Tender.deadline_date >= today)
+                query = query.filter(Tender.deadline_date <= one_month_later)
 
         # 날짜 필터 적용
         if announced_date_from:
@@ -1353,7 +1415,8 @@ def api_tenders():
         seen_titles: dict = {}
         deduped: list = []
         for tender in sorted_tenders:
-            key = _norm_title(tender.title)
+            # 상태(사전규격/일반)를 키에 포함 — 같은 제목이어도 상태가 다르면 별도 표시
+            key = (_norm_title(tender.title), tender.status)
             if key not in seen_titles:
                 seen_titles[key] = True
                 deduped.append(tender)
@@ -1381,8 +1444,24 @@ def api_tenders():
         # 관심 키워드 로드 (사용자별)
         interest_keywords = load_interest_keywords(g.user.id if g.user else None)
 
+        # memo_count 배치 조회
+        from sqlalchemy import func as _sql_func
+        _page_ids = [t.id for t in pagination.items]
+        _memo_counts = {}
+        if _page_ids:
+            _mcrows = db.session.query(
+                TenderMemo.tender_id, _sql_func.count(TenderMemo.id).label('cnt')
+            ).filter(TenderMemo.tender_id.in_(_page_ids)).group_by(TenderMemo.tender_id).all()
+            _memo_counts = {r[0]: r[1] for r in _mcrows}
+
+        _tenders_data = []
+        for t in pagination.items:
+            d = t.to_dict(interest_keywords=interest_keywords)
+            d['memo_count'] = _memo_counts.get(t.id, 0)
+            _tenders_data.append(d)
+
         return jsonify({
-            'tenders': [t.to_dict(interest_keywords=interest_keywords) for t in pagination.items],
+            'tenders': _tenders_data,
             'total': pagination.total,
             'pages': pagination.pages,
             'current_page': page,
@@ -1533,6 +1612,17 @@ def api_bookmarks():
     try:
         include_keywords = load_interest_keywords(g.user.id)
         bookmarks = Bookmark.query.filter_by(user_id=g.user.id).order_by(Bookmark.created_at.desc()).all()
+
+        # memo_count 배치 조회
+        from sqlalchemy import func as _sql_func2
+        _bm_ids = [b.tender_id for b in bookmarks if b.tender]
+        _bm_memo_counts = {}
+        if _bm_ids:
+            _bm_rows = db.session.query(
+                TenderMemo.tender_id, _sql_func2.count(TenderMemo.id).label('cnt')
+            ).filter(TenderMemo.tender_id.in_(_bm_ids)).group_by(TenderMemo.tender_id).all()
+            _bm_memo_counts = {r[0]: r[1] for r in _bm_rows}
+
         result = []
         for b in bookmarks:
             tender = b.tender
@@ -1548,8 +1638,52 @@ def api_bookmarks():
             d['bookmark_label'] = b.label or ''
             d['bookmark_note'] = b.user_note or ''
             d['bookmarked_at'] = b.created_at.isoformat()
+            d['memo_count'] = _bm_memo_counts.get(tender.id, 0)
             result.append(d)
         return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/memos/tenders')
+@login_required
+def api_memo_tenders():
+    """메모가 있는 공고 목록 (전체 사용자 공개, 최신 메모순)"""
+    try:
+        from sqlalchemy import func as _sql_func3
+        subq = db.session.query(
+            TenderMemo.tender_id,
+            _sql_func3.count(TenderMemo.id).label('memo_count'),
+            _sql_func3.max(TenderMemo.created_at).label('latest_memo_at')
+        ).group_by(TenderMemo.tender_id).subquery()
+
+        rows = db.session.query(Tender, subq.c.memo_count, subq.c.latest_memo_at)\
+            .join(subq, Tender.id == subq.c.tender_id)\
+            .order_by(subq.c.latest_memo_at.desc())\
+            .limit(200).all()
+
+        # 각 공고별 최신 메모 1개 조회
+        _mt_ids = [r[0].id for r in rows]
+        _latest_memos = {}
+        if _mt_ids:
+            _all_memos = TenderMemo.query\
+                .filter(TenderMemo.tender_id.in_(_mt_ids))\
+                .order_by(TenderMemo.tender_id, TenderMemo.created_at.desc()).all()
+            _seen = set()
+            for m in _all_memos:
+                if m.tender_id not in _seen:
+                    _latest_memos[m.tender_id] = m.to_dict()
+                    _seen.add(m.tender_id)
+
+        data = []
+        for tender, memo_count, latest_memo_at in rows:
+            d = tender.to_dict()
+            d['memo_count'] = memo_count
+            d['latest_memo_at'] = latest_memo_at.isoformat() if latest_memo_at else None
+            d['latest_memo'] = _latest_memos.get(tender.id)
+            data.append(d)
+
+        return jsonify(data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1924,8 +2058,13 @@ def api_tender_history(tender_id):
             item = dict(award)
             item['_status']      = '낙찰'
             item['_presmptPrce'] = _presmptPrce
-            item['_winner_nm']   = award.get('bidwinnrNm', '') or _winner_from_openg(openg_list)
+            _actual_winner  = award.get('bidwinnrNm', '') or _winner_from_openg(openg_list)
+            _openg_1st      = _winner_from_openg(openg_list)   # 개찰 시 1순위(sucsfBidYn=Y)
+            item['_winner_nm']   = _actual_winner
             item['_prtcpt_cnt']  = _prtcpt_cnt
+            # 개찰 1순위와 실제 낙찰자가 다를 때 (적격심사 탈락 후 차순위 낙찰)
+            if _openg_1st and _actual_winner and _openg_1st != _actual_winner:
+                item['_openg_candidate'] = _openg_1st
             if not item.get('bidNtceUrl'):
                 item['bidNtceUrl'] = _ann_url
             final_items.append(item)
