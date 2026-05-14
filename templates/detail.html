@@ -517,10 +517,10 @@
                         <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">입찰 조건</div>
                         <table class="w-full text-sm border rounded-lg overflow-hidden">
                             <tbody>
-                                {# 입찰방법 (전자입찰 등) — bidPblancMthdNm #}
+                                {# 입찰방식 (전자입찰 등) — bidPblancMthdNm #}
                                 {% set _bidMthd = extra.get('bidPblancMthdNm','') %}
                                 <tr class="border-b">
-                                    <td class="px-3 py-2.5 text-gray-500 bg-gray-50 w-36 text-sm whitespace-nowrap">입찰방법</td>
+                                    <td class="px-3 py-2.5 text-gray-500 bg-gray-50 w-36 text-sm whitespace-nowrap">입찰방식</td>
                                     <td class="px-3 py-2.5">
                                         {% if _bidMthd %}
                                         <span class="inline-block bg-blue-100 text-blue-700 text-xs font-semibold px-2 py-0.5 rounded">{{ _bidMthd }}</span>
@@ -531,19 +531,26 @@
                                 {% set _smtd = extra.get('sucsfbidMthdNm','') %}
                                 {% set _lwr  = extra.get('sucsfbidLwltRate','') %}
                                 {{ info_row('낙찰방법', _smtd + (' (하한율 ' + _lwr + '%)' if _lwr else '')) }}
+                                {# 낙찰방법세부기준 — sucsfbidMthdDtlsNm #}
+                                {{ info_row('낙찰방법세부기준', extra.get('sucsfbidMthdDtlsNm',''), always=false) }}
                                 {# 계약방법 — cntrctCnclsMthdNm #}
                                 {{ info_row('계약방법', extra.get('cntrctCnclsMthdNm','')) }}
-                                {# 예정가격결정방법 — prearngPrceDcsnMthdNm #}
-                                {{ info_row('예정가격결정방법', extra.get('prearngPrceDcsnMthdNm',''), always=false) }}
-                                {# 공동수급 — jntcontrYn + jntcontrTypNm #}
-                                {% set _jnt    = extra.get('jntcontrYn','') %}
-                                {% set _jntTyp = extra.get('jntcontrTypNm','') %}
-                                {% set _jntVal = (apival(_jnt) + (' · ' + _jntTyp if _jntTyp else '')) if _jnt else '' %}
-                                {{ info_row('공동수급', _jntVal, always=false) }}
+                                {# 계약구분 — cntrctCnclsSeNm (총액계약/단가계약 등) #}
+                                {{ info_row('계약구분', extra.get('cntrctCnclsSeNm',''), always=false) }}
+                                {# 공동수급협정서 제출 및 구성방식 — cmmnSpldmdMethdNm (jntcontrYn은 API에 없음) #}
+                                {{ info_row('공동수급협정서 제출 및 구성방식', extra.get('cmmnSpldmdMethdNm','')) }}
+                                {# 국제입찰구분 — intrbidYn (Y=국제입찰, N=국내입찰) #}
+                                {% set _intrbid = extra.get('intrbidYn','') %}
+                                {% set _intrbidLabel = '국제입찰' if _intrbid == 'Y' else ('국내입찰' if _intrbid == 'N' else _intrbid) %}
+                                {{ info_row('국제입찰구분', _intrbidLabel) }}
+                                {# 재입찰여부 — rbidPermsnYn (API 실제 필드) #}
+                                {% set _rbid = extra.get('rbidPermsnYn','') or extra.get('reBidYn','') %}
+                                {{ info_row('재입찰허용여부', apival(_rbid), always=false) }}
+                                {# 현장설명회 장소/일시 — dcmtgOprtnPlce / dcmtgOprtnDt #}
+                                {{ info_row('현장설명회장소', extra.get('dcmtgOprtnPlce',''), always=false) }}
+                                {{ info_row('현장설명회일시', extra.get('dcmtgOprtnDt',''), always=false) }}
                                 {# 개찰장소 — opengPlce #}
                                 {{ info_row('개찰장소', extra.get('opengPlce',''), always=false) }}
-                                {# 국제입찰 — intrbidYn (API 텍스트 그대로, Y/N이면 변환) #}
-                                {{ info_row('국제입찰', apival(extra.get('intrbidYn',''))) }}
                                 {# 서비스 구분 — srvceDivNm #}
                                 {{ info_row('서비스 구분', extra.get('srvceDivNm',''), always=false) }}
                             </tbody>
@@ -555,20 +562,25 @@
                         <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">참가자격</div>
                         <table class="w-full text-sm border rounded-lg overflow-hidden">
                             <tbody>
-                                {# 실적제한 — arsltCmptYn (API가 '아니오'/'예' 또는 Y/N 반환) #}
-                                {{ info_row('실적제한', apival(extra.get('arsltCmptYn',''))) }}
-                                {# 제조여부 — mnfctYn (API가 '구분없음' 등 텍스트 또는 Y/N 반환) #}
+                                {# 실적제한여부 — arsltCmptYn (Y/N) #}
+                                {{ info_row('실적제한여부', apival(extra.get('arsltCmptYn',''))) }}
+                                {# 제조여부 — mnfctYn (Y/N, 용역은 빈값) #}
                                 {{ info_row('제조여부', apival(extra.get('mnfctYn',''))) }}
-                                {# 지역제한 — rgnLmtBidLocplcJdgmBssNm 또는 rgnlmtdYn #}
-                                {% set _rgnNm = extra.get('rgnLmtBidLocplcJdgmBssNm','') %}
-                                {% set _rgnYn = extra.get('rgnlmtdYn','') %}
-                                {{ info_row('지역제한', _rgnNm if _rgnNm else apival(_rgnYn)) }}
-                                {# 업종제한 — indstrytyLmtYn (API가 '투찰제한' 등 텍스트 반환) #}
+                                {# 지역제한 — rgnlmtdYn은 API에 없음, rgnLmtBidLocplcJdgmBssNm 사용 #}
+                                {{ info_row('지역제한', extra.get('rgnLmtBidLocplcJdgmBssNm','')) }}
+                                {# 업종제한 — indstrytyLmtYn (Y/N) #}
                                 {{ info_row('업종제한', apival(extra.get('indstrytyLmtYn',''))) }}
-                                {# 업종제한사항 — indstrytyNm 우선, 없으면 pubPrcrmntClsfcNm #}
-                                {% set _indNm = extra.get('indstrytyNm','') or extra.get('pubPrcrmntClsfcNm','') %}
-                                {{ info_row('업종제한사항', _indNm, always=false) }}
-                                {# 물품분류제한여부 — prdctClsfcLmtYn #}
+                                {# 업종제한사항 — indstrytyNm은 API에 없음
+                                   pubPrcrmntClsfcNm(pubPrcrmntClsfcNo) 조합으로 표시 (용역만 제공됨) #}
+                                {% set _clsfcNm = extra.get('pubPrcrmntClsfcNm','') %}
+                                {% set _clsfcNo = extra.get('pubPrcrmntClsfcNo','') %}
+                                {% if _clsfcNm %}
+                                    {% set _indNmVal = _clsfcNm + ('(' + _clsfcNo + ')' if _clsfcNo else '') %}
+                                {% else %}
+                                    {% set _indNmVal = '' %}
+                                {% endif %}
+                                {{ info_row('업종제한사항', _indNmVal) }}
+                                {# 물품분류제한여부 — prdctClsfcLmtYn (Y/N) #}
                                 {{ info_row('물품분류제한여부', apival(extra.get('prdctClsfcLmtYn',''))) }}
                                 {# 중소기업 전용 #}
                                 {% if tender.is_sme_only %}

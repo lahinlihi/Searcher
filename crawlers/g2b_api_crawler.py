@@ -272,23 +272,30 @@ class G2BApiCrawler(BaseCrawler):
             extra = {
                 # 기관 정보
                 'ntceInsttNm':               item.get('ntceInsttNm', ''),              # 공고기관
+                'ntceKindNm':                item.get('ntceKindNm', ''),               # 공고종류 (실공고/재공고 등)
                 # 가격 정보
                 'asignBdgtAmt':              item.get('asignBdgtAmt', ''),             # 배정예산
                 'presmptPrce':               item.get('presmptPrce', ''),              # 추정가격(원본)
                 'VAT':                       item.get('VAT', ''),                      # 부가세 (API 직접 제공)
-                # 입찰방법 (전자입찰 여부)
-                'bidPblancMthdNm':           item.get('bidPblancMthdNm', '') or item.get('bidMthdNm', '') or item.get('elctrnBidYn', ''),  # 입찰방법(전자입찰 등)
+                # 입찰방식
+                'bidPblancMthdNm':           item.get('bidPblancMthdNm', '') or item.get('bidMthdNm', '') or item.get('elctrnBidYn', ''),  # 입찰방식(전자입찰 등)
                 # 낙찰/계약
                 'sucsfbidMthdNm':            item.get('sucsfbidMthdNm', ''),           # 낙찰방법
+                'sucsfbidMthdDtlsNm':        item.get('sucsfbidMthdDtlsNm', ''),       # 낙찰방법세부기준
                 'sucsfbidLwltRate':          item.get('sucsfbidLwltRate', ''),         # 낙찰하한율
                 'cntrctCnclsMthdNm':         item.get('cntrctCnclsMthdNm', ''),        # 계약방법
+                'cntrctCnclsSeNm':           item.get('cntrctCnclsSeNm', ''),          # 계약구분 (총액/단가 등)
                 'prearngPrceDcsnMthdNm':     item.get('prearngPrceDcsnMthdNm', ''),   # 예정가격결정방법
                 # 개찰/입찰
                 'opengPlce':                 item.get('opengPlce', ''),                # 개찰장소
-                'intrbidYn':                 item.get('intrbidYn', ''),               # 국제입찰여부
+                'intrbidYn':                 item.get('intrbidYn', ''),               # 국제입찰여부 (Y=국제입찰, N=국내입찰)
+                'reBidYn':                   item.get('reBidYn', ''),                  # 재입찰여부
+                'rbidPermsnYn':              item.get('rbidPermsnYn', ''),             # 재입찰허용여부 (API 실제 필드)
+                'reNtceYn':                  item.get('reNtceYn', ''),                 # 재공고여부
                 'srvceDivNm':                item.get('srvceDivNm', ''),              # 서비스구분
-                'jntcontrYn':                item.get('jntcontrYn', ''),              # 공동도급여부
-                'jntcontrTypNm':             item.get('jntcontrTypNm', '') or item.get('jntcontrFomCdNm', ''),  # 공동수급 구성방식
+                # 공동수급 — jntcontrYn은 API에 없음, cmmnSpldmdMethdNm 사용
+                'cmmnSpldmdMethdNm':         item.get('cmmnSpldmdMethdNm', ''),        # 공동수급협정서 제출 및 구성방식
+                'cmmnSpldmdAgrmntRcptdocMethd': item.get('cmmnSpldmdAgrmntRcptdocMethd', ''),  # 협정서 접수방법
                 'bidPrtcptLmtYn':            item.get('bidPrtcptLmtYn', ''),          # 입찰참가제한
                 'bidPrtcptFeePaymntYn':      item.get('bidPrtcptFeePaymntYn', ''),    # 입찰참가비 납부여부
                 'bidGrntymnyPaymntYn':       item.get('bidGrntymnyPaymntYn', ''),     # 입찰보증금 납부여부
@@ -301,14 +308,17 @@ class G2BApiCrawler(BaseCrawler):
                 'pqApplDocRcptDt':           item.get('pqApplDocRcptDt', ''),         # PQ 신청 마감
                 'tpEvalApplClseDt':          item.get('tpEvalApplClseDt', ''),        # TP 평가 신청 마감
                 # 참가자격
-                'rgnlmtdYn':                 item.get('rgnlmtdYn', ''),              # 지역제한여부 (텍스트 또는 Y/N)
+                # rgnlmtdYn은 API에 없음 → rgnLmtBidLocplcJdgmBssNm 사용
                 'rgnLmtBidLocplcJdgmBssNm':  item.get('rgnLmtBidLocplcJdgmBssNm', ''), # 지역제한 기준명
-                'indstrytyLmtYn':            item.get('indstrytyLmtYn', ''),          # 업종제한여부 (텍스트 또는 Y/N)
-                'indstrytyNm':               item.get('indstrytyNm', '') or item.get('indstrytyLmtNm', ''),  # 업종제한사항 전체 텍스트
-                'pubPrcrmntClsfcNm':         item.get('pubPrcrmntClsfcNm', ''),       # 품목분류명
-                'mnfctYn':                   item.get('mnfctYn', ''),                 # 제조여부 (텍스트 또는 Y/N)
-                'arsltCmptYn':               item.get('arsltCmptYn', ''),             # 실적제한여부 (텍스트 또는 Y/N)
-                'prdctClsfcLmtYn':           item.get('prdctClsfcLmtYn', ''),         # 물품분류제한여부
+                'indstrytyLmtYn':            item.get('indstrytyLmtYn', ''),          # 업종제한여부 (Y/N)
+                # indstrytyNm은 API에 없음 → pubPrcrmntClsfcNm+No 조합으로 대체
+                'pubPrcrmntClsfcNm':         item.get('pubPrcrmntClsfcNm', ''),       # 품목분류명 (업종제한사항 대체)
+                'pubPrcrmntClsfcNo':         item.get('pubPrcrmntClsfcNo', ''),       # 품목분류번호
+                'pubPrcrmntLrgClsfcNm':      item.get('pubPrcrmntLrgClsfcNm', ''),   # 대분류명
+                'pubPrcrmntMidClsfcNm':      item.get('pubPrcrmntMidClsfcNm', ''),   # 중분류명
+                'mnfctYn':                   item.get('mnfctYn', ''),                 # 제조여부 (Y/N 또는 빈값)
+                'arsltCmptYn':               item.get('arsltCmptYn', ''),             # 실적제한여부 (Y/N)
+                'prdctClsfcLmtYn':           item.get('prdctClsfcLmtYn', ''),         # 물품분류제한여부 (Y/N)
                 'dsgntCmptYn':               item.get('dsgntCmptYn', ''),             # 지정경쟁여부
             }
 

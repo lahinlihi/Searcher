@@ -188,7 +188,7 @@ class TenderMemo(db.Model):
             'id': self.id,
             'tender_id': self.tender_id,
             'user_id': self.user_id,
-            'username': self.user.username if self.user else '알 수 없음',
+            'username': self.user.display_name if self.user else '알 수 없음',
             'user_role': self.user.role if self.user else 'user',
             'content': self.content,
             'created_at': self.created_at.isoformat(),
@@ -312,12 +312,20 @@ class User(db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(200), nullable=False)
     role = db.Column(db.String(20), default='user')  # 'admin' | 'user'
+    nickname = db.Column(db.String(80), nullable=True)  # 표시 이름 (닉네임)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @property
+    def display_name(self):
+        """닉네임이 있으면 닉네임, 없으면 아이디"""
+        return self.nickname or self.username
 
     def to_dict(self):
         return {
             'id': self.id,
             'username': self.username,
+            'nickname': self.nickname or '',
+            'display_name': self.display_name,
             'role': self.role,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
@@ -373,6 +381,7 @@ def init_db(app):
             ('ALTER TABLE filters ADD COLUMN user_id INTEGER',                      '[DB] filters.user_id 추가'),
             ('ALTER TABLE user_preferences ADD COLUMN type_weights TEXT DEFAULT "{}"', '[DB] user_preferences.type_weights 추가'),
             ('ALTER TABLE tenders ADD COLUMN business_number TEXT',                 '[DB] tenders.business_number 추가'),
+            ('ALTER TABLE users ADD COLUMN nickname TEXT',                          '[DB] users.nickname 추가'),
         ]
         # 중소벤처 24 공고 중 기관명이 '기타'인 것은 '중소벤처 24'로 정정
         data_fixes = [
