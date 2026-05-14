@@ -90,7 +90,8 @@ class SMB24ApiCrawler(BaseCrawler):
             data_list = result.get('data', [])
             print(f"  전체 {len(data_list)}건")
 
-            for item in data_list:
+            total = len(data_list)
+            for idx, item in enumerate(data_list):
                 try:
                     tender = self._parse_item(item)
                     if tender:
@@ -98,6 +99,9 @@ class SMB24ApiCrawler(BaseCrawler):
                 except Exception as e:
                     print(f"  항목 파싱 오류: {str(e)}")
                     continue
+                # 100건마다 진행상황 출력
+                if (idx + 1) % 100 == 0:
+                    print(f"  [{idx + 1}/{total}건 처리 중...]")
 
             print(f"[{self.site_name}] 완료: {len(self.results)}건 수집")
 
@@ -170,12 +174,6 @@ class SMB24ApiCrawler(BaseCrawler):
                 url = url[second_http:]
         if not url:
             url = f"https://www.smes.go.kr/pblancDetail/{pbllanc_seq}"
-
-        # API 필드로 기관명을 얻지 못했으면 상세 페이지에서 스크래핑
-        if agency == '중소벤처 24' and url:
-            scraped = self._scrape_agency(url)
-            if scraped:
-                agency = scraped
 
         return {
             'title': title[:200],

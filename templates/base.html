@@ -18,7 +18,7 @@
 </head>
 <body class="bg-gray-50">
     <!-- Navigation -->
-    <nav class="bg-white shadow-sm border-b">
+    <nav class="bg-white shadow-sm border-b sticky top-0 z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16">
                 <div class="flex">
@@ -27,10 +27,10 @@
                     </div>
                     <div class="hidden sm:ml-6 sm:flex sm:space-x-8">
                         <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">
-                            대시보드
+                            메인화면
                         </a>
                         <a href="/search" class="nav-link {% if request.path == '/search' %}active{% endif %}">
-                            검색
+                            상세검색
                         </a>
                         <a href="/bookmarks" class="nav-link {% if request.path == '/bookmarks' %}active{% endif %}">
                             관심공고

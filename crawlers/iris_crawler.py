@@ -1,6 +1,8 @@
 """
 범부처통합연구지원시스템(IRIS) 크롤러
-접수예정 → 사전규격, 접수중 → 일반공고
+AJAX JSON API 직접 호출 방식 (Selenium 불필요)
+- 접수중  → 일반공고 (나라장터 일반 상당)
+- 접수예정 → 사전규격 (나라장터 사전규격 상당)
 """
 
 from .base_crawler import BaseCrawler
@@ -10,199 +12,221 @@ import unicodedata
 
 
 class IrisCrawler(BaseCrawler):
-    """IRIS 크롤러"""
+    """IRIS 크롤러 — AJAX JSON API 방식"""
 
-    def __init__(self):
+    # HTML 목록 페이지 (Referer 헤더용)
+    LIST_URL = 'https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituListView.do'
+    # AJAX 데이터 엔드포인트
+    AJAX_URL = 'https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituList.do'
+    # 상세 페이지 URL 템플릿
+    DETAIL_URL = 'https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituDtlView.do?bsnsAncmSn={ancm_id}'
+
+    def __init__(self, site_config=None):
         super().__init__(
             site_name='IRIS',
             base_url='https://www.iris.go.kr',
-            use_selenium=True
+            use_selenium=False   # AJAX 방식 — Selenium 불필요
         )
-        self.crawl_url = 'https://www.iris.go.kr/contents/retrieveBsnsAncmBtinSituListView.do'
+        self.site_config = site_config or {}
+        # 접수예정 최대 수집 페이지 수 (기본 5 = 50건)
+        self.max_pages_pre = self.site_config.get('max_pages_pre', 5)
+        # Referer / AJAX 요청 헤더 추가
+        self.session.headers.update({
+            'Referer': self.LIST_URL,
+            'X-Requested-With': 'XMLHttpRequest',
+            'Content-Type': 'application/x-www-form-urlencoded',
+        })
 
     def crawl(self, **kwargs):
-        """크롤링 실행"""
+        """접수중(일반) + 접수예정(사전규격) 수집
+
+        접수중: 전체 페이지 수집 (보통 수십~백 건 수준)
+        접수예정: max_pages_pre 페이지까지만 (기본 5페이지=50건, 과거 데이터 방대)
+        """
         self.reset()
         print(f"[{self.site_name}] 크롤링 시작...")
 
-        try:
-            # Selenium으로 페이지 로드 (wait_time=5초로 AJAX 대기)
-            soup = self.fetch_page(self.crawl_url, wait_time=5)
+        # 접수예정 최대 페이지 수 (site_config 또는 kwarg, 기본 5)
+        max_pages_pre = kwargs.get('max_pages_pre', self.max_pages_pre)
 
-            if not soup:
-                raise Exception("페이지를 가져올 수 없습니다")
+        tabs = [
+            ('ancmIng', '일반',      None),           # 접수중 — 전체 수집
+            ('ancmPre', '사전규격',  max_pages_pre),  # 접수예정 — 최근 n페이지만
+        ]
 
-            # 공고 목록 파싱
-            self._parse_tender_list(soup)
+        for ancm_prg, status, max_pages in tabs:
+            label = '접수중' if ancm_prg == 'ancmIng' else f'접수예정(최대{max_pages}페이지)'
+            print(f"[{self.site_name}] [{label}] 수집 시작...")
+            try:
+                count_before = len(self.results)
+                self._crawl_tab(ancm_prg, status, max_pages=max_pages)
+                added = len(self.results) - count_before
+                print(f"[{self.site_name}] [{label}] {added}건 수집")
+            except Exception as e:
+                self.errors.append(f"[{label}] 크롤링 오류: {str(e)}")
+                print(f"[{self.site_name}] [{label}] 오류: {str(e)}")
 
-            print(f"[{self.site_name}] 완료: {len(self.results)}건 수집")
-
-        except Exception as e:
-            self.errors.append(f"크롤링 오류: {str(e)}")
-            print(f"[{self.site_name}] 오류: {str(e)}")
-        finally:
-            # Selenium 드라이버 종료
-            self._close_selenium_driver()
-
+        print(f"[{self.site_name}] 완료: 총 {len(self.results)}건 수집")
         return self.get_results()
 
-    def _parse_tender_list(self, soup):
-        """공고 목록 파싱"""
-        # .dbody 컨테이너 찾기
-        dbody = soup.select_one('.dbody')
-        if not dbody:
-            print(f"[{self.site_name}] 공고 목록을 찾을 수 없습니다")
-            return
+    # ------------------------------------------------------------------
+    # 탭별 전체 페이지 수집
+    # ------------------------------------------------------------------
 
-        # 공고 항목들 (li 요소)
-        items = dbody.select('li')
-        print(f"[{self.site_name}] {len(items)}개의 공고 발견")
+    def _crawl_tab(self, ancm_prg, status, max_pages=None):
+        """지정 탭을 순회하며 수집. max_pages=None이면 전체 페이지."""
+        page = 1
+        while True:
+            data = self._fetch_page(ancm_prg, page)
+            if not data:
+                break
 
-        for idx, item in enumerate(items[:100]):  # 최대 100개
-            try:
-                tender = self._parse_tender_item(item, idx)
-                if tender:
-                    self.results.append(tender)
-            except Exception as e:
-                print(f"[{self.site_name}] 항목 {idx + 1} 파싱 오류: {str(e)}")
-                continue
+            items = data.get('listBsnsAncmBtinSitu', [])
+            if not items:
+                break
 
-    def _parse_tender_item(self, item, idx):
-        """개별 공고 항목 파싱"""
-        # 1. 기관명
-        agency_elem = item.select_one('.inst_title')
+            for item in items:
+                try:
+                    tender = self._parse_item(item, status)
+                    if tender:
+                        self.results.append(tender)
+                except Exception as e:
+                    print(f"[{self.site_name}] 항목 파싱 오류: {str(e)}")
+                    continue
+
+            pagination = data.get('paginationInfo', {})
+            total_pages = pagination.get('totalPageCount', 1)
+            current_page = pagination.get('currentPageNo', page)
+            print(f"[{self.site_name}]   페이지 {current_page}/{total_pages} 처리 완료")
+
+            # 마지막 페이지 또는 최대 페이지 도달 시 종료
+            if current_page >= total_pages:
+                break
+            if max_pages is not None and current_page >= max_pages:
+                print(f"[{self.site_name}]   최대 페이지({max_pages}) 도달, 수집 종료")
+                break
+            page += 1
+
+    # ------------------------------------------------------------------
+    # AJAX POST 요청
+    # ------------------------------------------------------------------
+
+    def _fetch_page(self, ancm_prg, page):
+        """AJAX 엔드포인트에 POST 요청 → JSON 반환"""
+        payload = {
+            'bizSearch': '',
+            'bsnsTl': '',
+            'ancmPrg': ancm_prg,
+            'pageIndex': str(page),
+            'ancmId': '',
+            'ancmNo': '',
+            'ancmTurn': '',
+            'seq': '',
+            'hirkSorgnBsnsCd': '',
+            'bsnsAncmTap': '',
+            'shSorgnYyBsnsCd': '',
+            'sorgnIdArr': '',
+            'ancmSttArr': '',
+            'pbofrTpArr': '',
+            'qualCndtArr': '',
+            'blngGovdSeArr': '',
+            'techFildArr': '',
+            'shBsnsYy': '',
+            'prgmId': '',
+        }
+        try:
+            resp = self.session.post(
+                self.AJAX_URL,
+                data=payload,
+                timeout=30,
+                verify=True,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            self.errors.append(f"페이지 요청 실패 (ancmPrg={ancm_prg}, page={page}): {str(e)}")
+            return None
+
+    # ------------------------------------------------------------------
+    # 항목 파싱
+    # ------------------------------------------------------------------
+
+    def _parse_item(self, item, status):
+        """JSON 항목 → 공고 dict"""
+        title = self._sanitize_text(item.get('ancmTl', ''))
+        if not title:
+            return None
+
+        ancm_id = item.get('ancmId', '')
+        if not ancm_id:
+            return None
+
+        # 기관: 소관기관(sorgnNm) 표시, 부처(blngGovdSeNm) 보조
         agency = self._sanitize_text(
-            agency_elem.get_text(
-                strip=True)) if agency_elem else 'IRIS'
+            item.get('sorgnNm') or item.get('blngGovdSeNm') or 'IRIS'
+        )
 
-        # 2. 제목
-        title_elem = item.select_one('.title a')
-        if not title_elem:
-            return None
-        title = self._sanitize_text(title_elem.get_text(strip=True))
+        # 공고번호
+        tender_number = self._sanitize_text(item.get('ancmNo', '')) or f"IRIS_{ancm_id}"
 
-        # 3. 링크 및 공고 ID 추출
-        onclick = title_elem.get('onclick', '')
-        tender_id, status_code = self._extract_id_from_onclick(onclick)
+        # 날짜
+        announced_date = self._parse_date(item.get('ancmDe', ''))    # 공고일자 YYYY-MM-DD
+        deadline_date  = self._parse_dotdate(item.get('rcveEndDe', ''))  # 접수마감 YYYY.MM.DD
+        start_date     = self._parse_dotdate(item.get('rcveStrDe', ''))  # 접수시작 YYYY.MM.DD
 
-        if not tender_id:
-            print(f"[{self.site_name}] 공고 ID를 추출할 수 없습니다: {onclick}")
-            return None
-
-        # 링크 생성
-        url = f"{
-            self.base_url}/contents/retrieveBsnsAncmBtinSituDtlView.do?bsnsAncmSn={tender_id}"
-
-        # 4. 메타정보 추출
-        meta_elems = item.select('.etc_info span')
-        tender_number = ''
-        announced_date = None
-        status_text = ''
-
-        for meta in meta_elems:
-            text = meta.get_text(strip=True)
-
-            # 공고번호
-            if '공고번호' in text or 'KN_' in text:
-                tender_number = text.split(
-                    ':', 1)[-1].strip() if ':' in text else text.strip()
-
-            # 공고일자
-            elif '공고일자' in text or meta.get('class') and 'ancmDe' in meta.get('class', []):
-                date_text = text.split(
-                    ':', 1)[-1].strip() if ':' in text else text.strip()
-                announced_date = self._parse_date(date_text)
-
-            # 공고상태
-            elif '공고상태' in text or meta.get('class') and 'rcveSttSeNmLst' in meta.get('class', []):
-                status_text = text.split(
-                    ':', 1)[-1].strip() if ':' in text else text.strip()
-
-        # 5. 상태 배지 (접수중/접수예정/마감)
-        badge_elem = item.select_one('.d_day')
-        badge_text = badge_elem.get_text(strip=True) if badge_elem else ''
-
-        # 6. 상태 판단 (접수예정 → 사전규격, 접수중 → 일반)
-        # status_text에 "예정"이 있거나 badge_text가 "접수예정"이면 사전규격
-        if '예정' in status_text or '예정' in badge_text:
-            status = '사전규격'
-        else:
-            status = '일반'
-
-        # 7. 공고번호 생성 (없으면 ID 사용)
-        if not tender_number:
-            tender_number = f"IRIS_{tender_id}"
-
-        # 8. 마감일 추정 (공고일 + 30일, 실제 마감일은 상세 페이지에서 확인 필요)
-        deadline_date = None
-        if announced_date:
-            from datetime import timedelta
-            deadline_date = announced_date + timedelta(days=30)
+        # 상세 URL
+        url = self.DETAIL_URL.format(ancm_id=ancm_id)
 
         return {
-            'title': title,
-            'agency': agency,
-            'tender_number': tender_number,
-            'announced_date': announced_date,
-            'deadline_date': deadline_date,
-            'opening_date': None,
+            'title':           title[:200],
+            'agency':          agency[:100],
+            'tender_number':   tender_number,
+            'announced_date':  announced_date,
+            'deadline_date':   deadline_date,
+            'opening_date':    None,
             'estimated_price': None,
-            'bid_method': '공모',
-            'status': status,
-            'is_sme_only': False,
-            'source_site': self.site_name,
-            'url': url
+            'bid_method':      '공모',
+            'status':          status,
+            'is_sme_only':     False,
+            'source_site':     self.site_name,
+            'url':             url,
         }
 
-    def _extract_id_from_onclick(self, onclick):
-        """
-        onclick 속성에서 공고 ID와 상태 코드 추출
-        예: f_bsnsAncmBtinSituListForm_view('017974','ancmIng')
-        → ('017974', 'ancmIng')
-        """
-        # 정규식으로 추출
-        pattern = r"f_bsnsAncmBtinSituListForm_view\('([^']+)','([^']+)'\)"
-        match = re.search(pattern, onclick)
-
-        if match:
-            return match.group(1), match.group(2)
-        return None, None
+    # ------------------------------------------------------------------
+    # 날짜 파싱 헬퍼
+    # ------------------------------------------------------------------
 
     def _parse_date(self, date_text):
-        """날짜 파싱"""
+        """YYYY-MM-DD 형식 파싱"""
         if not date_text:
             return None
-
-        # 날짜만 추출 (YYYY-MM-DD 형식)
-        date_match = re.search(r'(\d{4})-(\d{2})-(\d{2})', date_text)
-        if date_match:
+        m = re.search(r'(\d{4})-(\d{2})-(\d{2})', str(date_text).strip())
+        if m:
             try:
-                return datetime(
-                    int(date_match.group(1)),
-                    int(date_match.group(2)),
-                    int(date_match.group(3))
-                )
-            except BaseException:
+                return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            except Exception:
                 pass
+        return None
 
+    def _parse_dotdate(self, date_text):
+        """YYYY.MM.DD 형식 파싱"""
+        if not date_text:
+            return None
+        m = re.search(r'(\d{4})\.(\d{2})\.(\d{2})', str(date_text).strip())
+        if m:
+            try:
+                return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            except Exception:
+                pass
         return None
 
     def _sanitize_text(self, text):
-        """텍스트 정리: 특수문자, replacement character 등을 제거"""
+        """텍스트 정리"""
         if not text:
-            return text
-
-        # Replacement character (�, U+FFFD) 제거
-        text = text.replace('\ufffd', '')
-
-        # 기타 제어 문자 제거 (탭, 개행 제외)
-        text = ''.join(char for char in text if unicodedata.category(
-            char)[0] != 'C' or char in '\t\n\r')
-
-        # 연속된 공백을 하나로
-        text = re.sub(r'\s+', ' ', text)
-
-        # 앞뒤 공백 제거
-        text = text.strip()
-
-        return text
+            return ''
+        text = str(text).replace('\ufffd', '')
+        text = ''.join(
+            ch for ch in text
+            if unicodedata.category(ch)[0] != 'C' or ch in '\t\n\r'
+        )
+        return re.sub(r'\s+', ' ', text).strip()

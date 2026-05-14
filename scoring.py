@@ -465,7 +465,7 @@ def _priority_score(tender):
     return min(10.0, round(urgency + price_bonus, 2))
 
 
-def _score_and_type(tender, include_keywords, type_weights=None):
+def _score_and_type(tender, include_keywords, type_weights=None, agency_weights=None):
     """
     적합도 점수(소수점 1자리, 최대 100.0점) + 사업 유형 계산
 
@@ -483,18 +483,19 @@ def _score_and_type(tender, include_keywords, type_weights=None):
     최우선(45) / 선호(35) / 보통(25, 기본값) / 낮음(15) / 제외(0)
     * type_weights에 직접 점수로 저장. 설정 없으면 25점(보통).
 
-    ── 우선순위 점수 10점 ───────────────────────────────────────────────
-    마감 긴급도(0-7점) + 사업 규모 보너스(0-3점) → 동점 최소화 (소수점 표시)
+    ── 기관별 가중치 10점 ──────────────────────────────────────────────
+    agency_weights: {기관명: 점수} dict. 기본 5점.
+    등록된 기관명이 공고 agency/demand_agency에 포함되면 해당 점수 사용.
     """
     if not include_keywords or not tender.title:
-        return 0, '기타'
+        return 0, '기타', 0.0, 0.0, 0.0
 
     cleaned = _clean_title_for_scoring(tender.title, tender.agency)
 
     # 채용·참여모집 공고 제외
     for pattern in _EXCLUDE_PATTERNS:
         if pattern in cleaned:
-            return 0, '기타'
+            return 0, '기타', 0.0, 0.0, 0.0
 
     cleaned_lower = cleaned.lower()
 
@@ -510,17 +511,17 @@ def _score_and_type(tender, include_keywords, type_weights=None):
         weighted_sum += core_mult * boundary_w
 
     if not matched:
-        return 0, '기타'
+        keyword_score = 0.0
+    else:
+        # A: 제목 길이 밀도 보정 (의미 단어 수 기준, 최소 4단어로 고정)
+        word_count = max(4, len([w for w in cleaned.split() if len(w) >= 2]))
+        density_factor = 1.0 / (word_count ** 0.25)
+        ab_score = min(weighted_sum * density_factor * 10, 30)
 
-    # A: 제목 길이 밀도 보정 (의미 단어 수 기준, 최소 4단어로 고정)
-    word_count = max(4, len([w for w in cleaned.split() if len(w) >= 2]))
-    density_factor = 1.0 / (word_count ** 0.25)
-    ab_score = min(weighted_sum * density_factor * 10, 30)
+        # ── C: 시너지 조합 보너스 (최대 15점, 길이와 무관한 고정 점수) ──────
+        syn_score = _synergy_bonus(cleaned_lower)
 
-    # ── C: 시너지 조합 보너스 (최대 15점, 길이와 무관한 고정 점수) ──────
-    syn_score = _synergy_bonus(cleaned_lower)
-
-    keyword_score = min(ab_score + syn_score, 45)
+        keyword_score = min(ab_score + syn_score, 45)
 
     # ── 사업 유형 점수 ───────────────────────────────────────────────────
     type_name, raw_type_score = _detect_business_type(cleaned)
@@ -535,18 +536,32 @@ def _score_and_type(tender, include_keywords, type_weights=None):
         else:
             type_score = raw_type_score * 0.9 * float(raw_user_w)  # 레거시: 배율
 
-    # ── 우선순위 점수 ────────────────────────────────────────────────────
-    priority = _priority_score(tender)
+    # ── 기관별 가중치 (10점) ──────────────────────────────────────────────
+    agency_score = 5.0  # 기본값
+    if agency_weights:
+        # 공고의 수요기관 또는 발주기관 이름과 부분 매칭
+        agency_names = [
+            (tender.demand_agency or ''),
+            (tender.agency or ''),
+        ]
+        for registered_name, score in agency_weights.items():
+            for a in agency_names:
+                if registered_name and registered_name in a:
+                    agency_score = float(score)
+                    break
+            else:
+                continue
+            break
 
-    total = min(100.0, round(keyword_score + type_score + priority, 1))
-    return total, type_name
+    total = min(100.0, round(keyword_score + type_score + agency_score, 1))
+    return total, type_name, round(keyword_score, 1), round(type_score, 1), round(agency_score, 1)
 
 
-def calculate_relevance_score(tender, include_keywords, type_weights=None):
-    return _score_and_type(tender, include_keywords, type_weights)[0]
+def calculate_relevance_score(tender, include_keywords, type_weights=None, agency_weights=None):
+    return _score_and_type(tender, include_keywords, type_weights, agency_weights)[0]
 
 
-def smart_sort_tenders_by_keyword_count(tenders, include_keywords, type_weights=None):
+def smart_sort_tenders_by_keyword_count(tenders, include_keywords, type_weights=None, agency_weights=None):
     """
     관련성 점수 기반 정렬
     1순위: 관련성 점수 (높을수록)
@@ -554,7 +569,7 @@ def smart_sort_tenders_by_keyword_count(tenders, include_keywords, type_weights=
     3순위: 금액 (높을수록)
     """
     def sort_key(tender):
-        score = calculate_relevance_score(tender, include_keywords, type_weights)
+        score = calculate_relevance_score(tender, include_keywords, type_weights, agency_weights)
         if tender.announced_date:
             try:
                 date_ord = tender.announced_date.toordinal()

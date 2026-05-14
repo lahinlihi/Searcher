@@ -1,5 +1,47 @@
 // 검색 페이지 JavaScript
 
+// ── 매칭 점수 배지 (dashboard와 동일 형식) ──────────────────────────────────
+function buildScoreBadge(score, businessType, breakdown) {
+    if (!score) return '<span class="text-xs text-gray-300">-</span>';
+    let bg;
+    if (score >= 70)      bg = 'bg-green-100 text-green-800 border border-green-300';
+    else if (score >= 40) bg = 'bg-yellow-100 text-yellow-800 border border-yellow-300';
+    else                  bg = 'bg-gray-100 text-gray-600 border border-gray-300';
+    const displayScore = score.toFixed(1);
+    let tooltip;
+    if (breakdown) {
+        tooltip = `${displayScore}점 = 키워드 ${breakdown.keyword.toFixed(1)} + 사업유형 ${breakdown.type.toFixed(1)} + 기관가중치 ${breakdown.agency.toFixed(1)}`;
+    } else {
+        const typeText = businessType && businessType !== '기타' ? ` · ${businessType}` : '';
+        tooltip = `적합도 점수: ${displayScore}점${typeText}`;
+    }
+    return `<span class="inline-flex items-center text-xs font-bold px-2 py-0.5 rounded ${bg}"
+                  title="${tooltip}">
+        ${displayScore}
+    </span>`;
+}
+
+// ── 공고 종류 배지 헬퍼 ─────────────────────────────────────────────────────
+function getNoticeBadgesHtml(title) {
+    const t = title || '';
+    let html = '';
+    if (/\[긴급공고\]|\(긴급공고\)|\[긴급\]|\(긴급\)/.test(t)) {
+        html += '<span style="display:inline-flex;align-items:center;border-radius:9999px;padding:1px 8px;font-size:0.7rem;font-weight:700;background:#FEE2E2;color:#B91C1C;border:1px solid #FCA5A5;white-space:nowrap;margin-right:3px;">긴급</span>';
+    }
+    if (/\[재공고\]|\(재공고\)/.test(t)) {
+        html += '<span style="display:inline-flex;align-items:center;border-radius:9999px;padding:1px 8px;font-size:0.7rem;font-weight:700;background:#FFEDD5;color:#C2410C;border:1px solid #FDBA74;white-space:nowrap;margin-right:3px;">재공고</span>';
+    }
+    return html;
+}
+
+function cleanNoticeTitle(title) {
+    return (title || '')
+        .replace(/\[긴급공고\]/g, '').replace(/\(긴급공고\)/g, '')
+        .replace(/\[긴급\]/g, '').replace(/\(긴급\)/g, '')
+        .replace(/\[재공고\]/g, '').replace(/\(재공고\)/g, '')
+        .trim();
+}
+
 let currentPage = 1;
 let currentFilters = {};
 let currentKeywords = []; // 현재 검색한 키워드들
@@ -7,6 +49,7 @@ let bookmarkedIds = new Set();
 let currentResults = [];  // 현재 검색 결과 (정렬용)
 let searchSortField = 'announced';  // 기본: 발주일
 let searchSortDir   = 'desc';       // 기본: 최신순
+let interestMode    = null;         // 관심 키워드 검색 모드 {keywords, exclude_keywords}
 
 // 공통 정렬 함수
 // 마감일 정렬: 일반 공고(요청 방향) → 사전규격(오래 남은 순) 으로 그룹 분리
@@ -36,7 +79,8 @@ function sortItems(items) {
         if (field === 'announced'){ const va = a.announced_date || '', vb = b.announced_date || ''; return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va); }
         let va, vb;
         if (field === 'budget') { va = a.estimated_price ?? -1; vb = b.estimated_price ?? -1; }
-        else if (field === 'memo') { va = a.memo_count ?? 0; vb = b.memo_count ?? 0; }
+        else if (field === 'memo')  { va = a.memo_count ?? 0; vb = b.memo_count ?? 0; }
+        else if (field === 'score') { va = a.relevance_score ?? 0; vb = b.relevance_score ?? 0; }
         else                    { va = 0; vb = 0; }
         return dir === 'asc' ? va - vb : vb - va;
     });
@@ -48,14 +92,13 @@ function setSearchSort(field) {
         searchSortDir = searchSortDir === 'asc' ? 'desc' : 'asc';
     } else {
         searchSortField = field;
-        searchSortDir = (field === 'budget' || field === 'announced' || field === 'memo') ? 'desc' : 'asc';
+        searchSortDir = (field === 'budget' || field === 'announced' || field === 'memo' || field === 'score') ? 'desc' : 'asc';
     }
     if (currentResults.length) renderResults(sortItems(currentResults));
 }
 
 // 페이지 로드 시 실행
 document.addEventListener('DOMContentLoaded', function() {
-    loadFilterPresets();
     loadBookmarkedIds();
 
     const urlParams = new URLSearchParams(window.location.search);
@@ -70,11 +113,11 @@ async function applyInterestAndSearch() {
     try {
         const res = await fetch('/api/interest-keywords');
         const data = await res.json();
-        const kws = (data.keywords || []).join(', ');
-        const exkws = (data.exclude_keywords || []).join(', ');
-        if (kws) document.getElementById('include-keywords').value = kws;
-        if (exkws) document.getElementById('exclude-keywords').value = exkws;
-        if (kws || exkws) searchTenders(1);
+        interestMode = {
+            keywords: data.keywords || [],
+            exclude_keywords: data.exclude_keywords || []
+        };
+        searchTenders(1);
     } catch (e) { console.error('관심 키워드 로드 실패:', e); }
 }
 
@@ -154,72 +197,16 @@ function starButton(tenderId) {
                 title="${title}">${icon}</button>`;
 }
 
-// 필터 프리셋 로드
-async function loadFilterPresets() {
-    try {
-        const response = await fetch('/api/filters');
-        const filters = await response.json();
-
-        const select = document.getElementById('filter-preset');
-        select.innerHTML = '<option value="">선택하세요</option>';
-
-        filters.forEach(filter => {
-            const option = document.createElement('option');
-            option.value = filter.id;
-            option.textContent = filter.name + (filter.is_default ? ' (기본)' : '');
-            select.appendChild(option);
-        });
-
-        // 기본 필터가 있으면 자동 선택
-        const defaultFilter = filters.find(f => f.is_default);
-        if (defaultFilter) {
-            select.value = defaultFilter.id;
-        }
-
-    } catch (error) {
-        console.error('Failed to load filter presets:', error);
-    }
-}
-
-// 프리셋 적용
-async function applyPreset() {
-    const filterId = document.getElementById('filter-preset').value;
-    if (!filterId) return;
-
-    try {
-        const response = await fetch('/api/filters');
-        const filters = await response.json();
-
-        const filter = filters.find(f => f.id == filterId);
-        if (!filter) return;
-
-        // 필터 값 적용
-        document.getElementById('include-keywords').value = filter.include_keywords.join(', ');
-        document.getElementById('exclude-keywords').value = filter.exclude_keywords.join(', ');
-
-        // 다른 필터 옵션도 적용 (있는 경우)
-        if (filter.min_price !== null) {
-            // 가격 필터는 현재 UI에 없지만 나중을 위해 준비
-        }
-        if (filter.days_before_deadline !== null) {
-            // 마감일 필터도 마찬가지
-        }
-
-        // 프리셋 적용 후 자동으로 검색 실행
-        // 키워드가 자동으로 파싱되고 강조 표시됨
-        await searchTenders(1);
-
-    } catch (error) {
-        console.error('Failed to apply preset:', error);
-    }
-}
-
 // 검색 실행
 async function searchTenders(page = 1) {
     currentPage = page;
 
-    const includeKeywords = document.getElementById('include-keywords').value;
-    const excludeKeywords = document.getElementById('exclude-keywords').value;
+    const includeKeywords = interestMode
+        ? (interestMode.keywords || []).join(', ')
+        : document.getElementById('include-keywords').value;
+    const excludeKeywords = interestMode
+        ? (interestMode.exclude_keywords || []).join(', ')
+        : document.getElementById('exclude-keywords').value;
     const status = document.getElementById('status-filter').value;
 
     // 검색 키워드 파싱 및 저장 (강조 표시용)
@@ -377,7 +364,8 @@ function renderResults(tenders) {
         }
 
         const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
-        const highlightedTitle = highlightKeywords(tender.title);
+        const highlightedTitle = highlightKeywords(cleanNoticeTitle(tender.title));
+        const noticeBadges = getNoticeBadgesHtml(tender.title);
         const announcedDate = tender.announced_date ? tender.announced_date.substring(5, 10) : '-';
 
         let displayAgency, agencyTooltip;
@@ -398,6 +386,8 @@ function renderResults(tenders) {
             ? `<span style="font-size:0.6rem;color:#7C3AED;font-weight:700;line-height:1;" title="메모 ${tender.memo_count}개">✎${tender.memo_count}</span>`
             : '';
 
+        const scoreBadge = buildScoreBadge(tender.relevance_score ?? null, tender.business_type || '기타', tender.score_breakdown || null);
+
         return `
             <tr class="${rowClass}">
                 <td style="text-align:center;width:36px;">
@@ -407,18 +397,16 @@ function renderResults(tenders) {
                     </div>
                 </td>
                 <td style="text-align:center;width:46px;">${statusBadge}</td>
+                <td style="text-align:center;width:72px;">${scoreBadge}</td>
                 <td class="title-col">
-                    <a href="/tender/${tender.id}" class="title-link"${titleStyle} title="${tender.title.replace(/"/g,'&quot;')}">${highlightedTitle}</a>
+                    <a href="/tender/${tender.id}" class="title-link"${titleStyle} title="${cleanNoticeTitle(tender.title).replace(/"/g,'&quot;')}">${noticeBadges}${highlightedTitle}</a>
                 </td>
                 <td class="agency-col" title="${agencyTooltip.replace(/"/g,'&quot;')}">${displayAgency}</td>
                 <td style="text-align:right;">${price}</td>
                 <td style="text-align:center;font-size:0.75rem;color:#6B7280;">${announcedDate}</td>
                 <td style="text-align:center;" class="${deadlineClass}">${deadlineText}</td>
                 <td style="text-align:center;">
-                    <div style="display:flex;gap:4px;align-items:center;justify-content:center;white-space:nowrap;">
-                        <a href="/tender/${tender.id}" class="detail-link">상세</a>
-                        ${tender.url ? `<a href="${tender.url}" target="_blank" class="origin-link">원본</a>` : ''}
-                    </div>
+                    ${tender.url ? `<a href="${tender.url}" target="_blank" class="origin-link">원본</a>` : '-'}
                 </td>
             </tr>`;
     };
@@ -458,12 +446,13 @@ function renderResults(tenders) {
                 <tr>
                     ${th('memo', '✎', '36px')}
                     <th style="width:46px;">상태</th>
+                    ${th('score',    '점수',     '72px')}
                     ${th('title',    '공고명',   'auto')}
-                    ${th('agency',   '발주기관', '150px')}
+                    ${th('agency',   '수요기관', '150px')}
                     ${th('budget',   '금액',     '100px')}
                     ${th('announced','발주일',   '72px')}
                     ${th('days',     '마감',     '66px')}
-                    <th style="width:100px;">상세</th>
+                    <th style="width:56px;">원본</th>
                 </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -540,54 +529,65 @@ function displayActiveFilters(filters) {
     let html = '';
     let hasFilters = false;
 
-    // 포함 키워드 (특수문자로 AND/OR 구분)
-    if (filters.includeKeywords) {
-        // 쉼표로 split → OR 그룹들
-        const orGroups = filters.includeKeywords.split(',').map(g => g.trim()).filter(g => g);
-
-        if (orGroups.length > 0) {
-            // 각 OR 그룹을 표시
-            const groupTexts = orGroups.map(group => {
-                // + 기호가 있으면 AND 그룹
-                if (group.includes('+')) {
-                    const andKeywords = group.split('+').map(k => k.trim()).filter(k => k);
-                    return '(' + andKeywords.join(' <strong>그리고</strong> ') + ')';
-                } else {
-                    return group;
-                }
-            });
-
-            const keywordText = groupTexts.join(' <strong>또는</strong> ');
-            html += `
-                <span class="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full">
-                    <span>포함: ${keywordText}</span>
-                    <button onclick="removeFilter('include-all', '')" class="hover:bg-blue-200 rounded-full p-0.5">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                        </svg>
-                    </button>
-                </span>
-            `;
-            hasFilters = true;
+    // 포함/제외 키워드
+    if (interestMode) {
+        // 관심 키워드 모드: 단일 배지로 표시
+        html += `
+            <span class="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full">
+                <span>🔖 관심 키워드</span>
+                <button onclick="resetInterestMode()" class="hover:bg-blue-200 rounded-full p-0.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </span>
+        `;
+        hasFilters = true;
+    } else {
+        // 일반 포함 키워드
+        if (filters.includeKeywords) {
+            const orGroups = filters.includeKeywords.split(',').map(g => g.trim()).filter(g => g);
+            if (orGroups.length > 0) {
+                const groupTexts = orGroups.map(group => {
+                    if (group.includes('+')) {
+                        const andKeywords = group.split('+').map(k => k.trim()).filter(k => k);
+                        return '(' + andKeywords.join(' <strong>그리고</strong> ') + ')';
+                    } else {
+                        return group;
+                    }
+                });
+                const keywordText = groupTexts.join(' <strong>또는</strong> ');
+                html += `
+                    <span class="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-full">
+                        <span>포함: ${keywordText}</span>
+                        <button onclick="removeFilter('include-all', '')" class="hover:bg-blue-200 rounded-full p-0.5">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </span>
+                `;
+                hasFilters = true;
+            }
         }
-    }
 
-    // 제외 키워드
-    if (filters.excludeKeywords) {
-        const keywords = filters.excludeKeywords.split(',').map(k => k.trim()).filter(k => k);
-        if (keywords.length > 0) {
-            const keywordText = keywords.join(', ');
-            html += `
-                <span class="inline-flex items-center gap-1 px-3 py-1 bg-red-100 text-red-800 text-sm rounded-full">
-                    <span>제외: ${keywordText}</span>
-                    <button onclick="removeFilter('exclude-all', '')" class="hover:bg-red-200 rounded-full p-0.5">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                        </svg>
-                    </button>
-                </span>
-            `;
-            hasFilters = true;
+        // 일반 제외 키워드
+        if (filters.excludeKeywords) {
+            const keywords = filters.excludeKeywords.split(',').map(k => k.trim()).filter(k => k);
+            if (keywords.length > 0) {
+                const keywordText = keywords.join(', ');
+                html += `
+                    <span class="inline-flex items-center gap-1 px-3 py-1 bg-red-100 text-red-800 text-sm rounded-full">
+                        <span>제외: ${keywordText}</span>
+                        <button onclick="removeFilter('exclude-all', '')" class="hover:bg-red-200 rounded-full p-0.5">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </span>
+                `;
+                hasFilters = true;
+            }
         }
     }
 
@@ -704,12 +704,18 @@ function removeFilter(type, value) {
     searchTenders(1);
 }
 
+// 관심 키워드 모드 해제 (배지 X 버튼)
+function resetInterestMode() {
+    interestMode = null;
+    searchTenders(1);
+}
+
 // 필터 초기화
 function resetFilters() {
+    interestMode = null;
     document.getElementById('include-keywords').value = '';
     document.getElementById('exclude-keywords').value = '';
     document.getElementById('status-filter').value = '';
-    document.getElementById('filter-preset').value = '';
     document.getElementById('announced-date-from').value = '';
     document.getElementById('announced-date-to').value = '';
     document.getElementById('deadline-date-from').value = '';

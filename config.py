@@ -11,6 +11,7 @@ class Config:
     SECRET_KEY = os.environ.get(
         'SECRET_KEY') or 'dev-secret-key-change-in-production'
     DEBUG = False  # 디버그 모드 비활성화 (스케줄러와 충돌 방지)
+    TEMPLATES_AUTO_RELOAD = True  # 템플릿 변경 즉시 반영 (서버 재시작 불필요)
 
     # Server
     HOST = '0.0.0.0'

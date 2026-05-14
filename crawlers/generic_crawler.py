@@ -228,6 +228,7 @@ class GenericCrawler(BaseCrawler):
         """공고 아이템 하나를 파싱하여 results에 추가"""
         # 제목 추출
         title_selector = self.selectors.get('title', '')
+        title_elem = None
         if title_selector:
             title_elem = item.select_one(title_selector)
             if title_elem:
@@ -239,7 +240,8 @@ class GenericCrawler(BaseCrawler):
                 else:
                     title = self._sanitize_text(title_elem.get_text(strip=True))
             else:
-                title = f'{self.site_name} 공고 {idx + 1}'
+                # 셀렉터가 설정됐는데 요소를 못 찾으면 빈 행으로 간주 → 스킵
+                return
         else:
             title = self._sanitize_text(
                 item.get_text(strip=True)[:200]) if item else f'{self.site_name} 공고 {idx + 1}'

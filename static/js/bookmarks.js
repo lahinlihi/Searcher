@@ -154,18 +154,24 @@ async function undismissTender(tenderId) {
     } catch (e) { console.error(e); }
 }
 
-function buildScoreBadge(score, businessType, labelBonus) {
+function buildScoreBadge(score, businessType, labelBonus, breakdown) {
     if (score === 0 && !labelBonus) return '';
-    let bg, label;
-    if (score >= 70) { bg = 'bg-green-100 text-green-800 border border-green-300'; label = '높음'; }
-    else if (score >= 40) { bg = 'bg-yellow-100 text-yellow-800 border border-yellow-300'; label = '보통'; }
-    else { bg = 'bg-gray-100 text-gray-600 border border-gray-300'; label = '낮음'; }
-    const typeText = businessType && businessType !== '기타' ? ` · ${businessType}` : '';
-    const displayScore = Number.isInteger(score) ? score : score.toFixed(1);
+    let bg;
+    if (score >= 70)      bg = 'bg-green-100 text-green-800 border border-green-300';
+    else if (score >= 40) bg = 'bg-yellow-100 text-yellow-800 border border-yellow-300';
+    else                  bg = 'bg-gray-100 text-gray-600 border border-gray-300';
+    const displayScore = score.toFixed(1);
     const bonusText = labelBonus > 0 ? ` <span class="text-green-600">(+${labelBonus})</span>` : '';
+    let tooltip;
+    if (breakdown) {
+        const bonusPart = labelBonus > 0 ? ` + 라벨 +${labelBonus}` : '';
+        tooltip = `${displayScore}점 = 키워드 ${breakdown.keyword.toFixed(1)} + 사업유형 ${breakdown.type.toFixed(1)} + 기관가중치 ${breakdown.agency.toFixed(1)}${bonusPart}`;
+    } else {
+        tooltip = `적합도 점수: ${displayScore}점`;
+    }
     return `<span class="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded ${bg}"
-                  title="적합도 점수: 키워드 매칭(45점) + 사업유형(45점) + 긴급도(10점) + 라벨보너스">
-        <span class="font-bold">${displayScore}점${bonusText}</span><span class="font-normal opacity-70">${label}${typeText}</span>
+                  title="${tooltip}">
+        <span class="font-bold">${displayScore}점${bonusText}</span>
     </span>`;
 }
 
@@ -264,7 +270,8 @@ function renderBookmarkCard(tender) {
     const scoreBadge = buildScoreBadge(
         tender.relevance_score ?? 0,
         tender.business_type || '기타',
-        tender.label_bonus ?? 0
+        tender.label_bonus ?? 0,
+        tender.score_breakdown || null
     );
 
     const daysLeft = tender.days_left;

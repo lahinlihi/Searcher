@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, g
-from database import db, Filter, CrawlLog, Tender
+from database import db, Filter, CrawlLog, Tender, AgencyWeight
 from decorators import login_required, admin_required, moderator_required
 from datetime import datetime, timedelta
 import json
@@ -139,3 +139,62 @@ def api_stats():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ── 기관별 가중치 API ─────────────────────────────────────────────────────────
+
+@bp.route('/api/agency-weights', methods=['GET'])
+@login_required
+def get_agency_weights():
+    """사용자의 기관별 가중치 목록 조회"""
+    weights = AgencyWeight.query.filter_by(user_id=g.user.id)\
+                .order_by(AgencyWeight.agency_name).all()
+    return jsonify([w.to_dict() for w in weights])
+
+
+@bp.route('/api/agency-weights', methods=['POST'])
+@login_required
+def add_agency_weight():
+    """기관별 가중치 등록 또는 수정"""
+    data = request.json or {}
+    agency_name = (data.get('agency_name') or '').strip()
+    weight = float(data.get('weight', 5.0))
+
+    if not agency_name:
+        return jsonify({'error': '기관명을 입력해주세요.'}), 400
+    if weight not in (0, 2.5, 5.0, 7.5, 10.0):
+        return jsonify({'error': '가중치는 0 / 2.5 / 5 / 7.5 / 10 중 하나여야 합니다.'}), 400
+
+    existing = AgencyWeight.query.filter_by(user_id=g.user.id, agency_name=agency_name).first()
+    if existing:
+        existing.weight = weight
+    else:
+        existing = AgencyWeight(user_id=g.user.id, agency_name=agency_name, weight=weight)
+        db.session.add(existing)
+
+    db.session.commit()
+    return jsonify(existing.to_dict())
+
+
+@bp.route('/api/agency-weights/<int:weight_id>', methods=['PUT'])
+@login_required
+def update_agency_weight(weight_id):
+    """기관별 가중치 수정"""
+    aw = AgencyWeight.query.filter_by(id=weight_id, user_id=g.user.id).first_or_404()
+    data = request.json or {}
+    weight = float(data.get('weight', aw.weight))
+    if weight not in (0, 2.5, 5.0, 7.5, 10.0):
+        return jsonify({'error': '가중치는 0 / 2.5 / 5 / 7.5 / 10 중 하나여야 합니다.'}), 400
+    aw.weight = weight
+    db.session.commit()
+    return jsonify(aw.to_dict())
+
+
+@bp.route('/api/agency-weights/<int:weight_id>', methods=['DELETE'])
+@login_required
+def delete_agency_weight(weight_id):
+    """기관별 가중치 삭제"""
+    aw = AgencyWeight.query.filter_by(id=weight_id, user_id=g.user.id).first_or_404()
+    db.session.delete(aw)
+    db.session.commit()
+    return jsonify({'success': True})

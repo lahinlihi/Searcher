@@ -60,7 +60,7 @@ class BaseCrawler(ABC):
             from selenium import webdriver
             from selenium.webdriver.chrome.service import Service
             from selenium.webdriver.chrome.options import Options
-            from webdriver_manager.chrome import ChromeDriverManager
+            import glob as _glob
             import os
 
             chrome_options = Options()
@@ -82,13 +82,42 @@ class BaseCrawler(ABC):
             if not self.verify_ssl:
                 chrome_options.add_argument('--ignore-certificate-errors')
 
-            # ChromeDriverManager가 Chrome 버전에 맞는 드라이버를 자동으로 설치/캐시 관리
-            try:
-                driver_path = ChromeDriverManager().install()
-                print(f"[Selenium] ChromeDriver 준비 완료: {driver_path}")
-            except Exception as install_error:
-                raise Exception(
-                    f"ChromeDriver를 설치할 수 없습니다: {install_error}") from install_error
+            # ── ChromeDriver 경로 결정 ───────────────────────────────────────
+            # Windows에서 webdriver-manager의 os.rename()은 대상 파일이 이미
+            # 존재하면 WinError 5(Access Denied)로 항상 실패한다.
+            # (Linux는 덮어쓰기 허용, Windows는 불허)
+            # 해결책: .wdm 캐시에 이미 유효한 chromedriver.exe가 있으면
+            # install() 호출 없이 바로 사용하고, 없을 때만 install()을 시도한다.
+            wdm_base = os.path.expanduser('~/.wdm/drivers/chromedriver')
+            all_exes = _glob.glob(
+                os.path.join(wdm_base, '**', 'chromedriver.exe'), recursive=True)
+
+            # chromedriver-win32\ 하위가 아닌 '정식 경로' 우선, 없으면 source 경로도 허용
+            proper = [p for p in all_exes if 'chromedriver-win32' not in p.replace('\\', '/')]
+            candidates = proper if proper else all_exes
+
+            if candidates:
+                # 가장 최신 버전(mtime 기준) 사용
+                driver_path = max(candidates, key=os.path.getmtime)
+                print(f"[Selenium] ChromeDriver 사용: {driver_path}")
+            else:
+                # 캐시 없음 → webdriver-manager로 신규 설치 시도
+                from webdriver_manager.chrome import ChromeDriverManager
+                try:
+                    driver_path = ChromeDriverManager().install()
+                    print(f"[Selenium] ChromeDriver 신규 설치: {driver_path}")
+                except Exception as install_error:
+                    # 설치 후 rename 실패 → 추출된 source 경로로 재시도
+                    all_exes2 = _glob.glob(
+                        os.path.join(wdm_base, '**', 'chromedriver.exe'), recursive=True)
+                    if all_exes2:
+                        driver_path = max(all_exes2, key=os.path.getmtime)
+                        print(f"[Selenium] ChromeDriver 설치 후 캐시 사용: {driver_path}")
+                    else:
+                        raise Exception(
+                            f"ChromeDriver를 찾을 수 없습니다: {install_error}"
+                        ) from install_error
+            # ────────────────────────────────────────────────────────────────
 
             service = Service(driver_path)
             self.driver = webdriver.Chrome(

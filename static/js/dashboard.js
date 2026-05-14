@@ -1,5 +1,26 @@
 // 대시보드 JavaScript
 
+// ── 공고 종류 배지 헬퍼 ─────────────────────────────────────────────────────
+function getNoticeBadgesHtml(title) {
+    const t = title || '';
+    let html = '';
+    if (/\[긴급공고\]|\(긴급공고\)|\[긴급\]|\(긴급\)/.test(t)) {
+        html += '<span style="display:inline-flex;align-items:center;border-radius:9999px;padding:1px 8px;font-size:0.7rem;font-weight:700;background:#FEE2E2;color:#B91C1C;border:1px solid #FCA5A5;white-space:nowrap;margin-right:3px;">긴급</span>';
+    }
+    if (/\[재공고\]|\(재공고\)/.test(t)) {
+        html += '<span style="display:inline-flex;align-items:center;border-radius:9999px;padding:1px 8px;font-size:0.7rem;font-weight:700;background:#FFEDD5;color:#C2410C;border:1px solid #FDBA74;white-space:nowrap;margin-right:3px;">재공고</span>';
+    }
+    return html;
+}
+
+function cleanNoticeTitle(title) {
+    return (title || '')
+        .replace(/\[긴급공고\]/g, '').replace(/\(긴급공고\)/g, '')
+        .replace(/\[긴급\]/g, '').replace(/\(긴급\)/g, '')
+        .replace(/\[재공고\]/g, '').replace(/\(재공고\)/g, '')
+        .trim();
+}
+
 let agencyChart = null;
 let dailyChart = null;
 let includeKeywords = [];
@@ -282,24 +303,22 @@ function highlightKeywordsInTitle(title, keywords) {
 }
 
 // 적합도 점수 배지 생성
-function buildScoreBadge(score, matchedKeywords, businessType) {
-    let bg, label;
-    if (score >= 70) {
-        bg = 'bg-green-100 text-green-800 border border-green-300';
-        label = '높음';
-    } else if (score >= 40) {
-        bg = 'bg-yellow-100 text-yellow-800 border border-yellow-300';
-        label = '보통';
+function buildScoreBadge(score, matchedKeywords, businessType, breakdown) {
+    let bg;
+    if (score >= 70)      bg = 'bg-green-100 text-green-800 border border-green-300';
+    else if (score >= 40) bg = 'bg-yellow-100 text-yellow-800 border border-yellow-300';
+    else                  bg = 'bg-gray-100 text-gray-600 border border-gray-300';
+    const displayScore = score.toFixed(1);
+    let tooltip;
+    if (breakdown) {
+        tooltip = `${displayScore}점 = 키워드 ${breakdown.keyword.toFixed(1)} + 사업유형 ${breakdown.type.toFixed(1)} + 기관가중치 ${breakdown.agency.toFixed(1)}`;
     } else {
-        bg = 'bg-gray-100 text-gray-600 border border-gray-300';
-        label = '낮음';
+        const typeText = businessType && businessType !== '기타' ? ` · ${businessType}` : '';
+        tooltip = `적합도 점수: ${displayScore}점${typeText}`;
     }
-    const typeText = businessType && businessType !== '기타' ? ` · ${businessType}` : '';
-    // 소수점이 있을 때만 1자리 표시 (동점 방지용 소수점 점수 반영)
-    const displayScore = Number.isInteger(score) ? score : score.toFixed(1);
-    return `<span class="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded ${bg}"
-                  title="적합도 점수: 키워드 매칭(45점) + 사업유형(45점) + 긴급도·규모(10점)">
-        <span class="font-bold">${displayScore}점</span><span class="font-normal opacity-70">${label}${typeText}</span>
+    return `<span class="inline-flex items-center text-xs font-bold px-2 py-0.5 rounded ${bg}"
+                  title="${tooltip}">
+        ${displayScore}
     </span>`;
 }
 
@@ -319,12 +338,13 @@ function renderKeywordTenders(elementId, tenders, keywords) {
     }
 
     const html = tenders.map(tender => {
-        const { highlightedTitle } = highlightKeywordsInTitle(tender.title, keywords);
+        const { highlightedTitle } = highlightKeywordsInTitle(cleanNoticeTitle(tender.title), keywords);
+        const noticeBadges = getNoticeBadgesHtml(tender.title);
         const matchedKeywords = tender.matched_keywords || [];
         const score = tender.relevance_score ?? 0;
         const businessType = tender.business_type || '기타';
 
-        const scoreBadge = buildScoreBadge(score, matchedKeywords, businessType);
+        const scoreBadge = buildScoreBadge(score, matchedKeywords, businessType, tender.score_breakdown || null);
 
         const statusBadge = tender.status === '사전규격'
             ? '<span class="tender-status-badge tender-status-pre">사전</span>'
@@ -365,7 +385,7 @@ function renderKeywordTenders(elementId, tenders, keywords) {
                 </div>
                 <h4 class="font-medium text-gray-900 mt-1">
                     <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
-                        ${highlightedTitle}
+                        ${noticeBadges}${highlightedTitle}
                     </a>
                 </h4>
                 <div class="flex justify-between items-center text-sm text-gray-600 mt-1">
@@ -414,13 +434,14 @@ function renderTenderList(elementId, tenders) {
             ? formatPrice(tender.estimated_price)
             : '미정';
 
-        const { highlightedTitle, matchCount } = highlightKeywordsInTitle(tender.title, includeKeywords);
+        const { highlightedTitle, matchCount } = highlightKeywordsInTitle(cleanNoticeTitle(tender.title), includeKeywords);
+        const noticeBadges = getNoticeBadgesHtml(tender.title);
         const matchedKeywords = tender.matched_keywords || [];
         const score = tender.relevance_score ?? null;
         const businessType = tender.business_type || '기타';
         let keywordBadge = '';
         if (matchedKeywords.length > 0) {
-            const scorePart = score !== null ? buildScoreBadge(score, [], businessType) : '';
+            const scorePart = score !== null ? buildScoreBadge(score, [], businessType, tender.score_breakdown || null) : '';
             keywordBadge = `<span class="inline-flex items-center flex-wrap gap-1">
                 <span class="keyword-match-badge">키워드: ${matchedKeywords.join(', ')}</span>
                 ${scorePart}
@@ -444,7 +465,7 @@ function renderTenderList(elementId, tenders) {
                         ${keywordBadge}
                         <h4 class="font-medium text-gray-900 mt-1">
                             <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
-                                ${highlightedTitle}
+                                ${noticeBadges}${highlightedTitle}
                             </a>
                         </h4>
                     </div>

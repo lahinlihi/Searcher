@@ -2,6 +2,42 @@
 
 ---
 
+## Searcher 프로젝트 — 크롤러 수정 후 필수 절차
+
+### 규칙: 크롤러 코드 수정 후 반드시 서버 재시작
+
+이 프로젝트는 Flask 서버(`app.py`)가 시작될 때 모든 크롤러를 임포트하여 `scheduler.crawlers` 딕셔너리에 **인스턴스로 캐싱**한다.
+
+```
+서버 시작 → _init_crawlers() → IrisCrawler() 인스턴스 생성 → self.crawlers['iris']에 저장
+```
+
+따라서 **서버가 실행 중인 상태에서 크롤러 `.py` 파일을 수정해도, 수동 크롤링을 실행하면 메모리에 남아 있는 구버전 인스턴스가 그대로 사용된다.** (`.pyc` 캐시 문제가 아닌, 런타임 인스턴스 캐시 문제)
+
+#### 반드시 지켜야 할 절차
+
+1. `crawlers/` 또는 `scheduler.py` 파일 수정 완료
+2. **서버 프로세스 재시작** (기존 PowerShell 창 종료 → 새로 실행)
+3. 재시작 후 수동 크롤링으로 검증
+
+#### 검증 방법 (재시작 없이 코드 레벨에서 빠르게 확인)
+
+서버 재시작 없이 크롤러 동작을 검증할 때는 **직접 Python 스크립트로 실행**:
+
+```bash
+cd /c/Users/USER/Searcher
+python -u -c "
+import sys; sys.path.insert(0, '.')
+from crawlers.iris_crawler import IrisCrawler
+result = IrisCrawler().crawl()
+print(result['count'], 'items')
+"
+```
+
+수동 크롤링 버튼(웹 UI)은 서버 재시작 후에만 신뢰할 수 있다.
+
+---
+
 ## Project Initialization & Feature Planning Rule
 
 ### Target Files

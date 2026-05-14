@@ -366,6 +366,26 @@ class TenderAnalysis(db.Model):
         }
 
 
+class AgencyWeight(db.Model):
+    """기관별 가중치 테이블 (사용자별)"""
+    __tablename__ = 'agency_weights'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    agency_name = db.Column(db.String(200), nullable=False)
+    weight = db.Column(db.Float, default=5.0)  # 0 / 2.5 / 5 / 7.5 / 10
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('agency_weights', lazy=True))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'agency_name': self.agency_name,
+            'weight': self.weight,
+        }
+
+
 def init_db(app):
     """데이터베이스 초기화"""
     db.init_app(app)

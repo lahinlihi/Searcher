@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify, g, current_app
 from database import db, Tender, CrawlLog, TenderMemo, DismissedTender, Filter, UserPreference
 from decorators import login_required, admin_required
 from scoring import (load_interest_keywords, load_exclude_keywords, load_budget_range,
@@ -11,9 +11,6 @@ import re
 import threading
 
 bp = Blueprint('tenders', __name__)
-
-# crawler_scheduler 참조 (app 모듈에서 관리)
-crawler_scheduler = None
 
 
 @bp.route('/api/tender/<int:tender_id>/related')
@@ -122,8 +119,16 @@ def api_dashboard():
         dismissed_ids = [d.tender_id for d in DismissedTender.query.filter_by(user_id=uid).all()] if uid else []
 
         # 사용자 사업유형 가중치 로드
+        from database import AgencyWeight
         _pref = UserPreference.query.filter_by(user_id=uid).first() if uid else None
         user_type_weights = _pref.get_type_weights() if _pref else {}
+
+        # 기관별 가중치 로드 {기관명: 점수}
+        try:
+            _aw_rows = AgencyWeight.query.filter_by(user_id=uid).all() if uid else []
+            user_agency_weights = {r.agency_name: r.weight for r in _aw_rows}
+        except Exception:
+            user_agency_weights = {}
 
         # 공통 필터 준비
         kw_filter = db.or_(*[Tender.title.contains(kw) for kw in include_keywords]) if include_keywords else None
@@ -181,7 +186,7 @@ def api_dashboard():
         if dismissed_ids:
             all_pre_new = [t for t in all_pre_new if t.id not in dismissed_ids]
         sorted_pre_new = smart_sort_tenders_by_keyword_count(
-            all_pre_new, include_keywords, user_type_weights)
+            all_pre_new, include_keywords, user_type_weights, user_agency_weights)
         pre_tenders = sorted_pre_new[:20]
 
         # 6. 신규공고(기타 채널): 금~오늘, 나라장터 제외, 수의계약 제외, 마감 안 지난 것
@@ -210,7 +215,7 @@ def api_dashboard():
         if dismissed_ids:
             all_new = [t for t in all_new if t.id not in dismissed_ids]
         sorted_new = smart_sort_tenders_by_keyword_count(
-            all_new, include_keywords, user_type_weights)
+            all_new, include_keywords, user_type_weights, user_agency_weights)
         recent_tenders = sorted_new[:20]
 
         seven_days_ago = now - timedelta(days=7)
@@ -241,11 +246,19 @@ def api_dashboard():
         all_urgent = urgent_query.all()
         if dismissed_ids:
             all_urgent = [t for t in all_urgent if t.id not in dismissed_ids]
-        sorted_urgent = smart_sort_tenders_by_keyword_count(all_urgent, include_keywords, user_type_weights)
+        sorted_urgent = smart_sort_tenders_by_keyword_count(all_urgent, include_keywords, user_type_weights, user_agency_weights)
         urgent_tenders = sorted_urgent[:20]
 
         # 전체 필터 적용 후 총 건수 (배지용)
         keyword_match_count = len(all_pre_new) + len(all_urgent) + len(all_new)
+
+        def _td(t):
+            d = t.to_dict(interest_keywords=include_keywords)
+            r = _score_and_type(t, include_keywords, user_type_weights, user_agency_weights)
+            d['relevance_score'] = r[0]
+            d['business_type'] = r[1]
+            d['score_breakdown'] = {'keyword': r[2], 'type': r[3], 'agency': r[4]}
+            return d
 
         response_data = {
             'summary': {
@@ -254,18 +267,9 @@ def api_dashboard():
                 'deadline_soon': deadline_soon,
                 'total': total_tenders,
                 'keyword_match': keyword_match_count},
-            'pre_tenders': [
-                {**t.to_dict(interest_keywords=include_keywords),
-                 **dict(zip(('relevance_score', 'business_type'), _score_and_type(t, include_keywords, user_type_weights)))}
-                for t in pre_tenders],
-            'urgent_tenders': [
-                {**t.to_dict(interest_keywords=include_keywords),
-                 **dict(zip(('relevance_score', 'business_type'), _score_and_type(t, include_keywords, user_type_weights)))}
-                for t in urgent_tenders],
-            'recent_tenders': [
-                {**t.to_dict(interest_keywords=include_keywords),
-                 **dict(zip(('relevance_score', 'business_type'), _score_and_type(t, include_keywords, user_type_weights)))}
-                for t in recent_tenders],
+            'pre_tenders':    [_td(t) for t in pre_tenders],
+            'urgent_tenders': [_td(t) for t in urgent_tenders],
+            'recent_tenders': [_td(t) for t in recent_tenders],
             'include_keywords': include_keywords,
             'exclude_keywords': exclude_keywords}
 
@@ -478,10 +482,38 @@ def api_tenders():
             ).filter(TenderMemo.tender_id.in_(_page_ids)).group_by(TenderMemo.tender_id).all()
             _memo_counts = {r[0]: r[1] for r in _mcrows}
 
+        # 사용자 사업유형 가중치 + 기관별 가중치 로드 (점수 계산용)
+        uid = g.user.id if g.user else None
+        from database import AgencyWeight as _AgencyWeight
+        _pref = UserPreference.query.filter_by(user_id=uid).first() if uid else None
+        user_type_weights = _pref.get_type_weights() if _pref else {}
+        try:
+            _aw_rows2 = _AgencyWeight.query.filter_by(user_id=uid).all() if uid else []
+            user_agency_weights2 = {r.agency_name: r.weight for r in _aw_rows2}
+        except Exception:
+            user_agency_weights2 = {}
+
+        # 검색 키워드를 flat list로 파싱 (점수 계산용)
+        # "AI+교육, 시스템" → ['AI', '교육', '시스템']
+        score_keywords = []
+        kw_source = include_keywords or ', '.join(interest_keywords)
+        for group in kw_source.split(','):
+            for kw in group.split('+'):
+                kw = kw.strip()
+                if kw:
+                    score_keywords.append(kw)
+
         _tenders_data = []
         for t in pagination.items:
             d = t.to_dict(interest_keywords=interest_keywords)
             d['memo_count'] = _memo_counts.get(t.id, 0)
+            if score_keywords:
+                score, btype, kw_s, t_s, a_s = _score_and_type(t, score_keywords, user_type_weights, user_agency_weights2)
+            else:
+                score, btype, kw_s, t_s, a_s = 0, '기타', 0.0, 0.0, 0.0
+            d['relevance_score'] = score
+            d['business_type'] = btype
+            d['score_breakdown'] = {'keyword': kw_s, 'type': t_s, 'agency': a_s}
             _tenders_data.append(d)
 
         return jsonify({
@@ -661,6 +693,7 @@ def api_tender_history(tender_id):
     clean = _re.sub(r'\d{4}년도?', '', clean)
     clean = _re.sub(r"'\d{2}년도?", '', clean)
     clean = _re.sub(r'\(\s*20\d{2}\s*\)', '', clean)
+    clean = _re.sub(r'\b(?:19|20)\d{2}\b', '', clean)   # 단독 연도 숫자 제거 (2026 등)
     clean = _re.sub(r'제\s*\d+\s*회차?', '', clean)
     clean = _re.sub(r'\d+\s*차년도', '', clean)
     clean = _re.sub(r'\d+\s*차\b', '', clean)
@@ -668,10 +701,12 @@ def api_tender_history(tender_id):
     clean = _re.sub(r'\s+', ' ', clean).strip()
     query_nm = clean[:60] if len(clean) > 60 else clean
 
-    # ── 조회 기간: 최근 2년 × 월별 ────────────────────────────────────────────
+    # ── 조회 기간: 최근 5년 × 월별, max_workers=20으로 완전 병렬 ──────────────
+    # G2B API는 월 단위 범위만 안정적으로 지원 → 월별 유지, workers 대폭 증가
+    # 2 ops × 60개월 = 120 호출 / 20 workers = 6 라운드 ≈ 10~15초
     now = _dt.now()
     months = []
-    for offset in range(24):
+    for offset in range(60):   # 5년 = 60개월
         y, m = now.year, now.month - offset
         while m <= 0:
             m += 12; y -= 1
@@ -691,13 +726,13 @@ def api_tender_history(tender_id):
             return [inner] if isinstance(inner, dict) else (inner or [])
         return []
 
-    def _safe_get(url, params, timeout=20):
-        """GET 요청 → (items, error_str). 429 시 1회 재시도."""
-        for attempt in range(2):
+    def _safe_get(url, params, timeout=25):
+        """GET 요청 → (items, error_str). 429/502/503 시 최대 3회 재시도."""
+        for attempt in range(3):
             try:
                 r = _req.get(url, params=params, timeout=timeout)
-                if r.status_code == 429:
-                    _time.sleep(3)
+                if r.status_code in (429, 502, 503):
+                    _time.sleep(2 + attempt * 2)
                     continue
                 if r.status_code != 200:
                     return [], f'HTTP {r.status_code}'
@@ -712,10 +747,13 @@ def api_tender_history(tender_id):
                     return [], f'{code}:{msg}'
                 return _parse_items(data), None
             except Exception as e:
+                if attempt < 2:
+                    _time.sleep(1)
+                    continue
                 return [], str(e)
-        return [], 'HTTP 429 (rate limit)'
+        return [], '재시도 초과'
 
-    # ── 1단계: 개찰결과 + 낙찰결과 — 월별 순차 조회 (max_workers=2) ──────────
+    # ── 1단계: 개찰결과 + 낙찰결과 — 월별 병렬 조회 (max_workers=20) ──────────
     ops = [
         ('openg', RESULT_BASE, 'getOpengResultListInfoServcPPSSrch'),
         ('award', RESULT_BASE, 'getScsbidListSttusServcPPSSrch'),
@@ -737,7 +775,7 @@ def api_tender_history(tender_id):
     award_by_no = {}
     errors = []
 
-    with ThreadPoolExecutor(max_workers=2) as ex:
+    with ThreadPoolExecutor(max_workers=20) as ex:
         futures = [
             ex.submit(fetch_month, kind, base, ep, y, m)
             for kind, base, ep in ops
@@ -876,7 +914,11 @@ def api_tender_history(tender_id):
         def kw(nm):
             return {w for w in nm.split() if len(w) >= 2 and w not in stopwords}
         b, c = kw(bid_nm), kw(cntrct_nm)
-        return bool(b and c and len(b & c) >= min(2, len(b)))
+        if not b or not c:
+            return False
+        common = len(b & c)
+        # 고유명사 1개라도 일치하면 매칭 (짧은 공고명 대응)
+        return common >= 1 if len(b) <= 2 else common >= min(2, len(b))
 
     _NM_PREFIX = _re.compile(
         r'^\s*[\(\[（【]?\s*(입찰공고|재공고|입찰재공고|재입찰|긴급공고|수정공고)\s*[\)\]）】]?\s*'
@@ -894,9 +936,11 @@ def api_tender_history(tender_id):
         raw_dt = (item.get('bidNtceDt') or item.get('opengDt') or item.get('rlOpengDt') or '')
         search_from = _re.sub(r'[^0-9]', '', raw_dt)[:8] if raw_dt else ''
         if not search_from or search_from > _today_str:
-            return item, None
+            # 날짜 없는 경우 최근 3년치 전체 검색
+            search_from = str(now.year - 3) + '0101'
         try:
-            search_to = min(str(int(search_from[:4]) + 1) + search_from[4:], _today_str)
+            # 낙찰 후 계약까지 최대 2년 소요 가능 → 2년 범위로 확장
+            search_to = min(str(int(search_from[:4]) + 2) + search_from[4:], _today_str)
         except Exception:
             search_to = _today_str
         cntrct_items, _ = _safe_get(
@@ -1066,14 +1110,14 @@ def api_history_bidders():
 @admin_required
 def api_search():
     """즉시 검색 시작 (크롤링)"""
-    # crawler_scheduler는 읽기만 하므로 global 선언 불필요
-    if not crawler_scheduler:
+    scheduler = getattr(current_app, 'crawler_scheduler', None)
+    if not scheduler:
         return jsonify({'error': '스케줄러가 초기화되지 않았습니다.'}), 500
 
     try:
         # 백그라운드에서 크롤링 실행
         def run_crawl():
-            result = crawler_scheduler.run_manual_crawl()
+            result = scheduler.run_manual_crawl()
             print(f"[수동 크롤링] 결과: {result}")
 
         thread = threading.Thread(target=run_crawl)

@@ -277,8 +277,9 @@ class G2BApiCrawler(BaseCrawler):
                 'asignBdgtAmt':              item.get('asignBdgtAmt', ''),             # 배정예산
                 'presmptPrce':               item.get('presmptPrce', ''),              # 추정가격(원본)
                 'VAT':                       item.get('VAT', ''),                      # 부가세 (API 직접 제공)
-                # 입찰방식
-                'bidPblancMthdNm':           item.get('bidPblancMthdNm', '') or item.get('bidMthdNm', '') or item.get('elctrnBidYn', ''),  # 입찰방식(전자입찰 등)
+                # 입찰방식 — API 실제 필드: bidMethdNm (전자입찰/직찰 등)
+                'bidMethdNm':                item.get('bidMethdNm', ''),                   # 입찰방식 (API 실제 필드)
+                'bidPblancMthdNm':           item.get('bidMethdNm', '') or item.get('bidPblancMthdNm', '') or item.get('elctrnBidYn', ''),  # 하위호환
                 # 낙찰/계약
                 'sucsfbidMthdNm':            item.get('sucsfbidMthdNm', ''),           # 낙찰방법
                 'sucsfbidMthdDtlsNm':        item.get('sucsfbidMthdDtlsNm', ''),       # 낙찰방법세부기준

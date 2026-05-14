@@ -586,8 +586,8 @@ class CrawlScheduler:
                         self.crawlers[site_id] = crawler
                         print(f"[스케줄러] {site_id}: 사전규격 API 크롤러 생성")
                     elif crawler_type == 'iris':
-                        # IRIS 전용 크롤러
-                        crawler = IrisCrawler()
+                        # IRIS 전용 크롤러 (site_info로 max_pages_pre 등 전달)
+                        crawler = IrisCrawler(site_config=site_info)
                         self.crawlers[site_id] = crawler
                         print(f"[스케줄러] {site_id}: IRIS 전용 크롤러 생성")
                     elif crawler_type == 'lh_api':

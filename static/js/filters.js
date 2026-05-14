@@ -5,6 +5,8 @@ let editingFilterId = null;
 // 페이지 로드 시 실행
 document.addEventListener('DOMContentLoaded', function() {
     loadFilters();
+    initAgencyWeightSelector();
+    loadAgencyWeights();
 });
 
 // 필터 목록 로드
@@ -175,6 +177,114 @@ async function deleteFilter(filterId) {
 // 모달 닫기
 function closeFilterModal() {
     document.getElementById('filter-modal').classList.add('hidden');
+}
+
+// ── 기관별 가중치 ────────────────────────────────────────────────────────────
+
+const AGENCY_WEIGHT_OPTIONS = [0, 2.5, 5, 7.5, 10];
+let selectedAgencyWeight = 5.0;
+
+function initAgencyWeightSelector() {
+    const container = document.getElementById('agency-weight-selector');
+    if (!container) return;
+    container.innerHTML = AGENCY_WEIGHT_OPTIONS.map(w => {
+        const isSelected = w === selectedAgencyWeight;
+        const label = w === 5.0 ? `${w} (기본)` : String(w);
+        return `<button type="button"
+            onclick="selectAgencyWeight(${w})"
+            id="awbtn-${w.toString().replace('.', '_')}"
+            class="text-xs font-semibold px-2.5 py-1 rounded border transition-colors
+                   ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'}"
+        >${label}</button>`;
+    }).join('');
+}
+
+function selectAgencyWeight(w) {
+    selectedAgencyWeight = w;
+    AGENCY_WEIGHT_OPTIONS.forEach(opt => {
+        const btn = document.getElementById(`awbtn-${opt.toString().replace('.', '_')}`);
+        if (!btn) return;
+        if (opt === w) {
+            btn.className = btn.className.replace('bg-white text-gray-600 border-gray-300 hover:border-blue-400', 'bg-blue-600 text-white border-blue-600');
+        } else {
+            btn.className = btn.className.replace('bg-blue-600 text-white border-blue-600', 'bg-white text-gray-600 border-gray-300 hover:border-blue-400');
+        }
+    });
+}
+
+async function loadAgencyWeights() {
+    try {
+        const res = await fetch('/api/agency-weights');
+        const list = await res.json();
+        renderAgencyWeights(list);
+    } catch (e) { console.error('기관별 가중치 로드 실패:', e); }
+}
+
+function renderAgencyWeights(list) {
+    const container = document.getElementById('agency-weights-list');
+    if (!container) return;
+    if (!list || list.length === 0) {
+        container.innerHTML = '<p class="text-xs text-gray-400">등록된 기관이 없습니다. 기본값(5점)이 적용됩니다.</p>';
+        return;
+    }
+    container.innerHTML = list.map(aw => {
+        const weightColor = aw.weight >= 7.5 ? 'text-blue-700 font-bold'
+                          : aw.weight >= 5   ? 'text-gray-700'
+                          : aw.weight > 0    ? 'text-gray-400'
+                          :                    'text-red-400 font-bold';
+        return `<div class="flex items-center gap-2 text-sm py-1 px-2 bg-gray-50 rounded">
+            <span class="flex-1 truncate font-medium text-gray-800">${aw.agency_name}</span>
+            <div class="flex gap-1">
+                ${AGENCY_WEIGHT_OPTIONS.map(w => {
+                    const active = aw.weight === w;
+                    return `<button type="button"
+                        onclick="updateAgencyWeight(${aw.id}, ${w})"
+                        class="text-xs px-1.5 py-0.5 rounded border transition-colors
+                               ${active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-500 border-gray-200 hover:border-blue-400'}"
+                    >${w}</button>`;
+                }).join('')}
+            </div>
+            <button onclick="deleteAgencyWeight(${aw.id})"
+                class="text-gray-300 hover:text-red-500 transition-colors ml-1 text-base leading-none"
+                title="삭제">×</button>
+        </div>`;
+    }).join('');
+}
+
+async function addAgencyWeight() {
+    const nameInput = document.getElementById('agency-name-input');
+    const agency_name = (nameInput.value || '').trim();
+    if (!agency_name) { nameInput.focus(); return; }
+
+    const res = await fetch('/api/agency-weights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agency_name, weight: selectedAgencyWeight })
+    });
+    if (res.ok) {
+        nameInput.value = '';
+        const msg = document.getElementById('agency-save-msg');
+        msg.classList.remove('hidden');
+        setTimeout(() => msg.classList.add('hidden'), 2000);
+        loadAgencyWeights();
+    } else {
+        const err = await res.json();
+        alert(err.error || '등록 실패');
+    }
+}
+
+async function updateAgencyWeight(id, weight) {
+    await fetch(`/api/agency-weights/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weight })
+    });
+    loadAgencyWeights();
+}
+
+async function deleteAgencyWeight(id) {
+    await fetch(`/api/agency-weights/${id}`, { method: 'DELETE' });
+    loadAgencyWeights();
 }
 
 // 가격 포맷

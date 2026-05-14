@@ -158,13 +158,13 @@ if __name__ == '__main__':
     # 설정 파일 로드
     settings_manager.load_settings()
 
-    crawler_scheduler = None
+    app.crawler_scheduler = None
     # 스케줄러 시작
     if Config.AUTO_CRAWL_ENABLED:
         try:
             from scheduler import CrawlScheduler
-            crawler_scheduler = CrawlScheduler(app)
-            crawler_scheduler.start()
+            app.crawler_scheduler = CrawlScheduler(app)
+            app.crawler_scheduler.start()
         except Exception as e:
             import traceback
             print(f"[스케줄러] 초기화 실패 — 크롤링 기능이 비활성화됩니다.")
@@ -182,5 +182,5 @@ if __name__ == '__main__':
                 threaded=True, use_reloader=False)
     finally:
         # 서버 종료 시 스케줄러도 중지
-        if crawler_scheduler:
-            crawler_scheduler.stop()
+        if app.crawler_scheduler:
+            app.crawler_scheduler.stop()

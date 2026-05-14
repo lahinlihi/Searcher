@@ -1,8 +1,7 @@
 from flask import Blueprint, request, jsonify, g
-from database import db, Tender, Bookmark, TenderMemo
+from database import db, Tender, Bookmark, TenderMemo, AgencyWeight, UserPreference
 from decorators import login_required
-from scoring import load_interest_keywords, calculate_relevance_score, _score_and_type
-from datetime import datetime
+from scoring import load_interest_keywords, _score_and_type
 
 bp = Blueprint('bookmarks', __name__)
 
@@ -12,8 +11,16 @@ bp = Blueprint('bookmarks', __name__)
 def api_bookmarks():
     """관심공고 목록 조회 (공고 상세 + 적합도 점수 포함)"""
     try:
-        include_keywords = load_interest_keywords(g.user.id)
-        bookmarks = Bookmark.query.filter_by(user_id=g.user.id).order_by(Bookmark.created_at.desc()).all()
+        uid = g.user.id
+        include_keywords = load_interest_keywords(uid)
+        _pref = UserPreference.query.filter_by(user_id=uid).first()
+        user_type_weights = _pref.get_type_weights() if _pref else {}
+        try:
+            _aw_rows = AgencyWeight.query.filter_by(user_id=uid).all()
+            user_agency_weights = {r.agency_name: r.weight for r in _aw_rows}
+        except Exception:
+            user_agency_weights = {}
+        bookmarks = Bookmark.query.filter_by(user_id=uid).order_by(Bookmark.created_at.desc()).all()
 
         # memo_count 배치 조회
         from sqlalchemy import func as _sql_func2
@@ -30,12 +37,13 @@ def api_bookmarks():
             tender = b.tender
             if not tender:
                 continue
-            score, btype = _score_and_type(tender, include_keywords)
+            score, btype, kw_s, t_s, a_s = _score_and_type(tender, include_keywords, user_type_weights, user_agency_weights)
             label_bonus = Bookmark.LABEL_BONUS.get(b.label or '', 0)
             d = tender.to_dict(interest_keywords=include_keywords)
             d['relevance_score'] = min(100.0, round(score + label_bonus, 1))
             d['label_bonus'] = label_bonus
             d['business_type'] = btype
+            d['score_breakdown'] = {'keyword': kw_s, 'type': t_s, 'agency': a_s}
             d['bookmark_id'] = b.id
             d['bookmark_label'] = b.label or ''
             d['bookmark_note'] = b.user_note or ''
