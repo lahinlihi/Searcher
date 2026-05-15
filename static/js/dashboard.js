@@ -76,6 +76,28 @@ function updateDashSortButtons(section) {
         btn.textContent = LABELS[f] + (isActive ? (s.dir === 'asc' ? ' ↑' : ' ↓') : '');
         btn.classList.toggle('active', isActive);
     });
+    // 모바일 select/버튼 동기화
+    const sel = document.getElementById(`dash-mobile-sort-${section}`);
+    if (sel) sel.value = s.field;
+    const dirBtn = document.getElementById(`dash-mobile-dir-${section}`);
+    if (dirBtn) dirBtn.textContent = s.dir === 'asc' ? '↑' : '↓';
+}
+
+// 모바일 정렬 필드 변경
+function onDashMobileSortChange(section, field) {
+    const s = dashSort[section];
+    s.field = field;
+    s.dir = (field === 'score' || field === 'budget') ? 'desc' : 'asc';
+    updateDashSortButtons(section);
+    renderSection(section);
+}
+
+// 모바일 정렬 방향 토글
+function toggleDashMobileSortDir(section) {
+    const s = dashSort[section];
+    s.dir = s.dir === 'asc' ? 'desc' : 'asc';
+    updateDashSortButtons(section);
+    renderSection(section);
 }
 
 // 특정 섹션만 다시 렌더링
@@ -105,7 +127,6 @@ let _lastFetchTime = 0;
 function _reloadDashboard() {
     Promise.all([loadBookmarkedIds(), loadDismissedIds()]).then(() => {
         loadDashboardData();
-        loadStats();
     });
 }
 
@@ -361,13 +382,13 @@ function renderKeywordTenders(elementId, tenders, keywords) {
             ? tender.announced_date.substring(0, 10)
             : '';
 
-        let agencyLabel;
+        let agencyName;
         if (tender.source_site === '중소벤처 24') {
-            agencyLabel = `사업수행: ${tender.demand_agency || tender.agency}`;
+            agencyName = tender.demand_agency || tender.agency;
         } else if (tender.agency && tender.agency.includes('조달청') && tender.demand_agency) {
-            agencyLabel = `수요: ${tender.demand_agency}`;
+            agencyName = tender.demand_agency;
         } else {
-            agencyLabel = `발주: ${tender.agency}`;
+            agencyName = tender.agency;
         }
 
         return `
@@ -383,19 +404,16 @@ function renderKeywordTenders(elementId, tenders, keywords) {
                         ${dismissButton(tender.id)}
                     </div>
                 </div>
-                <h4 class="font-medium text-gray-900 mt-1">
+                <h4 class="font-medium text-gray-900 mt-1 line-clamp-2">
                     <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
                         ${noticeBadges}${highlightedTitle}
                     </a>
                 </h4>
-                <div class="flex justify-between items-center text-sm text-gray-600 mt-1">
-                    <div class="flex items-center gap-2">
-                        <span>${agencyLabel}</span>
-                        ${announcedDate ? `<span class="text-xs text-gray-400">공고일: ${announcedDate}</span>` : ''}
-                    </div>
-                    <span>금액: ${price}</span>
+                <div class="flex flex-col gap-1 mt-2">
+                    <span class="text-sm text-gray-700 font-bold truncate">${agencyName}</span>
+                    <span class="text-sm text-blue-600 font-medium">${price}</span>
                 </div>
-                <div class="flex gap-3 mt-1 text-sm">
+                <div class="hidden sm:flex gap-3 mt-1 text-sm">
                     <a href="/tender/${tender.id}" class="text-blue-600 hover:underline">상세보기 →</a>
                     ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-600 hover:underline">원본 공고 →</a>` : ''}
                 </div>
@@ -448,37 +466,37 @@ function renderTenderList(elementId, tenders) {
             </span>`;
         }
 
-        let agencyLabel;
+        let agencyName;
         if (tender.source_site === '중소벤처 24') {
-            agencyLabel = `사업수행: ${tender.demand_agency || tender.agency}`;
+            agencyName = tender.demand_agency || tender.agency;
         } else if (tender.agency && tender.agency.includes('조달청') && tender.demand_agency) {
-            agencyLabel = `수요: ${tender.demand_agency}`;
+            agencyName = tender.demand_agency;
         } else {
-            agencyLabel = `발주: ${tender.agency}`;
+            agencyName = tender.agency;
         }
 
         return `
             <div class="tender-item">
-                <div class="flex justify-between items-start mb-2">
-                    <div class="flex-1">
+                <div class="flex justify-between items-start mb-1">
+                    <div class="flex flex-wrap items-center gap-1">
                         ${statusBadge}
                         ${keywordBadge}
-                        <h4 class="font-medium text-gray-900 mt-1">
-                            <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
-                                ${noticeBadges}${highlightedTitle}
-                            </a>
-                        </h4>
                     </div>
                     <div class="flex items-center gap-2 ml-2 shrink-0">
                         <span class="font-semibold ${deadlineClass}">${deadlineText}</span>
                         ${starButton(tender.id)}
                     </div>
                 </div>
-                <div class="flex justify-between items-center text-sm text-gray-600">
-                    <span>${agencyLabel}</span>
-                    <span>금액: ${price}</span>
+                <h4 class="font-medium text-gray-900 mt-1 line-clamp-2">
+                    <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
+                        ${noticeBadges}${highlightedTitle}
+                    </a>
+                </h4>
+                <div class="flex flex-col gap-1 mt-2">
+                    <span class="text-sm text-gray-700 font-bold truncate">${agencyName}</span>
+                    <span class="text-sm text-blue-600 font-medium">${price}</span>
                 </div>
-                <div class="flex gap-3 mt-2 text-sm">
+                <div class="hidden sm:flex gap-3 mt-1 text-sm">
                     <a href="/tender/${tender.id}" class="text-blue-600 hover:underline">상세보기 →</a>
                     ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-600 hover:underline">원본 공고 →</a>` : ''}
                 </div>

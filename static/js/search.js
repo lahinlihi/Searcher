@@ -1,5 +1,23 @@
 // 검색 페이지 JavaScript
 
+// ── 모바일 필터 드로어 ─────────────────────────────────────────────────────
+function openFilterDrawer() {
+    document.getElementById('filter-card').classList.add('drawer-open');
+    document.getElementById('filter-drawer-overlay').classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeFilterDrawer() {
+    document.getElementById('filter-card').classList.remove('drawer-open');
+    document.getElementById('filter-drawer-overlay').classList.remove('active');
+    document.body.style.overflow = '';
+}
+
+// 모바일 여부
+function isMobile() {
+    return window.innerWidth < 640;
+}
+
 // ── 매칭 점수 배지 (dashboard와 동일 형식) ──────────────────────────────────
 function buildScoreBadge(score, businessType, breakdown) {
     if (!score) return '<span class="text-xs text-gray-300">-</span>';
@@ -50,6 +68,119 @@ let currentResults = [];  // 현재 검색 결과 (정렬용)
 let searchSortField = 'announced';  // 기본: 발주일
 let searchSortDir   = 'desc';       // 기본: 최신순
 let interestMode    = null;         // 관심 키워드 검색 모드 {keywords, exclude_keywords}
+let selectedRegions = new Set();    // 선택된 광역시도
+let withinResultsQuery = '';        // 결과 내 검색 쿼리
+let searchPerformed = false;        // 검색 히어로 숨김 플래그
+
+// ── 검색 히어로 (초기 화면) ───────────────────────────────────────────────────
+function _hideSearchHero() {
+    if (searchPerformed) return;
+    searchPerformed = true;
+    const hero = document.getElementById('search-hero');
+    if (hero) hero.classList.add('hidden');
+}
+
+function doHeroSearch() {
+    const heroInput = document.getElementById('hero-search-input');
+    const mainKw    = document.getElementById('include-keywords');
+    const mobileKw  = document.getElementById('mobile-search-input');
+    if (heroInput && mainKw)   mainKw.value   = heroInput.value;
+    if (heroInput && mobileKw) mobileKw.value = heroInput.value;
+    searchTenders(1);
+}
+
+function heroStatusSearch(status) {
+    document.getElementById('status-filter').value = status;
+    searchTenders(1);
+}
+
+function openHeroOptions() {
+    if (isMobile()) {
+        openFilterDrawer();
+    } else {
+        _hideSearchHero();
+        setTimeout(() => {
+            document.getElementById('filter-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 50);
+    }
+}
+
+// ── 모바일 검색 함수 ──────────────────────────────────────────────────────────
+function doMobileSearch() {
+    const mobileInput = document.getElementById('mobile-search-input');
+    const mainKw      = document.getElementById('include-keywords');
+    if (mobileInput && mainKw) mainKw.value = mobileInput.value;
+    // 결과 내 검색 초기화
+    withinResultsQuery = '';
+    const withinInput = document.getElementById('within-results-input');
+    if (withinInput) withinInput.value = '';
+    const withinToggle = document.getElementById('within-results-toggle');
+    if (withinToggle) { withinToggle.checked = false; toggleWithinSearch(false); }
+    interestMode = null;
+    searchTenders(1);
+}
+
+// 결과 내 검색 체크박스 토글
+function toggleWithinSearch(checked) {
+    const box = document.getElementById('within-search-box');
+    if (!box) return;
+    if (checked) {
+        box.classList.remove('hidden');
+        document.getElementById('within-results-input')?.focus();
+    } else {
+        box.classList.add('hidden');
+        filterWithinResults('');
+    }
+}
+
+// 결과 내 검색 (클라이언트 사이드 필터)
+function filterWithinResults(query) {
+    withinResultsQuery = (query || '').trim().toLowerCase();
+    const filtered = withinResultsQuery
+        ? currentResults.filter(t => {
+            const text = [t.title || '', t.agency || '', t.demand_agency || ''].join(' ').toLowerCase();
+            return text.includes(withinResultsQuery);
+        })
+        : currentResults;
+    renderResults(sortItems(filtered));
+    const countEl = document.getElementById('result-count');
+    if (countEl) {
+        countEl.textContent = withinResultsQuery
+            ? `${filtered.length} / ${currentResults.length}`
+            : currentResults.length;
+    }
+}
+
+// 모바일 정렬 기준 변경
+function onMobileSortFieldChange(field) {
+    searchSortField = field;
+    // 기준마다 기본 방향 설정
+    searchSortDir = (field === 'days') ? 'asc' : 'desc';
+    _syncMobileSortDirBtn();
+    _reRenderWithFilter();
+}
+
+// 모바일 정렬 방향 토글
+function toggleMobileSortDir() {
+    searchSortDir = searchSortDir === 'asc' ? 'desc' : 'asc';
+    _syncMobileSortDirBtn();
+    _reRenderWithFilter();
+}
+
+function _syncMobileSortDirBtn() {
+    const btn = document.getElementById('mobile-sort-dir-btn');
+    if (btn) btn.textContent = searchSortDir === 'asc' ? '↑' : '↓';
+}
+
+function _reRenderWithFilter() {
+    const filtered = withinResultsQuery
+        ? currentResults.filter(t => {
+            const text = [t.title || '', t.agency || '', t.demand_agency || ''].join(' ').toLowerCase();
+            return text.includes(withinResultsQuery);
+        })
+        : currentResults;
+    renderResults(sortItems(filtered));
+}
 
 // 공통 정렬 함수
 // 마감일 정렬: 일반 공고(요청 방향) → 사전규격(오래 남은 순) 으로 그룹 분리
@@ -101,12 +232,37 @@ function setSearchSort(field) {
 document.addEventListener('DOMContentLoaded', function() {
     loadBookmarkedIds();
 
+    // ── 모바일 입력 동기화 (하단 검색바 ↔ 드로어 내 포함키워드) ───────────
+    const mobileInput = document.getElementById('mobile-search-input');
+    const mainKw      = document.getElementById('include-keywords');
+    if (mobileInput && mainKw) {
+        mobileInput.addEventListener('input', () => { mainKw.value = mobileInput.value; });
+        mainKw.addEventListener('input', () => { mobileInput.value = mainKw.value; });
+    }
+
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('use_interest') === '1') {
         applyInterestAndSearch();
     } else if (urlParams.get('filter')) {
         applyDashboardFilter(urlParams.get('filter'));
     }
+
+    // 화면 크기 변경 시 결과 재렌더링 + 모바일 상태 정리
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+            // 데스크톱으로 전환 시 드로어 상태 초기화
+            if (!isMobile()) {
+                document.getElementById('filter-card').classList.remove('drawer-open');
+                document.getElementById('filter-drawer-overlay').classList.remove('active');
+                document.body.style.overflow = '';
+            }
+            if (currentResults.length > 0) {
+                renderResults(sortItems(currentResults));
+            }
+        }, 200);
+    });
 });
 
 async function applyInterestAndSearch() {
@@ -158,6 +314,34 @@ function applyDashboardFilter(filter) {
     searchTenders(1);
 }
 
+// 지역 배지 토글
+function toggleRegion(region) {
+    const btn = document.getElementById(`region-${region}`);
+    if (selectedRegions.has(region)) {
+        selectedRegions.delete(region);
+        btn.classList.remove('selected');
+    } else {
+        selectedRegions.add(region);
+        btn.classList.add('selected');
+    }
+}
+
+// 금액 프리셋 (min/max는 만원 단위)
+function setAmountPreset(min, max) {
+    document.getElementById('min-price').value = min !== null ? min : '';
+    document.getElementById('max-price').value = max !== null ? max : '';
+    // 활성 버튼 강조
+    document.querySelectorAll('.amount-preset-btn').forEach(b => b.classList.remove('active'));
+    event.currentTarget.classList.add('active');
+}
+
+function clearAmountPreset() {
+    document.getElementById('min-price').value = '';
+    document.getElementById('max-price').value = '';
+    document.querySelectorAll('.amount-preset-btn').forEach(b => b.classList.remove('active'));
+    event.currentTarget.classList.add('active');
+}
+
 async function loadBookmarkedIds() {
     try {
         const res = await fetch('/api/bookmarks/ids');
@@ -199,6 +383,7 @@ function starButton(tenderId) {
 
 // 검색 실행
 async function searchTenders(page = 1) {
+    _hideSearchHero();
     currentPage = page;
 
     const includeKeywords = interestMode
@@ -230,6 +415,15 @@ async function searchTenders(page = 1) {
     const deadlineDateTo = document.getElementById('deadline-date-to').value;
     const includeExpired = document.getElementById('include-expired').checked;
 
+    // 신규 필터
+    const minPriceVal = document.getElementById('min-price').value;
+    const maxPriceVal = document.getElementById('max-price').value;
+    const minPrice = minPriceVal !== '' ? Math.round(parseFloat(minPriceVal) * 10000) : '';
+    const maxPrice = maxPriceVal !== '' ? Math.round(parseFloat(maxPriceVal) * 10000) : '';
+    const regionsStr = Array.from(selectedRegions).join(',');
+    const demandAgencyInclude = document.getElementById('demand-agency-include').value;
+    const demandAgencyExclude = document.getElementById('demand-agency-exclude').value;
+
     try {
         const params = new URLSearchParams({
             page: page,
@@ -243,6 +437,11 @@ async function searchTenders(page = 1) {
             deadline_date_to: deadlineDateTo,
             include_expired: includeExpired ? '1' : '0'
         });
+        if (minPrice !== '') params.append('min_price', minPrice);
+        if (maxPrice !== '') params.append('max_price', maxPrice);
+        if (regionsStr) params.append('regions', regionsStr);
+        if (demandAgencyInclude) params.append('demand_agency_include', demandAgencyInclude);
+        if (demandAgencyExclude) params.append('demand_agency_exclude', demandAgencyExclude);
 
         const response = await fetch(`/api/tenders?${params}`);
         const data = await response.json();
@@ -278,14 +477,71 @@ async function searchTenders(page = 1) {
             announcedDateTo,
             deadlineDateFrom,
             deadlineDateTo,
-            includeExpired
+            includeExpired,
+            minPriceVal,
+            maxPriceVal,
+            regions: Array.from(selectedRegions),
+            demandAgencyInclude,
+            demandAgencyExclude
         });
 
         // 스크롤을 맨 위로 이동
         document.getElementById('results-wrapper').scrollTop = 0;
 
+        // 모바일 드로어 닫기
+        if (isMobile()) closeFilterDrawer();
+
+        // 모바일 결과 도구 표시/숨김
+        const mobileTools = document.getElementById('mobile-results-tools');
+        if (mobileTools) {
+            if (currentResults.length > 0) {
+                mobileTools.classList.remove('hidden');
+            } else {
+                mobileTools.classList.add('hidden');
+            }
+        }
+        // 결과 내 검색 초기화
+        withinResultsQuery = '';
+        const withinInput = document.getElementById('within-results-input');
+        if (withinInput) withinInput.value = '';
+
+        // 모바일 하단 검색바 동기화
+        const mobileInputEl = document.getElementById('mobile-search-input');
+        if (mobileInputEl) mobileInputEl.value = interestMode ? '' : includeKeywords;
+
+        // 활성 필터 카운트 뱃지 업데이트
+        updateFilterCountBadge();
+
     } catch (error) {
         console.error('Failed to search:', error);
+    }
+}
+
+function updateFilterCountBadge() {
+    let count = 0;
+    if (interestMode) { count++; }
+    else {
+        if (document.getElementById('include-keywords').value) count++;
+        if (document.getElementById('exclude-keywords').value) count++;
+    }
+    if (document.getElementById('status-filter').value) count++;
+    if (document.getElementById('announced-date-from').value || document.getElementById('announced-date-to').value) count++;
+    if (document.getElementById('deadline-date-from').value || document.getElementById('deadline-date-to').value) count++;
+    if (document.getElementById('min-price').value || document.getElementById('max-price').value) count++;
+    if (selectedRegions.size > 0) count++;
+    if (document.getElementById('demand-agency-include').value) count++;
+    if (document.getElementById('demand-agency-exclude').value) count++;
+    if (document.getElementById('include-expired').checked) count++;
+
+    // 히어로 옵션 배지
+    const optBadge = document.getElementById('mobile-option-badge');
+    if (optBadge) {
+        if (count > 0) {
+            optBadge.textContent = count;
+            optBadge.classList.remove('hidden');
+        } else {
+            optBadge.classList.add('hidden');
+        }
     }
 }
 
@@ -312,8 +568,125 @@ function sortArrow(field) {
     return `<span style="color:#2563EB;font-size:0.8em;">${searchSortDir === 'asc' ? '↑' : '↓'}</span>`;
 }
 
-// 결과 렌더링
+// 결과 렌더링 (모바일/데스크톱 분기)
 function renderResults(tenders) {
+    if (isMobile()) {
+        renderResultsMobile(tenders);
+        return;
+    }
+    renderResultsDesktop(tenders);
+}
+
+// ── 모바일 카드 레이아웃 ─────────────────────────────────────────────────
+function renderResultsMobile(tenders) {
+    const container = document.getElementById('results-container');
+
+    if (!tenders || tenders.length === 0) {
+        container.className = 'p-4';
+        container.innerHTML = '<p class="text-gray-500 text-sm">검색 결과가 없습니다.</p>';
+        return;
+    }
+
+    container.className = 'p-3 space-y-2';
+
+    const isExpiredTender = t => t.days_left !== null && t.days_left < 0;
+
+    const makeCard = (tender) => {
+        const isPre = tender.status === '사전규격';
+        const isExpired = isExpiredTender(tender);
+
+        let rowClass = '';
+        if (isExpired && isPre) rowClass = 'expired-pre-row';
+        else if (isExpired) rowClass = 'expired-row';
+        else if (isPre) rowClass = 'pre-row';
+
+        let statusBadge;
+        if (isExpired && isPre) statusBadge = '<span class="badge-expired-pre">사전↓</span>';
+        else if (isExpired) statusBadge = '<span class="badge-expired">마감</span>';
+        else if (isPre) statusBadge = '<span class="badge-pre">사전</span>';
+        else statusBadge = '<span class="badge-normal">일반</span>';
+
+        const daysLeft = tender.days_left;
+        let deadlineHtml;
+        if (isExpired) {
+            deadlineHtml = `<span style="color:#9CA3AF;font-size:0.7rem;">D+${Math.abs(daysLeft)}</span>`;
+        } else if (daysLeft != null) {
+            const cls = daysLeft <= 2 ? 'deadline-urgent' : daysLeft <= 5 ? 'deadline-soon' : 'deadline-normal';
+            deadlineHtml = `<span class="${cls} font-semibold text-xs">D-${daysLeft}</span>`;
+        } else {
+            deadlineHtml = '<span class="text-xs text-gray-400">-</span>';
+        }
+
+        const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
+        const highlightedTitle = highlightKeywords(cleanNoticeTitle(tender.title));
+        const noticeBadges = getNoticeBadgesHtml(tender.title);
+        const announcedDate = tender.announced_date ? tender.announced_date.substring(5, 10) : '-';
+
+        const isJodal = tender.agency && tender.agency.includes('조달청');
+        let displayAgency;
+        if (tender.source_site === '중소벤처 24') {
+            displayAgency = tender.demand_agency || tender.agency;
+        } else {
+            displayAgency = (isJodal && tender.demand_agency) ? tender.demand_agency : tender.agency;
+        }
+
+        const scoreBadge = buildScoreBadge(tender.relevance_score ?? null, tender.business_type || '기타', tender.score_breakdown || null);
+        const starBtn = starButton(tender.id);
+        const titleStyle = isExpired ? ' style="color:#9CA3AF;"' : '';
+
+        return `
+        <div class="tender-card ${rowClass}">
+            <div class="flex items-start justify-between gap-2 mb-1.5">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                    ${statusBadge}
+                    ${scoreBadge}
+                    ${noticeBadges}
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                    ${starBtn}
+                    ${deadlineHtml}
+                </div>
+            </div>
+            <a href="/tender/${tender.id}" class="card-title-link block mb-1.5"${titleStyle}>${highlightedTitle}</a>
+            <div class="flex items-center justify-between gap-2">
+                <div>
+                    <div class="card-agency truncate max-w-[200px]" title="${(displayAgency || '').replace(/"/g,'&quot;')}">${displayAgency || '-'}</div>
+                    <div class="card-meta mt-0.5">${price} · ${announcedDate}</div>
+                </div>
+                <div class="shrink-0">
+                    ${tender.url ? `<a href="${tender.url}" target="_blank" class="origin-link text-xs border border-gray-200 rounded px-2 py-1">원본</a>` : ''}
+                </div>
+            </div>
+        </div>`;
+    };
+
+    const sectionLabel = (label, count) =>
+        `<div class="card-section-label">🔖 ${label} (${count}건)</div>`;
+
+    const activeTenders  = tenders.filter(t => !isExpiredTender(t));
+    const expiredPre     = tenders.filter(t => isExpiredTender(t) && t.status === '사전규격');
+    const expiredGeneral = tenders.filter(t => isExpiredTender(t) && t.status !== '사전규격');
+    const hasExpired     = expiredPre.length > 0 || expiredGeneral.length > 0;
+
+    let html = '';
+    if (activeTenders.length > 0) {
+        if (hasExpired) html += sectionLabel('진행중', activeTenders.length);
+        html += activeTenders.map(makeCard).join('');
+    }
+    if (expiredPre.length > 0) {
+        html += sectionLabel('마감된 사전규격', expiredPre.length);
+        html += expiredPre.map(makeCard).join('');
+    }
+    if (expiredGeneral.length > 0) {
+        html += sectionLabel('마감된 일반공고', expiredGeneral.length);
+        html += expiredGeneral.map(makeCard).join('');
+    }
+
+    container.innerHTML = html;
+}
+
+// ── 데스크톱 테이블 레이아웃 ─────────────────────────────────────────────
+function renderResultsDesktop(tenders) {
     const container = document.getElementById('results-container');
 
     if (!tenders || tenders.length === 0) {
@@ -471,54 +844,50 @@ function renderPagination(currentPage, totalPages) {
     }
 
     container.classList.remove('hidden');
-    let html = '';
 
-    // 이전 버튼
-    if (currentPage > 1) {
-        html += `<button onclick="searchTenders(${currentPage - 1})" class="px-3 py-1 border rounded hover:bg-gray-100 text-sm">이전</button>`;
+    const btnCls = 'w-9 h-9 flex items-center justify-center border rounded text-sm font-medium transition-colors';
+    const activeCls = btnCls + ' bg-blue-600 text-white border-blue-600 cursor-default';
+    const normalCls = btnCls + ' bg-white hover:bg-gray-100 text-gray-700';
+    const disabledCls = btnCls + ' bg-white text-gray-300 border-gray-200 cursor-not-allowed';
+
+    const firstBtn  = currentPage > 1
+        ? `<button onclick="searchTenders(1)" class="${normalCls}" title="첫 페이지">«</button>`
+        : `<button class="${disabledCls}" disabled>«</button>`;
+
+    const prevBtn   = currentPage > 1
+        ? `<button onclick="searchTenders(${currentPage - 1})" class="${normalCls}" title="이전 페이지">‹</button>`
+        : `<button class="${disabledCls}" disabled>‹</button>`;
+
+    const nextBtn   = currentPage < totalPages
+        ? `<button onclick="searchTenders(${currentPage + 1})" class="${normalCls}" title="다음 페이지">›</button>`
+        : `<button class="${disabledCls}" disabled>›</button>`;
+
+    const lastBtn   = currentPage < totalPages
+        ? `<button onclick="searchTenders(${totalPages})" class="${normalCls}" title="마지막 페이지 (${totalPages})">»</button>`
+        : `<button class="${disabledCls}" disabled>»</button>`;
+
+    // 현재 페이지 — 직접 입력 가능한 input
+    const pageInput = `
+        <div class="flex items-center gap-1.5 text-sm text-gray-600">
+            <input id="page-input" type="number" value="${currentPage}" min="1" max="${totalPages}"
+                   class="w-14 h-9 text-center border rounded font-semibold text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                   onkeydown="if(event.key==='Enter'){goToPage(this.value,${totalPages})}"
+                   onblur="goToPage(this.value,${totalPages})">
+            <span class="text-gray-400">/ ${totalPages}</span>
+        </div>`;
+
+    container.innerHTML = `${firstBtn}${prevBtn}${pageInput}${nextBtn}${lastBtn}`;
+}
+
+function goToPage(val, totalPages) {
+    const page = parseInt(val, 10);
+    if (isNaN(page) || page < 1 || page > totalPages) {
+        // 유효하지 않으면 현재 페이지로 되돌림
+        const input = document.getElementById('page-input');
+        if (input) input.value = currentPage;
+        return;
     }
-
-    // 페이지 번호 표시 로직
-    const maxPagesToShow = 10;
-    let startPage = Math.max(1, currentPage - Math.floor(maxPagesToShow / 2));
-    let endPage = Math.min(totalPages, startPage + maxPagesToShow - 1);
-
-    // startPage 조정
-    if (endPage - startPage < maxPagesToShow - 1) {
-        startPage = Math.max(1, endPage - maxPagesToShow + 1);
-    }
-
-    // 첫 페이지
-    if (startPage > 1) {
-        html += `<button onclick="searchTenders(1)" class="px-3 py-1 border rounded hover:bg-gray-100 text-sm">1</button>`;
-        if (startPage > 2) {
-            html += `<span class="px-2 text-gray-500">...</span>`;
-        }
-    }
-
-    // 페이지 번호
-    for (let i = startPage; i <= endPage; i++) {
-        const activeClass = i === currentPage ? 'bg-blue-600 text-white' : 'bg-white hover:bg-gray-100';
-        html += `<button onclick="searchTenders(${i})" class="px-3 py-1 border rounded ${activeClass} text-sm">${i}</button>`;
-    }
-
-    // 마지막 페이지
-    if (endPage < totalPages) {
-        if (endPage < totalPages - 1) {
-            html += `<span class="px-2 text-gray-500">...</span>`;
-        }
-        html += `<button onclick="searchTenders(${totalPages})" class="px-3 py-1 border rounded hover:bg-gray-100 text-sm">${totalPages}</button>`;
-    }
-
-    // 다음 버튼
-    if (currentPage < totalPages) {
-        html += `<button onclick="searchTenders(${currentPage + 1})" class="px-3 py-1 border rounded hover:bg-gray-100 text-sm">다음</button>`;
-    }
-
-    // 페이지 정보 표시
-    html += `<span class="ml-4 text-sm text-gray-600">페이지 ${currentPage} / ${totalPages}</span>`;
-
-    container.innerHTML = html;
+    if (page !== currentPage) searchTenders(page);
 }
 
 // 적용된 필터 표시
@@ -663,6 +1032,68 @@ function displayActiveFilters(filters) {
         hasFilters = true;
     }
 
+    // 금액 범위
+    if (filters.minPriceVal !== '' || filters.maxPriceVal !== '') {
+        const minTxt = filters.minPriceVal !== '' ? `${Number(filters.minPriceVal).toLocaleString()}만원` : '0';
+        const maxTxt = filters.maxPriceVal !== '' ? `${Number(filters.maxPriceVal).toLocaleString()}만원` : '∞';
+        html += `
+            <span class="inline-flex items-center gap-1 px-3 py-1 bg-indigo-100 text-indigo-800 text-sm rounded-full">
+                <span>금액: ${minTxt} ~ ${maxTxt}</span>
+                <button onclick="removeFilter('amount', '')" class="hover:bg-indigo-200 rounded-full p-0.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </span>
+        `;
+        hasFilters = true;
+    }
+
+    // 지역
+    if (filters.regions && filters.regions.length > 0) {
+        html += `
+            <span class="inline-flex items-center gap-1 px-3 py-1 bg-teal-100 text-teal-800 text-sm rounded-full">
+                <span>지역: ${filters.regions.join(', ')}</span>
+                <button onclick="removeFilter('regions', '')" class="hover:bg-teal-200 rounded-full p-0.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </span>
+        `;
+        hasFilters = true;
+    }
+
+    // 수요기관 포함
+    if (filters.demandAgencyInclude) {
+        html += `
+            <span class="inline-flex items-center gap-1 px-3 py-1 bg-cyan-100 text-cyan-800 text-sm rounded-full">
+                <span>수요기관: ${filters.demandAgencyInclude}</span>
+                <button onclick="removeFilter('demand-agency-include', '')" class="hover:bg-cyan-200 rounded-full p-0.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </span>
+        `;
+        hasFilters = true;
+    }
+
+    // 수요기관 제외
+    if (filters.demandAgencyExclude) {
+        html += `
+            <span class="inline-flex items-center gap-1 px-3 py-1 bg-rose-100 text-rose-800 text-sm rounded-full">
+                <span>수요기관 제외: ${filters.demandAgencyExclude}</span>
+                <button onclick="removeFilter('demand-agency-exclude', '')" class="hover:bg-rose-200 rounded-full p-0.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </span>
+        `;
+        hasFilters = true;
+    }
+
     // 필터가 있으면 표시, 없으면 숨김
     if (hasFilters) {
         container.innerHTML = html;
@@ -698,6 +1129,17 @@ function removeFilter(type, value) {
         document.getElementById('deadline-date-to').value = '';
     } else if (type === 'include-expired') {
         document.getElementById('include-expired').checked = false;
+    } else if (type === 'amount') {
+        document.getElementById('min-price').value = '';
+        document.getElementById('max-price').value = '';
+        document.querySelectorAll('.amount-preset-btn').forEach(b => b.classList.remove('active'));
+    } else if (type === 'regions') {
+        selectedRegions.clear();
+        document.querySelectorAll('.region-badge').forEach(b => b.classList.remove('selected'));
+    } else if (type === 'demand-agency-include') {
+        document.getElementById('demand-agency-include').value = '';
+    } else if (type === 'demand-agency-exclude') {
+        document.getElementById('demand-agency-exclude').value = '';
     }
 
     // 다시 검색
@@ -721,9 +1163,21 @@ function resetFilters() {
     document.getElementById('deadline-date-from').value = '';
     document.getElementById('deadline-date-to').value = '';
     document.getElementById('include-expired').checked = false;
+    document.getElementById('min-price').value = '';
+    document.getElementById('max-price').value = '';
+    document.getElementById('demand-agency-include').value = '';
+    document.getElementById('demand-agency-exclude').value = '';
+    selectedRegions.clear();
+    document.querySelectorAll('.region-badge').forEach(b => b.classList.remove('selected'));
+    document.querySelectorAll('.amount-preset-btn').forEach(b => b.classList.remove('active'));
+
+    // 모바일 하단 검색바 초기화
+    const mobileInputEl = document.getElementById('mobile-search-input');
+    if (mobileInputEl) mobileInputEl.value = '';
 
     // 적용된 필터 표시 숨김
     document.getElementById('active-filters-container').classList.add('hidden');
+    updateFilterCountBadge();
 }
 
 // Excel 내보내기

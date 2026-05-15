@@ -89,7 +89,7 @@ def api_memo_tenders():
         for tender, memo_count, latest_memo_at in rows:
             d = tender.to_dict()
             d['memo_count'] = memo_count
-            d['latest_memo_at'] = latest_memo_at.isoformat() if latest_memo_at else None
+            d['latest_memo_at'] = (latest_memo_at.isoformat() + 'Z') if latest_memo_at else None
             d['latest_memo'] = _latest_memos.get(tender.id)
             data.append(d)
 

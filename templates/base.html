@@ -19,46 +19,34 @@
 <body class="bg-gray-50">
     <!-- Navigation -->
     <nav class="bg-white shadow-sm border-b sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-between h-16">
+        <div class="px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-14 sm:h-16">
+                <!-- 로고 + 데스크톱 메뉴 -->
                 <div class="flex">
                     <div class="flex-shrink-0 flex items-center">
-                        <h1 class="text-xl font-bold text-blue-600">입찰공고 통합 검색</h1>
+                        <a href="/" class="text-lg sm:text-xl font-bold text-blue-600">입찰공고 통합 검색</a>
                     </div>
-                    <div class="hidden sm:ml-6 sm:flex sm:space-x-8">
-                        <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">
-                            메인화면
-                        </a>
-                        <a href="/search" class="nav-link {% if request.path == '/search' %}active{% endif %}">
-                            상세검색
-                        </a>
-                        <a href="/bookmarks" class="nav-link {% if request.path == '/bookmarks' %}active{% endif %}">
-                            관심공고
-                        </a>
+                    <div class="hidden sm:ml-6 sm:flex sm:space-x-4">
+                        <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">메인화면</a>
+                        <a href="/search" class="nav-link {% if request.path == '/search' %}active{% endif %}">상세검색</a>
+                        <a href="/bookmarks" class="nav-link {% if request.path == '/bookmarks' %}active{% endif %}">관심공고</a>
                         {% if g.user %}
-                        <a href="/filters" class="nav-link {% if request.path == '/filters' %}active{% endif %}">
-                            필터관리
-                        </a>
+                        <a href="/filters" class="nav-link {% if request.path == '/filters' %}active{% endif %}">필터관리</a>
                         {% endif %}
                         {% if g.user and g.user.role in ('admin', 'moderator') %}
-                        <a href="/admin/users" class="nav-link {% if request.path == '/admin/users' %}active{% endif %}">
-                            회원관리
-                        </a>
+                        <a href="/admin/users" class="nav-link {% if request.path == '/admin/users' %}active{% endif %}">회원관리</a>
                         {% endif %}
                         {% if g.user and g.user.role == 'admin' %}
-                        <a href="/settings" class="nav-link {% if request.path == '/settings' %}active{% endif %}">
-                            설정
-                        </a>
-                        <a href="/logs" class="nav-link {% if request.path == '/logs' %}active{% endif %}">
-                            로그
-                        </a>
+                        <a href="/settings" class="nav-link {% if request.path == '/settings' %}active{% endif %}">설정</a>
+                        <a href="/logs" class="nav-link {% if request.path == '/logs' %}active{% endif %}">로그</a>
                         {% endif %}
                     </div>
                 </div>
-                <!-- 사용자 정보 & 로그아웃 -->
-                {% if g.user %}
-                <div class="flex items-center gap-3">
-                    <span class="text-sm text-gray-600">
+
+                <!-- 우측: 사용자 정보 + 햄버거 -->
+                <div class="flex items-center gap-2 sm:gap-3">
+                    {% if g.user %}
+                    <span class="hidden sm:inline text-sm text-gray-600">
                         <span class="font-medium text-gray-800">{{ g.user.display_name }}</span>
                         {% if g.user.role == 'admin' %}
                         <span class="ml-1 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-semibold">Admin</span>
@@ -66,7 +54,43 @@
                         <span class="ml-1 text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-semibold">중간관리자</span>
                         {% endif %}
                     </span>
-                    <a href="/logout" class="text-sm text-gray-500 hover:text-red-600 transition-colors border border-gray-200 rounded px-2 py-1">로그아웃</a>
+                    <a href="/logout" class="hidden sm:inline text-sm text-gray-500 hover:text-red-600 transition-colors border border-gray-200 rounded px-2 py-1">로그아웃</a>
+                    {% endif %}
+
+                    <!-- 햄버거 버튼 (모바일 전용) -->
+                    <button id="mobile-menu-btn" onclick="toggleMobileMenu()"
+                            class="sm:hidden inline-flex items-center justify-center p-2 rounded-md text-gray-500 hover:text-blue-600 hover:bg-gray-100 transition-colors">
+                        <svg id="hamburger-icon" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        </svg>
+                        <svg id="close-icon" class="h-6 w-6 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 모바일 드롭다운 메뉴 -->
+        <div id="mobile-menu" class="hidden sm:hidden border-t bg-white shadow-lg">
+            <div class="px-4 py-2 space-y-0.5">
+                <a href="/" class="mobile-nav-link {% if request.path == '/' %}active{% endif %}">메인화면</a>
+                <a href="/search" class="mobile-nav-link {% if request.path == '/search' %}active{% endif %}">상세검색</a>
+                <a href="/bookmarks" class="mobile-nav-link {% if request.path == '/bookmarks' %}active{% endif %}">관심공고</a>
+                {% if g.user %}
+                <a href="/filters" class="mobile-nav-link {% if request.path == '/filters' %}active{% endif %}">필터관리</a>
+                {% endif %}
+                {% if g.user and g.user.role in ('admin', 'moderator') %}
+                <a href="/admin/users" class="mobile-nav-link {% if request.path == '/admin/users' %}active{% endif %}">회원관리</a>
+                {% endif %}
+                {% if g.user and g.user.role == 'admin' %}
+                <a href="/settings" class="mobile-nav-link {% if request.path == '/settings' %}active{% endif %}">설정</a>
+                <a href="/logs" class="mobile-nav-link {% if request.path == '/logs' %}active{% endif %}">로그</a>
+                {% endif %}
+                {% if g.user %}
+                <div class="border-t mt-2 pt-2 flex items-center justify-between">
+                    <span class="text-sm text-gray-600 font-medium">{{ g.user.display_name }}</span>
+                    <a href="/logout" class="text-sm text-red-500 hover:text-red-700 font-medium">로그아웃</a>
                 </div>
                 {% endif %}
             </div>
@@ -74,23 +98,33 @@
     </nav>
 
     <!-- Main Content -->
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <main class="px-3 sm:px-6 lg:px-8 py-4 sm:py-8">
         {% block content %}{% endblock %}
     </main>
 
     <!-- Footer -->
-    <footer class="bg-white border-t mt-12">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-            <p class="text-center text-sm text-gray-500">
-                입찰공고 통합 검색 시스템 v1.0 | localhost:5000
+    <footer class="bg-white border-t mt-8 sm:mt-12">
+        <div class="px-4 py-4">
+            <p class="text-center text-xs sm:text-sm text-gray-500">
+                입찰공고 통합 검색 시스템 v1.0
             </p>
         </div>
     </footer>
 
-    <!-- jQuery (DataTables용) -->
+    <!-- jQuery -->
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 
-    <!-- Custom JS -->
+    <script>
+    function toggleMobileMenu() {
+        const menu = document.getElementById('mobile-menu');
+        const hamburger = document.getElementById('hamburger-icon');
+        const closeBtn = document.getElementById('close-icon');
+        menu.classList.toggle('hidden');
+        hamburger.classList.toggle('hidden');
+        closeBtn.classList.toggle('hidden');
+    }
+    </script>
+
     {% block extra_js %}{% endblock %}
 </body>
 </html>

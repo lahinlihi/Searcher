@@ -4,15 +4,6 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- 페이지 헤더 -->
-    <div class="flex justify-between items-center">
-        <div>
-            <h2 class="text-2xl font-bold text-gray-900">관심공고</h2>
-            <p class="text-sm text-gray-500 mt-1">스크랩한 공고와 관심없음 목록을 관리합니다</p>
-        </div>
-        <button onclick="refreshCurrentTab()" class="btn-secondary text-sm">새로고침</button>
-    </div>
-
     <!-- 탭 -->
     <div class="border-b border-gray-200">
         <nav class="flex gap-1">
@@ -29,7 +20,7 @@
             <button id="tab-memos"
                 onclick="switchTab('memos')"
                 class="tab-btn px-5 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">
-                ✎ 메모 공고 <span id="memos-count" class="ml-1 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full">-</span>
+                ✎ 메모 <span id="memos-count" class="ml-1 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full">-</span>
             </button>
         </nav>
     </div>

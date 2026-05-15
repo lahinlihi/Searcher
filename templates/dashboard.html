@@ -1,64 +1,56 @@
 {% extends "base.html" %}
 
-{% block title %}대시보드 - 입찰공고 통합 검색 시스템{% endblock %}
+{% block title %}메인화면 - 입찰공고 통합 검색 시스템{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
-    <!-- 페이지 헤더 -->
-    <div class="flex justify-between items-center">
-        <h2 class="text-2xl font-bold text-gray-900">대시보드</h2>
-        <button onclick="refreshDashboard()" class="btn-primary">
-            새로고침
-        </button>
-    </div>
-
     <!-- 오늘의 요약 -->
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div class="stat-card" onclick="gotoSearch('new')" title="신규공고 목록 보기">
-            <div class="stat-icon bg-green-100 text-green-600">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="stat-card stat-green" onclick="gotoSearch('new')" title="신규공고 목록 보기">
+            <div class="stat-icon bg-green-400 text-white">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
                 </svg>
             </div>
             <div>
-                <p class="stat-label">신규 공고</p>
-                <p class="stat-value" id="new-today">0</p>
+                <p class="stat-label stat-label-colored">신규 공고</p>
+                <p class="stat-value stat-value-colored" id="new-today">0</p>
             </div>
         </div>
 
-        <div class="stat-card" onclick="gotoSearch('pre')" title="사전규격 목록 보기">
-            <div class="stat-icon bg-blue-100 text-blue-600">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="stat-card stat-blue" onclick="gotoSearch('pre')" title="사전규격 목록 보기">
+            <div class="stat-icon bg-blue-400 text-white">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                 </svg>
             </div>
             <div>
-                <p class="stat-label">사전규격</p>
-                <p class="stat-value" id="pre-announcement">0</p>
+                <p class="stat-label stat-label-colored">사전규격</p>
+                <p class="stat-value stat-value-colored" id="pre-announcement">0</p>
             </div>
         </div>
 
-        <div class="stat-card" onclick="gotoSearch('deadline')" title="마감임박 목록 보기 (3일 이내)">
-            <div class="stat-icon bg-red-100 text-red-600">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="stat-card stat-orange" onclick="gotoSearch('deadline')" title="마감임박 목록 보기 (3일 이내)">
+            <div class="stat-icon bg-orange-400 text-white">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                 </svg>
             </div>
             <div>
-                <p class="stat-label">마감 임박</p>
-                <p class="stat-value" id="deadline-soon">0</p>
+                <p class="stat-label stat-label-colored">마감 임박</p>
+                <p class="stat-value stat-value-colored" id="deadline-soon">0</p>
             </div>
         </div>
 
-        <div class="stat-card" onclick="gotoSearch('all')" title="전체 공고 목록 보기">
-            <div class="stat-icon bg-purple-100 text-purple-600">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="stat-card stat-purple" onclick="gotoSearch('all')" title="전체 공고 목록 보기">
+            <div class="stat-icon bg-purple-400 text-white">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                 </svg>
             </div>
             <div>
-                <p class="stat-label">총 공고</p>
-                <p class="stat-value" id="total-tenders">0</p>
+                <p class="stat-label stat-label-colored">총 공고</p>
+                <p class="stat-value stat-value-colored" id="total-tenders">0</p>
             </div>
         </div>
     </div>
@@ -81,9 +73,9 @@
             <div class="flex justify-between items-center flex-wrap gap-2">
                 <div>
                     <h3 class="card-title">사전규격 (나라장터)</h3>
-                    <p class="text-sm text-gray-600 mt-1">관심 키워드 · 금액 범위 · 제외 키워드 필터 적용 (마감 전, 점수순 상위 20건)</p>
+                    <p class="hidden sm:block text-sm text-gray-600 mt-1">관심 키워드 · 금액 범위 · 제외 키워드 필터 적용 (마감 전, 점수순 상위 20건)</p>
                 </div>
-                <div class="flex items-center gap-1 shrink-0">
+                <div class="hidden sm:flex items-center gap-1 shrink-0">
                     <span class="text-xs text-gray-400">정렬:</span>
                     <button onclick="setDashSort('pre','score')"    data-section="pre" data-sort="score"    class="sort-btn dash-sort-btn">점수</button>
                     <button onclick="setDashSort('pre','title')"    data-section="pre" data-sort="title"    class="sort-btn dash-sort-btn">사업명</button>
@@ -93,6 +85,21 @@
                     <button onclick="setDashSort('pre','budget')"   data-section="pre" data-sort="budget"   class="sort-btn dash-sort-btn">금액</button>
                 </div>
             </div>
+        </div>
+        <!-- 모바일 정렬 -->
+        <div class="sm:hidden flex items-center gap-2 px-4 py-2 border-b bg-gray-50">
+            <span class="text-xs text-gray-500 shrink-0 font-medium">정렬</span>
+            <select id="dash-mobile-sort-pre" onchange="onDashMobileSortChange('pre', this.value)"
+                    class="flex-1 text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                <option value="score">점수</option>
+                <option value="title">사업명</option>
+                <option value="agency">기관</option>
+                <option value="announced">공고일</option>
+                <option value="days">마감일</option>
+                <option value="budget">금액</option>
+            </select>
+            <button id="dash-mobile-dir-pre" onclick="toggleDashMobileSortDir('pre')"
+                    class="shrink-0 w-9 h-9 flex items-center justify-center border border-gray-300 rounded-lg bg-white text-gray-700 hover:bg-gray-100 transition-colors text-lg font-bold select-none">↓</button>
         </div>
         <div class="card-body">
             <div id="pre-tenders-list" class="scrollable-list space-y-3">
@@ -107,9 +114,9 @@
             <div class="flex justify-between items-center flex-wrap gap-2">
                 <div>
                     <h3 class="card-title">신규공고 (나라장터 API)</h3>
-                    <p class="text-sm text-gray-600 mt-1">관심 키워드 · 금액 범위 · 제외 키워드 필터 적용 (최근 7일, 점수순 상위 20건)</p>
+                    <p class="hidden sm:block text-sm text-gray-600 mt-1">관심 키워드 · 금액 범위 · 제외 키워드 필터 적용 (최근 7일, 점수순 상위 20건)</p>
                 </div>
-                <div class="flex items-center gap-1 shrink-0">
+                <div class="hidden sm:flex items-center gap-1 shrink-0">
                     <span class="text-xs text-gray-400">정렬:</span>
                     <button onclick="setDashSort('urgent','score')"    data-section="urgent" data-sort="score"    class="sort-btn dash-sort-btn">점수</button>
                     <button onclick="setDashSort('urgent','title')"    data-section="urgent" data-sort="title"    class="sort-btn dash-sort-btn">사업명</button>
@@ -119,6 +126,21 @@
                     <button onclick="setDashSort('urgent','budget')"   data-section="urgent" data-sort="budget"   class="sort-btn dash-sort-btn">금액</button>
                 </div>
             </div>
+        </div>
+        <!-- 모바일 정렬 -->
+        <div class="sm:hidden flex items-center gap-2 px-4 py-2 border-b bg-gray-50">
+            <span class="text-xs text-gray-500 shrink-0 font-medium">정렬</span>
+            <select id="dash-mobile-sort-urgent" onchange="onDashMobileSortChange('urgent', this.value)"
+                    class="flex-1 text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                <option value="score">점수</option>
+                <option value="title">사업명</option>
+                <option value="agency">기관</option>
+                <option value="announced">공고일</option>
+                <option value="days">마감일</option>
+                <option value="budget">금액</option>
+            </select>
+            <button id="dash-mobile-dir-urgent" onclick="toggleDashMobileSortDir('urgent')"
+                    class="shrink-0 w-9 h-9 flex items-center justify-center border border-gray-300 rounded-lg bg-white text-gray-700 hover:bg-gray-100 transition-colors text-lg font-bold select-none">↓</button>
         </div>
         <div class="card-body">
             <div id="urgent-tenders-list" class="scrollable-list space-y-3">
@@ -133,10 +155,10 @@
             <div class="flex justify-between items-center flex-wrap gap-2">
                 <div>
                     <h3 class="card-title">신규공고 (기타 채널)</h3>
-                    <p class="text-sm text-gray-600 mt-1">나라장터 외 크롤링 채널 (금~오늘, 점수순 상위 20건)</p>
+                    <p class="hidden sm:block text-sm text-gray-600 mt-1">나라장터 외 크롤링 채널 (금~오늘, 점수순 상위 20건)</p>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
-                    <div class="flex items-center gap-1">
+                    <div class="hidden sm:flex items-center gap-1">
                         <span class="text-xs text-gray-400">정렬:</span>
                         <button onclick="setDashSort('recent','score')"    data-section="recent" data-sort="score"    class="sort-btn dash-sort-btn">점수</button>
                         <button onclick="setDashSort('recent','title')"    data-section="recent" data-sort="title"    class="sort-btn dash-sort-btn">사업명</button>
@@ -149,6 +171,21 @@
                 </div>
             </div>
         </div>
+        <!-- 모바일 정렬 -->
+        <div class="sm:hidden flex items-center gap-2 px-4 py-2 border-b bg-gray-50">
+            <span class="text-xs text-gray-500 shrink-0 font-medium">정렬</span>
+            <select id="dash-mobile-sort-recent" onchange="onDashMobileSortChange('recent', this.value)"
+                    class="flex-1 text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                <option value="score">점수</option>
+                <option value="title">사업명</option>
+                <option value="agency">기관</option>
+                <option value="announced">공고일</option>
+                <option value="days">마감일</option>
+                <option value="budget">금액</option>
+            </select>
+            <button id="dash-mobile-dir-recent" onclick="toggleDashMobileSortDir('recent')"
+                    class="shrink-0 w-9 h-9 flex items-center justify-center border border-gray-300 rounded-lg bg-white text-gray-700 hover:bg-gray-100 transition-colors text-lg font-bold select-none">↓</button>
+        </div>
         <div class="card-body">
             <div id="recent-tenders-list" class="scrollable-list space-y-3">
                 <!-- 동적으로 채워짐 -->
@@ -156,26 +193,6 @@
         </div>
     </div>
 
-    <!-- 통계 차트 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div class="card">
-            <div class="card-header">
-                <h3 class="card-title">수집 채널별 공고 수</h3>
-            </div>
-            <div class="card-body">
-                <canvas id="source-chart"></canvas>
-            </div>
-        </div>
-
-        <div class="card">
-            <div class="card-header">
-                <h3 class="card-title">최근 7일 공고 추이</h3>
-            </div>
-            <div class="card-body">
-                <canvas id="daily-chart"></canvas>
-            </div>
-        </div>
-    </div>
 </div>
 {% endblock %}
 

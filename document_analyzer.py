@@ -280,9 +280,12 @@ def _extract_text_kordoc(filepath):
             timeout=30,
             cwd=str(Path(__file__).parent),
             shell=(os.name == 'nt'),
+            text=True,
+            encoding='utf-8',
+            errors='replace',
         )
-        stdout = result.stdout.decode('utf-8', errors='replace')
-        stderr = result.stderr.decode('utf-8', errors='replace')
+        stdout = result.stdout
+        stderr = result.stderr
 
         if result.returncode != 0:
             logger.warning(f"kordoc 실패 (rc={result.returncode}): {stderr[:200]}")
@@ -967,9 +970,9 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality'):
                 if _is_rpm_error(err_str) and not rpm_retried:
                     logger.warning(
                         f"Gemini {model_name} RPM 한도 초과, "
-                        f"65초 대기 후 재시도... (오류: {err_str[:80]})"
+                        f"35초 대기 후 재시도... (오류: {err_str[:80]})"
                     )
-                    _time.sleep(65)
+                    _time.sleep(35)
                     rpm_retried = True
                     continue  # 같은 모델 재시도
 

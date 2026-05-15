@@ -27,7 +27,7 @@ def search_page():
 
 
 @bp.route('/filters')
-@moderator_required
+@login_required
 def filters_page():
     """필터 관리 페이지"""
     return render_template('filters.html')

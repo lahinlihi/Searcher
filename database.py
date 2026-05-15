@@ -191,8 +191,8 @@ class TenderMemo(db.Model):
             'username': self.user.display_name if self.user else '알 수 없음',
             'user_role': self.user.role if self.user else 'user',
             'content': self.content,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
+            'created_at': self.created_at.isoformat() + 'Z',
+            'updated_at': self.updated_at.isoformat() + 'Z',
             'is_edited': is_edited,
         }
 

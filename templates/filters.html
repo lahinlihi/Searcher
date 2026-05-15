@@ -2,9 +2,7 @@
 {% block title %}필터 관리 — 입찰공고 통합 검색{% endblock %}
 
 {% block content %}
-<div class="space-y-6 max-w-3xl">
-    <h2 class="text-2xl font-bold text-gray-900">필터 관리</h2>
-
+<div class="space-y-6">
     <!-- 공고 필터 설정 -->
     <div class="card">
         <div class="card-header">
@@ -84,9 +82,9 @@
                 </div>
                 <p class="text-xs text-gray-500 mb-3">
                     적합도 = 키워드(45) + <strong>사업유형</strong> + 기관가중치(10) · 기본값 <strong>보통 25점</strong><br>
-                    <span class="font-semibold text-blue-700">최우선 45</span> · <span class="text-blue-500">선호 35</span> · 보통 25 · <span class="text-gray-400">낮음 15</span> · <span class="text-red-400">제외 0</span>
+                    <span class="font-semibold text-blue-700">주력 45</span> · <span class="text-blue-500">선호 35</span> · 보통 25 · <span class="text-gray-400">낮음 15</span> · <span class="text-red-400">제외 0</span>
                 </p>
-                <div class="grid grid-cols-2 gap-2" id="type-weights-grid">
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2" id="type-weights-grid">
                     <!-- JS로 채워짐 -->
                 </div>
             </div>
@@ -117,7 +115,7 @@
                 <span id="agency-save-msg" class="text-xs text-green-600 hidden">저장되었습니다.</span>
 
                 <!-- 등록된 기관 목록 -->
-                <div id="agency-weights-list" class="space-y-1.5 mt-2">
+                <div id="agency-weights-list" class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
                     <!-- JS로 채워짐 -->
                 </div>
             </div>
@@ -193,7 +191,7 @@ const BUSINESS_TYPES = [
 ];
 // value = 해당 사업유형에 부여할 점수 (직접 점수)
 const WEIGHT_OPTIONS = [
-    { value: 45, label: '최우선', activeCls: 'bg-blue-700 text-white border-blue-800 shadow' },
+    { value: 45, label: '주력', activeCls: 'bg-blue-700 text-white border-blue-800 shadow' },
     { value: 35, label: '선호',   activeCls: 'bg-blue-500 text-white border-blue-600 shadow' },
     { value: 25, label: '보통',   activeCls: 'bg-blue-200 text-blue-900 border-blue-300' },
     { value: 15, label: '낮음',   activeCls: 'bg-gray-200 text-gray-600 border-gray-300' },
@@ -534,28 +532,41 @@ async function loadAgencyWeights() {
     } catch (e) { console.error('기관별 가중치 로드 실패:', e); }
 }
 
+function _agencyBadgeCls(weight) {
+    if (weight >= 10)  return 'bg-blue-700 text-white';
+    if (weight >= 7.5) return 'bg-blue-500 text-white';
+    if (weight >= 5)   return 'bg-gray-200 text-gray-700';
+    if (weight > 0)    return 'bg-gray-100 text-gray-400';
+    return 'bg-red-50 text-red-400';
+}
+
 function renderAgencyWeights(list) {
     const container = document.getElementById('agency-weights-list');
     if (!container) return;
     if (!list || list.length === 0) {
-        container.innerHTML = '<p class="text-xs text-gray-400">등록된 기관이 없습니다. 기본값(5점)이 적용됩니다.</p>';
+        container.innerHTML = '<p class="text-xs text-gray-400 col-span-full">등록된 기관이 없습니다. 기본값(5점)이 적용됩니다.</p>';
         return;
     }
     container.innerHTML = list.map(aw => {
-        return `<div class="flex items-center gap-2 text-sm py-1 px-2 bg-gray-50 rounded">
-            <span class="flex-1 truncate font-medium text-gray-800">${escHtml(aw.agency_name)}</span>
-            <div class="flex gap-1">
-                ${AGENCY_WEIGHT_OPTIONS.map(w => {
-                    const active = aw.weight === w;
-                    return `<button type="button"
-                        onclick="updateAgencyWeight(${aw.id}, ${w})"
-                        class="text-xs px-1.5 py-0.5 rounded border transition-colors
-                               ${active ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-500 border-gray-200 hover:border-blue-400'}"
-                    >${w}</button>`;
-                }).join('')}
+        const badgeCls = _agencyBadgeCls(aw.weight);
+        const opts = AGENCY_WEIGHT_OPTIONS.map(w => {
+            const active = aw.weight === w;
+            const btnCls = active
+                ? 'bg-blue-600 text-white border-blue-700 font-bold shadow-sm'
+                : 'bg-white text-gray-400 border-gray-200 hover:border-gray-400 hover:text-gray-600';
+            return `<button type="button"
+                onclick="updateAgencyWeight(${aw.id}, ${w})"
+                class="py-1.5 text-xs font-medium rounded border transition-all ${btnCls}"
+                >${w}</button>`;
+        }).join('');
+        return `<div class="p-2.5 border rounded-lg bg-white shadow-sm relative">
+            <div class="flex items-start justify-between mb-1 pr-5">
+                <span class="text-sm font-bold text-gray-900 leading-snug break-all">${escHtml(aw.agency_name)}</span>
+                <span class="text-sm font-bold px-2 py-0.5 rounded-full whitespace-nowrap ml-1 shrink-0 ${badgeCls}">${aw.weight}점</span>
             </div>
+            <div class="grid grid-cols-5 gap-1 mt-2">${opts}</div>
             <button onclick="deleteAgencyWeight(${aw.id})"
-                class="text-gray-300 hover:text-red-500 transition-colors ml-1 text-base leading-none"
+                class="absolute top-2 right-2 text-gray-300 hover:text-red-500 transition-colors text-lg leading-none"
                 title="삭제">×</button>
         </div>`;
     }).join('');
