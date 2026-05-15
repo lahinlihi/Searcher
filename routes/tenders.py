@@ -649,6 +649,10 @@ def api_dismissed_ids():
         return jsonify({'error': str(e)}), 500
 
 
+_history_cache: dict = {}           # {tender_id: (epoch, result_dict)}
+_HISTORY_CACHE_TTL = 3600           # 1시간
+
+
 @bp.route('/api/tenders/<int:tender_id>/history')
 @login_required
 def api_tender_history(tender_id):
@@ -673,6 +677,14 @@ def api_tender_history(tender_id):
     import calendar as _cal
     from urllib.parse import unquote as _unquote
     from settings_manager import settings_manager
+
+    # ── 캐시 확인 (1시간 TTL) ────────────────────────────────────────────────
+    _now_ts = _time.time()
+    _cached = _history_cache.get(tender_id)
+    if _cached:
+        _ts, _result = _cached
+        if _now_ts - _ts < _HISTORY_CACHE_TTL:
+            return jsonify({**_result, 'cached': True})
 
     tender = Tender.query.get_or_404(tender_id)
 
@@ -701,16 +713,19 @@ def api_tender_history(tender_id):
     clean = _re.sub(r'\s+', ' ', clean).strip()
     query_nm = clean[:60] if len(clean) > 60 else clean
 
-    # ── 조회 기간: 최근 5년 × 월별, max_workers=20으로 완전 병렬 ──────────────
-    # G2B API는 월 단위 범위만 안정적으로 지원 → 월별 유지, workers 대폭 증가
-    # 2 ops × 60개월 = 120 호출 / 20 workers = 6 라운드 ≈ 10~15초
+    # ── 조회 기간: 최근 5년 × 월별, max_workers=40 ───────────────────────────
+    # G2B API는 월 단위 범위만 지원 (분기·연간 범위는 결과 0)
+    # 2 ops × 60개월 = 120 호출 / 40 workers = 3 라운드 ≈ 10~15초 (캐시 후 즉시)
     now = _dt.now()
-    months = []
+    periods = []   # (bdt, edt) 형태의 월별 범위 목록
     for offset in range(60):   # 5년 = 60개월
         y, m = now.year, now.month - offset
         while m <= 0:
             m += 12; y -= 1
-        months.append((y, m))
+        last_day = _cal.monthrange(y, m)[1]
+        bdt = f'{y}{m:02d}010000'
+        edt = f'{y}{m:02d}{last_day:02d}2359'
+        periods.append((bdt, edt))
 
     RESULT_BASE = 'https://apis.data.go.kr/1230000/as/ScsbidInfoService'
     CNTRCT_BASE = 'https://apis.data.go.kr/1230000/ao/CntrctInfoService'
@@ -753,16 +768,13 @@ def api_tender_history(tender_id):
                 return [], str(e)
         return [], '재시도 초과'
 
-    # ── 1단계: 개찰결과 + 낙찰결과 — 월별 병렬 조회 (max_workers=20) ──────────
+    # ── 1단계: 개찰결과 + 낙찰결과 — 분기별 병렬 조회 (max_workers=20) ─────────
     ops = [
         ('openg', RESULT_BASE, 'getOpengResultListInfoServcPPSSrch'),
         ('award', RESULT_BASE, 'getScsbidListSttusServcPPSSrch'),
     ]
 
-    def fetch_month(kind, base, ep, year, month):
-        last_day = _cal.monthrange(year, month)[1]
-        bdt = f'{year}{month:02d}010000'
-        edt = f'{year}{month:02d}{last_day:02d}2359'
+    def fetch_period(kind, base, ep, bdt, edt):
         items, err = _safe_get(
             f'{base}/{ep}',
             {'ServiceKey': service_key, 'type': 'json',
@@ -775,11 +787,11 @@ def api_tender_history(tender_id):
     award_by_no = {}
     errors = []
 
-    with ThreadPoolExecutor(max_workers=20) as ex:
+    with ThreadPoolExecutor(max_workers=40) as ex:
         futures = [
-            ex.submit(fetch_month, kind, base, ep, y, m)
+            ex.submit(fetch_period, kind, base, ep, bdt, edt)
             for kind, base, ep in ops
-            for y, m in months
+            for bdt, edt in periods
         ]
         for fut in as_completed(futures):
             kind, items, err = fut.result()
@@ -976,6 +988,15 @@ def api_tender_history(tender_id):
         return x.get('rlOpengDt') or x.get('opengDt') or x.get('fnlSucsfDate') or x.get('bidNtceDt') or ''
 
     final_items.sort(key=_sort_key, reverse=True)
+
+    _result_data = {
+        'items':          final_items,
+        'query':          query_nm,
+        'original_title': title,
+        'errors':         list(set(errors))[:5],
+        'pblnc_api_ok':   True,
+    }
+    _history_cache[tender_id] = (_time.time(), _result_data)
 
     return jsonify({
         'items':          final_items,

@@ -783,7 +783,7 @@
             <div class="flex justify-between items-center flex-wrap gap-2">
                 <div>
                     <h3 class="card-title">수행이력 조회</h3>
-                    <p class="text-xs text-gray-400 mt-0.5">나라장터 공고·개찰·계약 API · 최근 2년 · 공고명 유사검색</p>
+                    <p class="text-xs text-gray-400 mt-0.5">나라장터 공고·개찰·계약 API · 최근 5년 · 공고명 유사검색</p>
                 </div>
                 <span id="history-query-badge" class="hidden text-xs bg-blue-50 border border-blue-200 text-blue-700 px-2 py-1 rounded"></span>
             </div>
@@ -1476,7 +1476,7 @@ function toggleHistory() {
 async function loadHistory(allTypes = false) {
     const body = document.getElementById('history-body');
     const label = allTypes ? '물품·공사 포함 조회 중...' : '나라장터 공고·개찰·계약 조회 중 (용역)...';
-    body.innerHTML = `<div class="text-center py-8"><div class="inline-block animate-spin rounded-full h-7 w-7 border-b-2 border-blue-500 mb-3"></div><p class="text-sm text-gray-500">${label}</p><p class="text-xs text-gray-400 mt-1">최근 2년 × 공고/개찰/계약 병렬 조회 중 (10~20초 소요)</p></div>`;
+    body.innerHTML = `<div class="text-center py-8"><div class="inline-block animate-spin rounded-full h-7 w-7 border-b-2 border-blue-500 mb-3"></div><p class="text-sm text-gray-500">${label}</p><p class="text-xs text-gray-400 mt-1">최근 5년 × 공고/개찰/계약 병렬 조회 중 (초회 ~1분 소요, 이후 즉시)</p></div>`;
 
     try {
         const url = `/api/tenders/${TENDER_ID}/history` + (allTypes ? '?all_types=1' : '');
@@ -1518,7 +1518,8 @@ async function loadHistory(allTypes = false) {
             pblncWarn = `<p class="text-xs text-amber-500 mt-1">⚠ 입찰공고 API 미응답 — 공고 기반 목록 불완전할 수 있습니다.</p>`;
         }
 
-        let html = `<p class="text-xs text-gray-400 mb-1">총 ${data.items.length}건 조회됨 (최신순)${badgeStr}</p>${pblncWarn}`;
+        const cachedNote = data.cached ? ` <span class="text-gray-300" title="1시간 캐시">· 캐시됨</span>` : '';
+        let html = `<p class="text-xs text-gray-400 mb-1">총 ${data.items.length}건 조회됨 (최신순)${badgeStr}${cachedNote}</p>${pblncWarn}`;
         html += `<div class="overflow-x-auto mt-2"><table class="w-full text-sm border-collapse">
             <thead>
                 <tr class="bg-gray-50 text-xs text-gray-500">
