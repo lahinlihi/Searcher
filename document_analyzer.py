@@ -239,7 +239,8 @@ def _kordoc_available():
     try:
         # 로컬 스크립트 우선, 없으면 npx
         cmd = [script, '--version'] if script else ['npx', '--no-install', 'kordoc', '--version']
-        r = subprocess.run(cmd, capture_output=True, timeout=10, shell=(os.name == 'nt'))
+        r = subprocess.run(cmd, capture_output=True, timeout=10, shell=(os.name == 'nt'),
+                           text=True, encoding='utf-8', errors='replace')
         _KORDOC_AVAILABLE = r.returncode == 0
         _KORDOC_SCRIPT    = script
         logger.info(f"kordoc 사용 가능: {_KORDOC_AVAILABLE}, script={script}")
@@ -829,7 +830,10 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality'):
     prompt = _GEMINI_PROMPT.format(title=tender_title, text=truncated)
 
     def _call(model_name):
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(timeout=120_000),  # 120초 타임아웃
+        )
         return client.models.generate_content(
             model=model_name,
             contents=prompt,
@@ -839,7 +843,7 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality'):
         )
 
     def _is_rpm_error(err_str):
-        """분당 요청 한도 초과 여부 — 65초 대기 후 같은 모델 재시도"""
+        """분당 요청 한도 초과 여부 — 35초 대기 후 같은 모델 재시도"""
         el = err_str.lower()
         return (
             'per_minute' in el or 'per minute' in el or
@@ -847,13 +851,14 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality'):
         )
 
     def _is_retryable(err_str):
-        """다음 모델로 전환해야 하는 오류 (RPD, 404, 서버 오류)"""
+        """다음 모델로 전환해야 하는 오류 (RPD, 404, 서버 오류, 타임아웃)"""
         el = err_str.lower()
         return (
             '429' in err_str or '404' in err_str or
             '503' in err_str or '502' in err_str or
             'unavailable' in el or 'resource_exhausted' in el or
-            'resourceexhausted' in el
+            'resourceexhausted' in el or
+            'timeout' in el or 'timed out' in el or 'readtimeout' in el
         )
 
     # 우선순위별 모델 시작 순서 (소진 시 뒤 모델로 자동 폴백)
