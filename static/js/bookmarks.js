@@ -119,6 +119,8 @@ function renderDismissedCard(tender) {
     const statusBadge = tender.status === '사전규격'
         ? '<span class="tender-status-badge tender-status-pre">사전규격</span>'
         : '<span class="tender-status-badge tender-status-normal">일반</span>';
+    const agencyName = (tender.agency && tender.agency.includes('조달청') && tender.demand_agency)
+        ? escapeHtml(tender.demand_agency) : escapeHtml(tender.agency);
 
     return `
         <div class="tender-item opacity-60 hover:opacity-90 transition-opacity" id="dismissed-card-${tender.id}">
@@ -134,14 +136,18 @@ function renderDismissedCard(tender) {
                             title="복원 — 다시 대시보드에 표시">복원</button>
                 </div>
             </div>
-            <h4 class="font-medium text-gray-700 mt-1 line-clamp-1">
+            <h4 class="font-medium text-gray-700 mt-1 line-clamp-1 sm:text-sm">
                 <a href="/tender/${tender.id}" class="hover:text-blue-600 hover:underline">
                     ${escapeHtml(tender.title)}
                 </a>
             </h4>
-            <div class="flex flex-col gap-1 mt-2">
-                <span class="text-sm text-gray-700 font-bold truncate">${(tender.agency && tender.agency.includes('조달청') && tender.demand_agency) ? escapeHtml(tender.demand_agency) : escapeHtml(tender.agency)}</span>
+            <div class="sm:hidden flex flex-col gap-1 mt-2">
+                <span class="text-sm text-gray-700 font-bold truncate">${agencyName}</span>
                 <span class="text-sm text-blue-600 font-medium">${price}</span>
+            </div>
+            <div class="hidden sm:flex items-center gap-3 mt-1.5 text-sm">
+                <span class="font-medium text-gray-800 truncate">${agencyName}</span>
+                <span class="font-medium text-blue-600">${price}</span>
             </div>
         </div>`;
 }
@@ -232,6 +238,9 @@ function renderMemoCard(tender) {
     const latestMemo = tender.latest_memo;
     const latestMemoAt = tender.latest_memo_at ? new Date(tender.latest_memo_at).toLocaleString('ko-KR', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
 
+    const agencyNameMemo = (tender.agency && tender.agency.includes('조달청') && tender.demand_agency)
+        ? escapeHtml(tender.demand_agency) : escapeHtml(tender.agency);
+
     return `
         <div class="tender-item" id="memo-card-${tender.id}">
             <div class="flex justify-between items-start mb-1">
@@ -243,14 +252,20 @@ function renderMemoCard(tender) {
                     <span class="${deadlineClass} text-sm">${deadlineText}</span>
                 </div>
             </div>
-            <h4 class="font-medium text-gray-900 mt-1 line-clamp-1">
+            <h4 class="font-medium text-gray-900 mt-1 line-clamp-1 sm:text-sm">
                 <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
                     ${escapeHtml(tender.title)}
                 </a>
             </h4>
-            <div class="flex flex-col gap-1 mt-2">
-                <span class="text-sm text-gray-700 font-bold truncate">${(tender.agency && tender.agency.includes('조달청') && tender.demand_agency) ? escapeHtml(tender.demand_agency) : escapeHtml(tender.agency)}</span>
+            <div class="sm:hidden flex flex-col gap-1 mt-2">
+                <span class="text-sm text-gray-700 font-bold truncate">${agencyNameMemo}</span>
                 <span class="text-sm text-blue-600 font-medium">${price}</span>
+            </div>
+            <div class="hidden sm:flex items-center gap-3 mt-1.5 text-sm flex-wrap">
+                <span class="font-medium text-gray-800 truncate">${agencyNameMemo}</span>
+                <span class="font-medium text-blue-600">${price}</span>
+                <a href="/tender/${tender.id}#memos" class="text-purple-500 hover:underline">메모 보기 →</a>
+                ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-500 hover:underline">공고 원문 →</a>` : ''}
             </div>
             ${latestMemo ? `
             <div class="mt-2 px-3 py-2 bg-purple-50 border border-purple-100 rounded-lg text-sm text-gray-700">
@@ -258,10 +273,6 @@ function renderMemoCard(tender) {
                 <span class="text-gray-400 text-xs ml-1">${latestMemoAt}</span>
                 <p class="mt-0.5 text-gray-600 line-clamp-2">${escapeHtml(latestMemo.content)}</p>
             </div>` : ''}
-            <div class="flex gap-3 mt-1 text-sm">
-                <a href="/tender/${tender.id}#memos" class="text-purple-600 hover:underline">메모 보기 →</a>
-                ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-600 hover:underline">공고 원문 →</a>` : ''}
-            </div>
         </div>`;
 }
 
@@ -287,6 +298,9 @@ function renderBookmarkCard(tender) {
     const announcedDate = tender.announced_date ? tender.announced_date.substring(0, 10) : '';
     const bookmarkedAt = tender.bookmarked_at ? tender.bookmarked_at.substring(0, 10) : '';
 
+    const agencyNameBm = (tender.agency && tender.agency.includes('조달청') && tender.demand_agency)
+        ? escapeHtml(tender.demand_agency) : escapeHtml(tender.agency);
+
     return `
         <div class="tender-item" id="bookmark-card-${tender.id}">
             <div class="flex justify-between items-start mb-1">
@@ -304,21 +318,24 @@ function renderBookmarkCard(tender) {
                             title="관심공고 해제">★</button>
                 </div>
             </div>
-            <h4 class="font-medium text-gray-900 mt-1 line-clamp-1">
+            <h4 class="font-medium text-gray-900 mt-1 line-clamp-1 sm:text-sm">
                 <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
                     ${escapeHtml(tender.title)}
                 </a>
             </h4>
-            <div class="flex flex-col gap-1 mt-2">
-                <span class="text-sm text-gray-700 font-bold truncate">${(tender.agency && tender.agency.includes('조달청') && tender.demand_agency) ? escapeHtml(tender.demand_agency) : escapeHtml(tender.agency)}</span>
+            <div class="sm:hidden flex flex-col gap-1 mt-2">
+                <span class="text-sm text-gray-700 font-bold truncate">${agencyNameBm}</span>
                 <div class="flex items-center gap-2 text-sm">
                     <span class="text-blue-600 font-medium">${price}</span>
                     ${announcedDate ? `<span class="text-gray-400 text-xs">등록: ${announcedDate}</span>` : ''}
                 </div>
             </div>
-            <div class="flex gap-3 mt-1 text-sm">
-                <a href="/tender/${tender.id}" class="text-blue-600 hover:underline">상세보기 →</a>
-                ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-600 hover:underline">공고 원문 →</a>` : ''}
+            <div class="hidden sm:flex items-center gap-3 mt-1.5 text-sm flex-wrap">
+                <span class="font-medium text-gray-800 truncate">${agencyNameBm}</span>
+                <span class="font-medium text-blue-600">${price}</span>
+                ${announcedDate ? `<span class="text-gray-400">등록: ${announcedDate}</span>` : ''}
+                <a href="/tender/${tender.id}" class="text-blue-500 hover:underline">상세보기 →</a>
+                ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-500 hover:underline">공고 원문 →</a>` : ''}
             </div>
         </div>`;
 }

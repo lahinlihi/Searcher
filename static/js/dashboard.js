@@ -35,6 +35,10 @@ const dashSort = {
 };
 let dashData = null;
 
+// 캐러셀 페이지 상태 (섹션별)
+const carouselPage = { pre: 0, urgent: 0, recent: 0 };
+const CARDS_PER_PAGE = 8;
+
 // 공통 정렬 함수
 function sortItems(items, field, dir) {
     if (!items || !items.length) return items;
@@ -100,16 +104,23 @@ function toggleDashMobileSortDir(section) {
     renderSection(section);
 }
 
-// 특정 섹션만 다시 렌더링
+// 특정 섹션만 다시 렌더링 (PC 카드 + 모바일 리스트 동시)
 function renderSection(section) {
     if (!dashData) return;
     const { field, dir } = dashSort[section];
-    if (section === 'pre') {
-        renderKeywordTenders('pre-tenders-list',    sortItems(dashData.pre_tenders,    field, dir), includeKeywords);
-    } else if (section === 'urgent') {
-        renderKeywordTenders('urgent-tenders-list', sortItems(dashData.urgent_tenders, field, dir), includeKeywords);
-    } else if (section === 'recent') {
-        renderTenderList('recent-tenders-list',     sortItems(dashData.recent_tenders, field, dir));
+    let tenders;
+    if (section === 'pre')         tenders = sortItems(dashData.pre_tenders,    field, dir);
+    else if (section === 'urgent') tenders = sortItems(dashData.urgent_tenders, field, dir);
+    else                           tenders = sortItems(dashData.recent_tenders, field, dir);
+    tenders = tenders || [];
+    // PC: 카드 캐러셀
+    renderCarouselSection(section, tenders);
+    // 모바일: 기존 리스트 뷰
+    updateDashSortButtons(section);
+    if (section === 'recent') {
+        renderMobileTenderList(section, tenders);
+    } else {
+        renderMobileKeywordTenders(section, tenders);
     }
 }
 
@@ -176,7 +187,7 @@ function dismissButton(tenderId) {
 // 관심없음 처리
 async function dismissTender(tenderId, btn) {
     try {
-        const card = btn.closest('.tender-item');
+        const card = btn.closest('.dash-tender-card') || btn.closest('.tender-item');
         // 즉시 시각적 피드백
         if (card) {
             card.style.transition = 'opacity 0.3s';
@@ -268,9 +279,9 @@ async function loadDashboardData() {
         // 데이터 저장 후 섹션별 정렬 초기화 및 렌더링
         _lastFetchTime = Date.now();
         dashData = data;
-        updateDashSortButtons('pre');
-        updateDashSortButtons('urgent');
-        updateDashSortButtons('recent');
+        carouselPage.pre = 0;
+        carouselPage.urgent = 0;
+        carouselPage.recent = 0;
         renderDashboard();
 
     } catch (error) {
@@ -343,7 +354,224 @@ function buildScoreBadge(score, matchedKeywords, businessType, breakdown) {
     </span>`;
 }
 
-// 키워드 매칭 공고 전용 렌더링 (적합도 점수 표시)
+// ── 모바일 리스트 렌더러 (기존 디자인 유지) ───────────────────────────────
+
+function _mobileAgencyName(tender) {
+    if (tender.source_site === '중소벤처 24') return tender.demand_agency || tender.agency || '-';
+    if (tender.agency && tender.agency.includes('조달청') && tender.demand_agency) return tender.demand_agency;
+    return tender.agency || '-';
+}
+
+function _mobileDeadline(daysLeft) {
+    let cls = 'tender-deadline-normal';
+    if (daysLeft !== null && daysLeft <= 2) cls = 'tender-deadline-urgent';
+    else if (daysLeft !== null && daysLeft <= 5) cls = 'tender-deadline-soon';
+    return { cls, text: daysLeft !== null ? `D-${daysLeft}` : '-' };
+}
+
+function renderMobileKeywordTenders(section, tenders) {
+    const container = document.getElementById(`${section}-tenders-list-mobile`);
+    if (!container) return;
+
+    if (!includeKeywords || includeKeywords.length === 0) {
+        container.innerHTML = '<p class="text-gray-500 text-sm">관심 키워드를 <a href="/filters" class="text-blue-600 hover:underline">설정</a>하면 매칭 공고를 표시합니다.</p>';
+        return;
+    }
+    if (!tenders || tenders.length === 0) {
+        container.innerHTML = '<p class="text-gray-500 text-sm">매칭 공고가 없습니다.</p>';
+        return;
+    }
+
+    container.innerHTML = tenders.map(tender => {
+        const { highlightedTitle } = highlightKeywordsInTitle(cleanNoticeTitle(tender.title), includeKeywords);
+        const noticeBadges = getNoticeBadgesHtml(tender.title);
+        const score = tender.relevance_score ?? 0;
+        const scoreBadge = buildScoreBadge(score, tender.matched_keywords || [], tender.business_type || '기타', tender.score_breakdown || null);
+        const bizType = (tender.business_type && tender.business_type !== '기타') ? tender.business_type : '미분류';
+        const { cls: deadlineClass, text: deadlineText } = _mobileDeadline(tender.days_left);
+        const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
+        const agencyName = _mobileAgencyName(tender);
+        return `
+            <div class="tender-item section-${section}">
+                <div class="flex justify-between items-start mb-1">
+                    <div class="flex flex-wrap items-center gap-1">
+                        ${scoreBadge}
+                        <span class="mobile-type-badge">유형: ${bizType}</span>
+                    </div>
+                    <div class="flex items-center gap-2 ml-2 shrink-0">
+                        <span class="font-semibold ${deadlineClass}">${deadlineText}</span>
+                        ${starButton(tender.id)}${dismissButton(tender.id)}
+                    </div>
+                </div>
+                <h4 class="font-medium text-gray-900 mt-1 line-clamp-2">
+                    <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">${noticeBadges}${highlightedTitle}</a>
+                </h4>
+                <div class="flex flex-col gap-1 mt-2">
+                    <span class="text-sm text-gray-700 font-bold truncate">${agencyName}</span>
+                    <span class="text-sm text-blue-600 font-medium">${price}</span>
+                </div>
+            </div>`;
+    }).join('');
+}
+
+function renderMobileTenderList(section, tenders) {
+    const container = document.getElementById(`${section}-tenders-list-mobile`);
+    if (!container) return;
+
+    if (!tenders || tenders.length === 0) {
+        container.innerHTML = '<p class="text-gray-500 text-sm">공고가 없습니다.</p>';
+        return;
+    }
+
+    container.innerHTML = tenders.map(tender => {
+        const { cls: deadlineClass, text: deadlineText } = _mobileDeadline(tender.days_left);
+        const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
+        const { highlightedTitle } = highlightKeywordsInTitle(cleanNoticeTitle(tender.title), includeKeywords);
+        const noticeBadges = getNoticeBadgesHtml(tender.title);
+        const score = tender.relevance_score ?? 0;
+        const scoreBadge = score > 0 ? buildScoreBadge(score, [], tender.business_type || '기타', tender.score_breakdown || null) : '';
+        const bizType = (tender.business_type && tender.business_type !== '기타') ? tender.business_type : '미분류';
+        const agencyName = _mobileAgencyName(tender);
+        return `
+            <div class="tender-item section-${section}">
+                <div class="flex justify-between items-start mb-1">
+                    <div class="flex flex-wrap items-center gap-1">
+                        ${scoreBadge}
+                        <span class="mobile-type-badge">유형: ${bizType}</span>
+                    </div>
+                    <div class="flex items-center gap-2 ml-2 shrink-0">
+                        <span class="font-semibold ${deadlineClass}">${deadlineText}</span>
+                        ${starButton(tender.id)}
+                    </div>
+                </div>
+                <h4 class="font-medium text-gray-900 mt-1 line-clamp-2">
+                    <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">${noticeBadges}${highlightedTitle}</a>
+                </h4>
+                <div class="flex flex-col gap-1 mt-2">
+                    <span class="text-sm text-gray-700 font-bold truncate">${agencyName}</span>
+                    <span class="text-sm text-blue-600 font-medium">${price}</span>
+                </div>
+            </div>`;
+    }).join('');
+}
+
+// ── 캐러셀 섹션 렌더링 ─────────────────────────────────────────────────────
+function renderCarouselSection(section, tenders) {
+    const page = carouselPage[section];
+    const totalPages = Math.max(1, Math.ceil(tenders.length / CARDS_PER_PAGE));
+    const start = page * CARDS_PER_PAGE;
+    const pageItems = tenders.slice(start, start + CARDS_PER_PAGE);
+
+    const container = document.getElementById(`${section}-tenders-list`);
+    if (!container) return;
+
+    if (tenders.length === 0) {
+        const msg = (section === 'pre' || section === 'urgent') && (!includeKeywords || includeKeywords.length === 0)
+            ? '관심 키워드를 <a href="/filters" class="text-blue-600 hover:underline">설정</a>하면 매칭 공고를 표시합니다.'
+            : '공고가 없습니다.';
+        container.innerHTML = `<p class="col-span-4 text-gray-500 text-sm py-4">${msg}</p>`;
+    } else {
+        container.innerHTML = pageItems.map(t => renderTenderCard(t)).join('');
+    }
+
+    const prevBtn   = document.getElementById(`${section}-prev`);
+    const nextBtn   = document.getElementById(`${section}-next`);
+    const indicator = document.getElementById(`${section}-page-indicator`);
+    if (prevBtn)   prevBtn.disabled   = (page === 0);
+    if (nextBtn)   nextBtn.disabled   = (page >= totalPages - 1);
+    if (indicator) indicator.textContent = `${page + 1} / ${totalPages}`;
+}
+
+// 캐러셀 이전/다음 페이지
+function prevPage(section) {
+    if (carouselPage[section] > 0) {
+        carouselPage[section]--;
+        renderSection(section);
+    }
+}
+
+function nextPage(section) {
+    const sectionData = {
+        pre: dashData?.pre_tenders,
+        urgent: dashData?.urgent_tenders,
+        recent: dashData?.recent_tenders,
+    };
+    const tenders = sectionData[section] || [];
+    const totalPages = Math.max(1, Math.ceil(tenders.length / CARDS_PER_PAGE));
+    if (carouselPage[section] < totalPages - 1) {
+        carouselPage[section]++;
+        renderSection(section);
+    }
+}
+
+// 공고 카드 렌더링
+function renderTenderCard(tender) {
+    const cleanedTitle = cleanNoticeTitle(tender.title);
+    const { highlightedTitle } = highlightKeywordsInTitle(cleanedTitle, includeKeywords);
+    const score = tender.relevance_score ?? 0;
+
+    // 점수 배지 색상
+    let scoreCls;
+    if (score >= 70)      scoreCls = 'background:#D1FAE5;color:#065F46;';
+    else if (score >= 40) scoreCls = 'background:#FEF3C7;color:#92400E;';
+    else                  scoreCls = 'background:#F3F4F6;color:#6B7280;';
+
+    // 금액
+    const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
+
+    // 기관명
+    let agencyName;
+    if (tender.source_site === '중소벤처 24') {
+        agencyName = tender.demand_agency || tender.agency || '-';
+    } else if (tender.agency && tender.agency.includes('조달청') && tender.demand_agency) {
+        agencyName = tender.demand_agency;
+    } else {
+        agencyName = tender.agency || '-';
+    }
+
+    // 마감일
+    const daysLeft = tender.days_left;
+    let dlColor = 'color:#16a34a;';
+    if (daysLeft !== null && daysLeft <= 2)      dlColor = 'color:#dc2626;';
+    else if (daysLeft !== null && daysLeft <= 5) dlColor = 'color:#ea580c;';
+    const deadlineText = daysLeft !== null ? `D-${daysLeft}` : '-';
+
+    // 유형
+    const bizType = (tender.business_type && tender.business_type !== '기타') ? tender.business_type : '미분류';
+
+    // 공고 앞 인라인 특이사항 배지
+    const t = tender.title || '';
+    let inlineBadges = '';
+    if (/\[긴급공고\]|\(긴급공고\)|\[긴급\]|\(긴급\)/.test(t))
+        inlineBadges += '<span class="badge-inline-urgent">긴급</span>';
+    if (/\[재공고\]|\(재공고\)/.test(t))
+        inlineBadges += '<span class="badge-inline-reopen">재공고</span>';
+    if (tender.bid_method && /수의계약/.test(tender.bid_method))
+        inlineBadges += '<span class="badge-inline-private">수의계약</span>';
+
+    return `
+        <div class="dash-tender-card">
+            <div class="dc-top">
+                <span class="dc-score" style="${scoreCls}">${score.toFixed(1)}</span>
+                <span class="dc-type">유형: ${bizType}</span>
+                <div class="dc-actions">
+                    ${starButton(tender.id)}
+                    ${dismissButton(tender.id)}
+                </div>
+            </div>
+            <div class="dc-title">
+                <a href="/tender/${tender.id}" class="dc-title-link">${inlineBadges}${highlightedTitle}</a>
+            </div>
+            <div class="dc-price">${price}</div>
+            <div class="dc-footer">
+                <span class="dc-agency">${agencyName}</span>
+                <span class="dc-deadline" style="${dlColor}">${deadlineText}</span>
+            </div>
+        </div>
+    `;
+}
+
+// 키워드 매칭 공고 전용 렌더링 (하위 호환 — 현재 미사용)
 function renderKeywordTenders(elementId, tenders, keywords) {
     const container = document.getElementById(elementId);
     if (!container) return;
@@ -404,18 +632,20 @@ function renderKeywordTenders(elementId, tenders, keywords) {
                         ${dismissButton(tender.id)}
                     </div>
                 </div>
-                <h4 class="font-medium text-gray-900 mt-1 line-clamp-2">
+                <h4 class="font-medium text-gray-900 mt-1 line-clamp-2 sm:line-clamp-1 sm:text-sm">
                     <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
                         ${noticeBadges}${highlightedTitle}
                     </a>
                 </h4>
-                <div class="flex flex-col gap-1 mt-2">
+                <div class="sm:hidden flex flex-col gap-1 mt-2">
                     <span class="text-sm text-gray-700 font-bold truncate">${agencyName}</span>
                     <span class="text-sm text-blue-600 font-medium">${price}</span>
                 </div>
-                <div class="hidden sm:flex gap-3 mt-1 text-sm">
-                    <a href="/tender/${tender.id}" class="text-blue-600 hover:underline">상세보기 →</a>
-                    ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-600 hover:underline">원본 공고 →</a>` : ''}
+                <div class="hidden sm:flex items-center gap-3 mt-1.5 text-sm flex-wrap">
+                    <span class="font-medium text-gray-800 truncate">${agencyName}</span>
+                    <span class="font-medium text-blue-600">${price}</span>
+                    <a href="/tender/${tender.id}" class="text-blue-500 hover:underline">상세보기 →</a>
+                    ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-500 hover:underline">원본 공고 →</a>` : ''}
                 </div>
             </div>
         `;
@@ -487,18 +717,20 @@ function renderTenderList(elementId, tenders) {
                         ${starButton(tender.id)}
                     </div>
                 </div>
-                <h4 class="font-medium text-gray-900 mt-1 line-clamp-2">
+                <h4 class="font-medium text-gray-900 mt-1 line-clamp-2 sm:line-clamp-1 sm:text-sm">
                     <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
                         ${noticeBadges}${highlightedTitle}
                     </a>
                 </h4>
-                <div class="flex flex-col gap-1 mt-2">
+                <div class="sm:hidden flex flex-col gap-1 mt-2">
                     <span class="text-sm text-gray-700 font-bold truncate">${agencyName}</span>
                     <span class="text-sm text-blue-600 font-medium">${price}</span>
                 </div>
-                <div class="hidden sm:flex gap-3 mt-1 text-sm">
-                    <a href="/tender/${tender.id}" class="text-blue-600 hover:underline">상세보기 →</a>
-                    ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-600 hover:underline">원본 공고 →</a>` : ''}
+                <div class="hidden sm:flex items-center gap-3 mt-1.5 text-sm flex-wrap">
+                    <span class="font-medium text-gray-800 truncate">${agencyName}</span>
+                    <span class="font-medium text-blue-600">${price}</span>
+                    <a href="/tender/${tender.id}" class="text-blue-500 hover:underline">상세보기 →</a>
+                    ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-500 hover:underline">원본 공고 →</a>` : ''}
                 </div>
             </div>
         `;
@@ -619,54 +851,52 @@ function refreshDashboard() {
     loadStats();
 }
 
-// 활성화된 키워드 표시 — 한 줄에 들어가는 만큼만 표시, 나머지는 +N개 →
+// 관심 키워드 렌더링 (PC: 탭 스트립 / 모바일: 버블 카드)
 function renderActiveKeywords(keywords) {
-    const container = document.getElementById('active-keywords');
-    if (!container) return;
-
-    if (!keywords || keywords.length === 0) {
-        container.innerHTML = '<span class="text-sm text-blue-700">설정된 키워드가 없습니다. <a href="/filters" class="underline hover:text-blue-900">필터 관리</a>에서 추가하세요.</span>';
-        return;
+    // PC 탭 스트립
+    const pcContainer = document.getElementById('active-keywords');
+    if (pcContainer) {
+        if (!keywords || keywords.length === 0) {
+            pcContainer.innerHTML = '<a href="/filters" class="keyword-tab manage-tab">키워드 없음 — 추가하기</a>';
+        } else {
+            pcContainer.innerHTML =
+                keywords.map(kw =>
+                    `<a href="/search?q=${encodeURIComponent(kw)}" class="keyword-tab" target="_blank">${kw}</a>`
+                ).join('') +
+                `<a href="/filters" class="keyword-tab manage-tab">+ 관리</a>`;
+        }
     }
 
-    const TAG_CLS = 'inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 shrink-0 whitespace-nowrap';
-    const MORE_CLS = 'inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-200 text-blue-700 hover:bg-blue-300 transition-colors shrink-0 whitespace-nowrap';
-
-    // 1단계: 전부 nowrap 으로 렌더해서 너비 측정
-    container.style.cssText = 'flex-wrap:nowrap;overflow:hidden;';
-    container.innerHTML = keywords.map((kw, i) =>
-        `<span data-i="${i}" class="${TAG_CLS}">${kw}</span>`
-    ).join('');
-
-    // 2단계: 페인트 후 컨테이너 오른쪽 경계를 넘는 첫 항목 탐색
-    requestAnimationFrame(() => {
-        const cRight = container.getBoundingClientRect().right;
-        const spans  = container.querySelectorAll('span[data-i]');
-        let cut = spans.length;
-
-        for (let i = 0; i < spans.length; i++) {
-            if (spans[i].getBoundingClientRect().right > cRight + 2) {
-                cut = i;
-                break;
+    // 모바일: 한 줄 키워드 (넘치면 +N개 표시, 전체 클릭 → /filters)
+    const mobileContainer = document.getElementById('active-keywords-mobile');
+    if (mobileContainer) {
+        const TAG = 'text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 shrink-0 whitespace-nowrap';
+        if (!keywords || keywords.length === 0) {
+            mobileContainer.innerHTML = '<span class="text-xs text-blue-700">키워드 없음 — 추가하기</span>';
+            return;
+        }
+        // 1단계: 전부 nowrap으로 렌더해서 너비 측정
+        mobileContainer.style.cssText = 'display:flex;flex-wrap:nowrap;overflow:hidden;gap:6px;';
+        mobileContainer.innerHTML = keywords.map((kw, i) =>
+            `<span data-i="${i}" class="${TAG}">${kw}</span>`
+        ).join('');
+        requestAnimationFrame(() => {
+            const cRight = mobileContainer.getBoundingClientRect().right;
+            const spans = mobileContainer.querySelectorAll('span[data-i]');
+            let cut = spans.length;
+            for (let i = 0; i < spans.length; i++) {
+                if (spans[i].getBoundingClientRect().right > cRight + 2) { cut = i; break; }
             }
-        }
-
-        container.style.cssText = ''; // 원래 flex-wrap 복원
-
-        if (cut >= keywords.length) {
-            // 전부 한 줄에 들어감
-            container.innerHTML = keywords.map(kw =>
-                `<span class="${TAG_CLS}">${kw}</span>`
-            ).join('');
-        } else {
-            // +N개 버튼 공간 확보를 위해 cut-1 개만 표시
-            const show = Math.max(1, cut - 1);
-            const rest = keywords.length - show;
-            container.innerHTML =
-                keywords.slice(0, show).map(kw =>
-                    `<span class="${TAG_CLS}">${kw}</span>`
-                ).join('') +
-                `<a href="/filters" class="${MORE_CLS}">+${rest}개 →</a>`;
-        }
-    });
+            mobileContainer.style.cssText = 'display:flex;flex-wrap:nowrap;overflow:hidden;gap:6px;align-items:center;';
+            if (cut >= keywords.length) {
+                mobileContainer.innerHTML = keywords.map(kw => `<span class="${TAG}">${kw}</span>`).join('');
+            } else {
+                const show = Math.max(1, cut - 1);
+                const rest = keywords.length - show;
+                mobileContainer.innerHTML =
+                    keywords.slice(0, show).map(kw => `<span class="${TAG}">${kw}</span>`).join('') +
+                    `<span class="text-xs px-2 py-0.5 rounded-full bg-blue-200 text-blue-700 shrink-0 whitespace-nowrap">+${rest}개</span>`;
+            }
+        });
+    }
 }

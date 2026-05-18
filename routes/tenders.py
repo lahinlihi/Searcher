@@ -187,7 +187,7 @@ def api_dashboard():
             all_pre_new = [t for t in all_pre_new if t.id not in dismissed_ids]
         sorted_pre_new = smart_sort_tenders_by_keyword_count(
             all_pre_new, include_keywords, user_type_weights, user_agency_weights)
-        pre_tenders = sorted_pre_new[:20]
+        pre_tenders = sorted_pre_new[:24]
 
         # 6. 신규공고(기타 채널): 금~오늘, 나라장터 제외, 수의계약 제외, 마감 안 지난 것
         new_query = Tender.query.filter(
@@ -216,7 +216,7 @@ def api_dashboard():
             all_new = [t for t in all_new if t.id not in dismissed_ids]
         sorted_new = smart_sort_tenders_by_keyword_count(
             all_new, include_keywords, user_type_weights, user_agency_weights)
-        recent_tenders = sorted_new[:20]
+        recent_tenders = sorted_new[:24]
 
         seven_days_ago = now - timedelta(days=7)
 
@@ -247,7 +247,7 @@ def api_dashboard():
         if dismissed_ids:
             all_urgent = [t for t in all_urgent if t.id not in dismissed_ids]
         sorted_urgent = smart_sort_tenders_by_keyword_count(all_urgent, include_keywords, user_type_weights, user_agency_weights)
-        urgent_tenders = sorted_urgent[:20]
+        urgent_tenders = sorted_urgent[:24]
 
         # 전체 필터 적용 후 총 건수 (배지용)
         keyword_match_count = len(all_pre_new) + len(all_urgent) + len(all_new)
