@@ -3,11 +3,10 @@ from database import db, Tender, CrawlLog, TenderMemo, DismissedTender, Filter, 
 from decorators import login_required, admin_required
 from scoring import (load_interest_keywords, load_exclude_keywords, load_budget_range,
                      smart_sort_tenders, smart_sort_tenders_by_keyword_count,
-                     calculate_relevance_score, _score_and_type, get_last_workday)
+                     _score_and_type, get_last_workday)
 from config import Config
 from datetime import datetime, timedelta
 import json
-import re
 import threading
 
 bp = Blueprint('tenders', __name__)
@@ -587,7 +586,7 @@ def api_tender_memos(tender_id):
                 return jsonify({'error': '내용을 입력하세요.'}), 400
             if len(content) > 1000:
                 return jsonify({'error': '메모는 1000자 이내로 작성하세요.'}), 400
-            memo = TenderMemo(tender_id=tender_id, user_id=g.user.id, content=content)
+            memo = TenderMemo(tender_id=tender_id, user_id=g.user.id, content=content)  # type: ignore[call-arg]
             db.session.add(memo)
             db.session.commit()
             return jsonify(memo.to_dict()), 201
@@ -641,7 +640,7 @@ def api_dismiss_tender(tender_id):
         if request.method == 'POST':
             if existing:
                 return jsonify({'dismissed': True})  # 이미 처리됨
-            dismissed = DismissedTender(user_id=g.user.id, tender_id=tender_id)
+            dismissed = DismissedTender(user_id=g.user.id, tender_id=tender_id)  # type: ignore[call-arg]
             db.session.add(dismissed)
             db.session.commit()
             return jsonify({'dismissed': True})
@@ -760,9 +759,10 @@ def api_tender_history(tender_id):
     from settings_manager import settings_manager
 
     # ── 캐시 확인 (1시간 TTL) ────────────────────────────────────────────────
+    _force = request.args.get('force', '0') == '1'
     _now_ts = _time.time()
     _cached = _history_cache.get(tender_id)
-    if _cached:
+    if _cached and not _force:
         _ts, _result = _cached
         if _now_ts - _ts < _HISTORY_CACHE_TTL:
             return jsonify({**_result, 'cached': True})
@@ -792,38 +792,127 @@ def api_tender_history(tender_id):
     clean = _re.sub(r'\d+\s*차\b', '', clean)
     clean = _re.sub(r'^\(?\s*(?:입찰재공고|입찰공고|재공고|재입찰)\s*\)?[\s-]*', '', clean)
     clean = _re.sub(r'\s+', ' ', clean).strip()
-    query_nm = clean[:60] if len(clean) > 60 else clean
 
-    # ── 조회 기간: 최근 5년 × 월별, max_workers=40 ───────────────────────────
-    # G2B API는 월 단위 범위만 지원 (분기·연간 범위는 결과 0)
-    # 2 ops × 60개월 = 120 호출 / 40 workers = 3 라운드 ≈ 10~15초 (캐시 후 즉시)
+    # ── API 검색어 빌딩 ───────────────────────────────────────────────────────
+    # G2B API는 exact substring 검색 → 쿼리에 연도간 변동 단어가 들어가면 매칭 실패
+    #
+    # Case 1 — 일반어(stopword)가 중간에 낀 경우
+    #   "AI바우처 사업 사업화 역량" → "사업" 제거 → "AI바우처 사업화 역량"
+    #   (같은 연도의 공고명이 "AI바우처 사업화 역량..."로 되어 있어야 매칭)
+    #
+    # Case 2 — "·" 복합어로 새 단어가 추가된 경우
+    #   "AI·디지털 실생활 역량" → split → "AI 디지털 실생활"
+    #   2025년 공고는 "AI 실생활 역량..."이라 매칭 안 됨
+    #   → "·" 두 번째 토큰(디지털)을 제외한 보조 쿼리 "AI 실생활 역량"도 병행 실행
+    _QUERY_STOPWORDS = {'사업', '용역', '운영', '관리', '지원', '추진', '수행'}
+    # "·" 복합어 두 번째 파트 수집 (ex: "AI·디지털" → {'디지털'})
+    _dot_extras = set(_re.findall(r'[가-힣A-Za-z0-9]+·([가-힣A-Za-z0-9]+)', clean))
+
+    _search_clean = _re.sub(r'[·/~\-+·]', ' ', clean)
+    _search_clean = _re.sub(r'\s+', ' ', _search_clean).strip()
+    _clean_words = _search_clean.split()
+
+    def _pick_query(word_list, extra_exclude=None):
+        """stopword + optional extra_exclude 제거 후 앞 3단어 조합"""
+        exclude = _QUERY_STOPWORDS | (extra_exclude or set())
+        mw = [w for w in word_list if w not in exclude]
+        if len(mw) >= 3:
+            return ' '.join(mw[:3])
+        if len(mw) >= 2:
+            return ' '.join(mw[:2])
+        # 의미어가 부족하면 원본으로 폴백
+        return ' '.join(word_list[:3]) if len(word_list) >= 3 else ' '.join(word_list)
+
+    query_nm     = _pick_query(_clean_words)[:60]               # 주 쿼리
+    query_nm_alt = _pick_query(_clean_words, _dot_extras)[:60]  # 보조 쿼리 ("·" 추가어 제외)
+
+    # 두 쿼리가 같으면 보조 쿼리 불필요
+    _queries = [query_nm] if query_nm_alt == query_nm else [query_nm, query_nm_alt]
+
+    # ── 유사도·기관 매칭 유틸 ─────────────────────────────────────────────────
+    import difflib as _difflib
+
+    def _norm_title(s):
+        """공고명 정규화: 연도·괄호접두어·차수 등 제거"""
+        s = _re.sub(r'\[[^\]]+\]', '', s)
+        s = _re.sub(
+            r'\(\s*(?:입찰재공고|입찰공고|입찰|재공고|재입찰|긴급|사전규격공개|사전규격'
+            r'|일반용역|추가공고|정정공고|공고|변경)\s*\)',
+            '', s, flags=_re.IGNORECASE,
+        )
+        s = _re.sub(r'\d{4}년도?', '', s)
+        s = _re.sub(r"'\d{2}년도?", '', s)
+        s = _re.sub(r'\(\s*20\d{2}\s*\)', '', s)
+        s = _re.sub(r'\b(?:19|20)\d{2}\b', '', s)
+        s = _re.sub(r'제\s*\d+\s*회차?', '', s)
+        s = _re.sub(r'\d+\s*차년도', '', s)
+        s = _re.sub(r'\d+\s*차\b', '', s)
+        s = _re.sub(r'^\(?\s*(?:입찰재공고|입찰공고|재공고|재입찰)\s*\)?[\s-]*', '', s)
+        return _re.sub(r'\s+', ' ', s).strip()
+
+    def _name_similarity(a, b):
+        """정규화된 공고명 간 유사도 (0.0~1.0)"""
+        a2, b2 = _norm_title(a), _norm_title(b)
+        if not a2 or not b2:
+            return 0.0
+        return _difflib.SequenceMatcher(None, a2, b2).ratio()
+
+    def _agency_match(tender_ag, tender_demand_ag, item):
+        """발주처(수요기관) 매칭.
+        API 응답에 기관 정보가 없으면 True (미필터) — false negative 방지.
+        개찰결과: ntceInsttNm / 낙찰결과: dminsttNm 사용.
+        """
+        item_ags = [
+            (item.get('ntceInsttNm') or '').strip(),   # 개찰결과 공고기관
+            (item.get('demandOrgNm') or '').strip(),   # (일부 API)
+            (item.get('dminsttNm')   or '').strip(),   # 낙찰결과 수요기관
+        ]
+        item_ags = [a for a in item_ags if a]
+        if not item_ags:
+            return True   # 기관 정보 없음 → 이름 유사도만으로 판단
+
+        def _pair(a, b):
+            if not a or not b:
+                return False
+            a, b = a.strip(), b.strip()
+            if a == b:
+                return True
+            shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+            return len(shorter) >= 4 and shorter in longer
+
+        for item_ag in item_ags:
+            if _pair(tender_ag, item_ag) or _pair(tender_demand_ag, item_ag):
+                return True
+        return False
+
+    _tender_agency        = tender.agency        or ''
+    _tender_demand_agency = tender.demand_agency or ''
+    _title_norm           = _norm_title(title)   # 현재 공고 정규화명
+
+    # ── 조회 기간: 최근 5년 단일 범위 ────────────────────────────────────────
     now = _dt.now()
-    periods = []   # (bdt, edt) 형태의 월별 범위 목록
-    for offset in range(60):   # 5년 = 60개월
-        y, m = now.year, now.month - offset
-        while m <= 0:
-            m += 12; y -= 1
-        last_day = _cal.monthrange(y, m)[1]
-        bdt = f'{y}{m:02d}010000'
-        edt = f'{y}{m:02d}{last_day:02d}2359'
-        periods.append((bdt, edt))
+    _bdt = f'{now.year - 5}0101' + '0000'
+    _edt = f'{now.year}{now.month:02d}{_cal.monthrange(now.year, now.month)[1]:02d}' + '2359'
 
     RESULT_BASE = 'https://apis.data.go.kr/1230000/as/ScsbidInfoService'
     CNTRCT_BASE = 'https://apis.data.go.kr/1230000/ao/CntrctInfoService'
 
     # ── 공통 파서 ─────────────────────────────────────────────────────────────
-    def _parse_items(data):
-        body = data.get('response', {}).get('body', {})
-        raw  = body.get('items')
+    def _parse_response(data):
+        """items 목록과 totalCount 반환"""
+        body  = data.get('response', {}).get('body', {})
+        total = int(body.get('totalCount') or 0)
+        raw   = body.get('items')
         if isinstance(raw, list):
-            return raw
+            return raw, total
         if isinstance(raw, dict):
             inner = raw.get('item', [])
-            return [inner] if isinstance(inner, dict) else (inner or [])
-        return []
+            items = [inner] if isinstance(inner, dict) else (inner or [])
+            return items, total
+        return [], total
 
     def _safe_get(url, params, timeout=25):
-        """GET 요청 → (items, error_str). 429/502/503 시 최대 3회 재시도."""
+        """GET 요청 → (items, total_count, error_str). 429/502/503 시 최대 3회 재시도."""
         for attempt in range(3):
             try:
                 r = _req.get(url, params=params, timeout=timeout)
@@ -831,62 +920,87 @@ def api_tender_history(tender_id):
                     _time.sleep(2 + attempt * 2)
                     continue
                 if r.status_code != 200:
-                    return [], f'HTTP {r.status_code}'
+                    return [], 0, f'HTTP {r.status_code}'
                 text = r.text.strip()
                 if not text or text.startswith('<'):
-                    return [], None   # 빈 응답 or HTML → 데이터 없음
+                    return [], 0, None
                 data = r.json()
                 hdr  = data.get('response', {}).get('header', {})
                 code = str(hdr.get('resultCode', '') or '')
                 msg  = str(hdr.get('resultMsg',  '') or '')
                 if code and code not in ('00', '000'):
-                    return [], f'{code}:{msg}'
-                return _parse_items(data), None
+                    return [], 0, f'{code}:{msg}'
+                items, total = _parse_response(data)
+                return items, total, None
             except Exception as e:
                 if attempt < 2:
                     _time.sleep(1)
                     continue
-                return [], str(e)
-        return [], '재시도 초과'
+                return [], 0, str(e)
+        return [], 0, '재시도 초과'
 
-    # ── 1단계: 개찰결과 + 낙찰결과 — 분기별 병렬 조회 (max_workers=20) ─────────
+    # ── 1단계: 개찰결과 + 낙찰결과 — 5년 단일 범위 + 페이지네이션 ──────────────
+    # 기존: 60개월 × 2 API = 120 요청
+    # 변경: 키워드당 2 요청 (결과 100건 초과 시 페이지 추가, 특정 공고 검색은 통상 1페이지)
     ops = [
         ('openg', RESULT_BASE, 'getOpengResultListInfoServcPPSSrch'),
         ('award', RESULT_BASE, 'getScsbidListSttusServcPPSSrch'),
     ]
 
-    def fetch_period(kind, base, ep, bdt, edt):
-        items, err = _safe_get(
-            f'{base}/{ep}',
-            {'ServiceKey': service_key, 'type': 'json',
-             'inqryDiv': '1', 'inqryBgnDt': bdt, 'inqryEndDt': edt,
-             'bidNtceNm': query_nm, 'pageNo': '1', 'numOfRows': '100'},
-        )
-        return kind, items, err
+    def fetch_all(kind, base, ep, qnm):
+        """단일 기간 범위로 전체 결과 수집 (페이지네이션 자동 처리)"""
+        all_items = []
+        page = 1
+        while page <= 20:   # 안전 상한 (2000건)
+            items, total, err = _safe_get(
+                f'{base}/{ep}',
+                {'ServiceKey': service_key, 'type': 'json',
+                 'inqryDiv': '1', 'inqryBgnDt': _bdt, 'inqryEndDt': _edt,
+                 'bidNtceNm': qnm, 'pageNo': str(page), 'numOfRows': '100'},
+            )
+            if err:
+                return kind, [], err
+            all_items.extend(items)
+            if len(items) < 100 or len(all_items) >= total:
+                break   # 마지막 페이지
+            page += 1
+        return kind, all_items, None
 
-    openg_by_no = {}
-    award_by_no = {}
+    openg_by_no: dict = {}
+    award_by_no: dict = {}
     errors = []
 
-    with ThreadPoolExecutor(max_workers=40) as ex:
-        futures = [
-            ex.submit(fetch_period, kind, base, ep, bdt, edt)
-            for kind, base, ep in ops
-            for bdt, edt in periods
-        ]
-        for fut in as_completed(futures):
-            kind, items, err = fut.result()
-            if err:
-                errors.append(f'{kind}: {err}')
-                continue
-            for item in items:
-                bid_no = item.get('bidNtceNo', '')
-                if not bid_no:
+    def _run_query(qnm):
+        """주어진 검색어로 openg/award 동시 조회 후 누적"""
+        seen: set = set()
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futures = {ex.submit(fetch_all, kind, base, ep, qnm): kind
+                       for kind, base, ep in ops}
+            for fut in as_completed(futures):
+                kind, items, err = fut.result()
+                if err:
+                    errors.append(f'{kind}: {err}')
                     continue
-                if kind == 'openg':
-                    openg_by_no.setdefault(bid_no, []).append(item)
-                elif kind == 'award':
-                    award_by_no.setdefault(bid_no, []).append(item)
+                for item in items:
+                    bid_no = item.get('bidNtceNo', '')
+                    if not bid_no:
+                        continue
+                    key = (bid_no, item.get('bidNtceOrd', '000'), kind)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    if kind == 'openg':
+                        openg_by_no.setdefault(bid_no, []).append(item)
+                    elif kind == 'award':
+                        award_by_no.setdefault(bid_no, []).append(item)
+
+    # 주 쿼리 실행
+    _run_query(query_nm)
+
+    # 보조 쿼리: 주 쿼리 결과 없을 때만 실행
+    if not (openg_by_no or award_by_no) and len(_queries) > 1:
+        errors.clear()
+        _run_query(query_nm_alt)
 
     # 모든 공고번호 통합
     all_bid_nos = set(openg_by_no) | set(award_by_no)
@@ -1036,7 +1150,7 @@ def api_tender_history(tender_id):
             search_to = min(str(int(search_from[:4]) + 2) + search_from[4:], _today_str)
         except Exception:
             search_to = _today_str
-        cntrct_items, _ = _safe_get(
+        cntrct_items, _, _ = _safe_get(
             f'{CNTRCT_BASE}/getCntrctInfoListServcPPSSrch',
             {'ServiceKey': service_key, 'type': 'json',
              'inqryDiv': '1', 'inqryBgnDate': search_from, 'inqryEndDate': search_to,
@@ -1064,6 +1178,20 @@ def api_tender_history(tender_id):
                     item['_status']            = '계약'
                     item['_followup_contract'] = contract
 
+    # ── 후처리 필터: 수요기관 일치 + 사업명 유사도 70% 이상 ─────────────────────
+    # G2B API는 공고명 키워드 검색이라 관련 없는 결과가 섞일 수 있음
+    # → 발주처(수요기관)가 같고, 정규화 공고명 유사도 ≥ 70% 인 것만 유지
+    SIMILARITY_THRESHOLD = 0.70
+    filtered_items = []
+    for _it in final_items:
+        _item_nm = _it.get('bidNtceNm', '')
+        _sim = _name_similarity(_title_norm, _item_nm)
+        _ag  = _agency_match(_tender_agency, _tender_demand_agency, _it)
+        if _sim >= SIMILARITY_THRESHOLD and _ag:
+            _it['_similarity'] = round(_sim, 2)
+            filtered_items.append(_it)
+    final_items = filtered_items
+
     # ── 정렬: 개찰일/공고일 최신순 ──────────────────────────────────────────
     def _sort_key(x):
         return x.get('rlOpengDt') or x.get('opengDt') or x.get('fnlSucsfDate') or x.get('bidNtceDt') or ''
@@ -1073,6 +1201,7 @@ def api_tender_history(tender_id):
     _result_data = {
         'items':          final_items,
         'query':          query_nm,
+        'queries':        _queries,
         'original_title': title,
         'errors':         list(set(errors))[:5],
         'pblnc_api_ok':   True,
@@ -1082,6 +1211,7 @@ def api_tender_history(tender_id):
     return jsonify({
         'items':          final_items,
         'query':          query_nm,
+        'queries':        _queries,
         'original_title': title,
         'errors':         list(set(errors))[:5],
         'pblnc_api_ok':   True,

@@ -853,18 +853,36 @@ function refreshDashboard() {
 
 // 관심 키워드 렌더링 (PC: 탭 스트립 / 모바일: 버블 카드)
 function renderActiveKeywords(keywords) {
-    // PC 탭 스트립
+    // PC: 키워드 한 줄 표시 (비링크 span, 넘치면 말줄임표)
     const pcContainer = document.getElementById('active-keywords');
     if (pcContainer) {
         if (!keywords || keywords.length === 0) {
-            pcContainer.innerHTML = '<a href="/filters" class="keyword-tab manage-tab">키워드 없음 — 추가하기</a>';
-        } else {
-            pcContainer.innerHTML =
-                keywords.map(kw =>
-                    `<a href="/search?q=${encodeURIComponent(kw)}" class="keyword-tab" target="_blank">${kw}</a>`
-                ).join('') +
-                `<a href="/filters" class="keyword-tab manage-tab">+ 관리</a>`;
+            pcContainer.innerHTML = '<span class="text-xs text-gray-400">설정된 키워드가 없습니다.</span>';
+            return;
         }
+        const TAG = 'keyword-tab';
+        // 1단계: 전부 nowrap 렌더 후 너비 측정
+        pcContainer.innerHTML = keywords.map((kw, i) =>
+            `<span data-i="${i}" class="${TAG}" style="cursor:default;flex-shrink:0;">${kw}</span>`
+        ).join('');
+        requestAnimationFrame(() => {
+            const cRight = pcContainer.getBoundingClientRect().right;
+            const spans = pcContainer.querySelectorAll('span[data-i]');
+            let cut = spans.length;
+            for (let i = 0; i < spans.length; i++) {
+                if (spans[i].getBoundingClientRect().right > cRight + 2) { cut = i; break; }
+            }
+            const SPAN = kw => `<span class="${TAG}" style="cursor:default;flex-shrink:0;">${kw}</span>`;
+            if (cut >= keywords.length) {
+                pcContainer.innerHTML = keywords.map(SPAN).join('');
+            } else {
+                const show = Math.max(1, cut - 1);
+                const rest = keywords.length - show;
+                pcContainer.innerHTML =
+                    keywords.slice(0, show).map(SPAN).join('') +
+                    `<span class="${TAG}" style="cursor:default;flex-shrink:0;background:#F3F4F6;color:#9CA3AF;border-color:#E5E7EB;">... +${rest}개</span>`;
+            }
+        });
     }
 
     // 모바일: 한 줄 키워드 (넘치면 +N개 표시, 전체 클릭 → /filters)

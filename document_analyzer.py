@@ -832,7 +832,10 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality'):
     def _call(model_name):
         client = genai.Client(
             api_key=api_key,
-            http_options=types.HttpOptions(timeout=120_000),  # 120초 타임아웃
+            http_options=types.HttpOptions(
+                timeout=90_000,                  # SDK 레벨 타임아웃 (밀리초) = 90초
+                client_args={'timeout': 90},     # httpx.Client 타임아웃 (초) — 확실한 적용
+            ),
         )
         return client.models.generate_content(
             model=model_name,
