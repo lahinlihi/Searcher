@@ -1,7 +1,8 @@
 from flask import Blueprint, request, jsonify, g
 from database import db, Tender, Bookmark, TenderMemo, AgencyWeight, UserPreference
 from decorators import login_required
-from scoring import load_interest_keywords, _score_and_type
+from scoring import load_user_prefs, _score_and_type
+from sqlalchemy.orm import joinedload
 
 bp = Blueprint('bookmarks', __name__)
 
@@ -12,15 +13,21 @@ def api_bookmarks():
     """관심공고 목록 조회 (공고 상세 + 적합도 점수 포함)"""
     try:
         uid = g.user.id
-        include_keywords = load_interest_keywords(uid)
-        _pref = UserPreference.query.filter_by(user_id=uid).first()
-        user_type_weights = _pref.get_type_weights() if _pref else {}
+        _uprefs = load_user_prefs(uid)
+        include_keywords = _uprefs['interest_keywords']
+        user_type_weights = _uprefs['type_weights']
         try:
             _aw_rows = AgencyWeight.query.filter_by(user_id=uid).all()
             user_agency_weights = {r.agency_name: r.weight for r in _aw_rows}
         except Exception:
             user_agency_weights = {}
-        bookmarks = Bookmark.query.filter_by(user_id=uid).order_by(Bookmark.created_at.desc()).all()
+        bookmarks = (
+            Bookmark.query
+            .filter_by(user_id=uid)
+            .options(joinedload(Bookmark.tender))
+            .order_by(Bookmark.created_at.desc())
+            .all()
+        )
 
         # memo_count 배치 조회
         from sqlalchemy import func as _sql_func2

@@ -321,3 +321,227 @@ If Auth or DB features are explicitly requested:
 - Do NOT use complex `getDoc` queries that need Firestore index feature
 - Write proper `firestore.rules` to ensure each user can access own data only
 - Write code that stores user data in Firestore → `users` (collection) → `uid` (doc) when user first signs up
+
+# Project Initialization & Feature Planning Rule
+## Target Files
+project folder root: CLAUDE.md, README.md, docs/product-contract.md
+
+## Principle
+Before generating the initial project structure for a new project, first define:
+- core features
+- primary user flows
+- acceptance criteria for each flow
+- Core E2E scenarios that must pass
+
+Write them in docs/product-contract.md first.
+
+Then:
+1. summarize the core features in README.md
+2. design routes, data model, and folder structure based on the defined flows
+3. implement only after the product contract is clear
+
+## Scope
+Apply this rule:
+- when starting a new project
+- when resetting project architecture
+- when adding a major new feature that changes core user flows
+
+# CLAUDE.md Improvement
+## Target File
+Current project folder root, CLAUDE.md
+
+## Principle
+If you encounter and resolve an error, and if that error is not a simple technical mistake but caused by your knowledge limitations or coding style, propose to the user to update CLAUDE.md with a fundamental solution to prevent that error.
+
+## Example
+Situation: Wrote code following tailwindcss v3, an error occurred, and found the solution in the v4 documentation.
+Improvement: "Use tailwindcss according to the V4 usage released in 2025. If unsure, refer to the documentation."
+
+---
+
+# React + Vite Development Rules (npm)
+
+**Stack is fixed:** React + TypeScript + Vite + Tailwind CSS + Motion (Framer Motion) + Firebase + React-Router-Dom + Zustand + Tanstack Query(v5)
+
+**Mobile-First Design:**: Always design and implement for mobile screens first, then scale up to larger screens.
+
+**Run lint, npm run build, tsc**: Always debug after jobs done.
+
+---
+
+## 1) Fixed stack and allowed libraries
+
+Use exactly these libraries for the listed responsibilities:
+
+- **Build/dev:** Vite
+- **UI:** React
+- **Language:** TypeScript (strict)
+- **Styling:** Tailwind CSS
+- **Animation:** Motion (Framer Motion)
+- **Backend SDK:** Firebase Web SDK (modular v9+)
+- **Global State:** Zustand
+- **Data Fetch and Server data Management:** @tanstack/react-query(v5+)
+
+Use Tanstack Query STRICTLY for asynchronous server state and data fetching. Use Zustand ONLY for synchronous, global client UI state (e.g., dark mode, sidebar open/close, multi-step form data).
+
+Do not add alternatives for the same responsibility.
+
+Examples of forbidden additions:
+
+- Animation: react-spring, gsap wrappers (use Motion)
+- Styling: styled-components, emotion, CSS frameworks (use Tailwind)
+
+# Optional Features: CRUD & Auth (Only when requested)
+
+**🔥 DEFAULT TO HOSTING ONLY:** By default, use Firebase only for Hosting. **DO NOT** implement Firebase Auth, Google Login, or Firestore unless the user explicitly requests database or login functionality.
+
+If the user explicitly requests Auth or DB features, strictly follow these rules:
+- DO NOT use complex getDoc queries that needs 'index' feature in firestore.
+- write proper firestore.rules to ensure each user can access own data only.
+- write code that make user data in firestore > users(collection) > uid(doc), when user first sign up.
+
+---
+
+## 2) README.md is the source of truth (keep it correct)
+
+### Before doing any of these:
+
+- installing a package
+- creating a folder
+- adding a new feature (anything user-facing or cross-cutting)
+
+Do this first:
+
+1. Open `README.md`
+2. Check:
+    - `features` (is this already implemented?)
+    - `project-structure` (where does this belong?)
+    - any conventions (naming, patterns, existing modules)
+
+If an equivalent feature or module exists, extend it. Do not re-create it.
+
+### After doing any of these:
+
+- installing/removing/upgrading packages
+- creating a folder
+- adding a new feature
+
+Update `README.md` immediately:
+
+- `project-structure`: add the new folder/module and its role (one line)
+- `features`: add/adjust the feature description and entry points
+
+### After any change
+
+Verify these three agree with each other:
+
+- `README.md` (what exists and how to run it)
+- `package.json` (scripts + deps)
+- `package-lock.json` (locked dependency graph)
+
+No contradictions allowed.
+
+---
+
+## 3) Dependency management with npm (reproducible installs)
+
+### Rules
+
+- Use **npm only**.
+- Commit **`package-lock.json`** with every dependency change.
+- Do not edit `package-lock.json` manually.
+
+---
+
+## 4) Project structure (prevents duplicate code)
+
+Use this structure and meanings:
+
+src
+
++-- assets            # assets folder can contain all the static files such as images, fonts, etc.
++-- components        # shared UI components used across the entire application (e.g., Buttons, Modals)
++-- features          # Domain-specific logic and components (e.g., features/auth, features/dashboard)
++-- pages             # Keep files route-level only. If a component gets too large, split it into `features/` or `components/`.
++-- store             # Zustand stores for global state management
++-- firebase          # firebase related files
+|   +-- config.ts     # # Firebase init and exports. Hardcode the firebaseConfig object here.
+|   +-- auth.ts       # (ONLY IF AUTH REQUESTED) Pure auth business logic (handleSignOut, handleSignIn).
++-- utils             # shared utility functions and libraries
++-- main.tsx          # main application component; contains providers
++-- router.tsx        # application routes. Path ↔ page mapping only. Use React-Router v6+ (createBrowserRouter)
+
+.gitignore, eslint.config.js, index.html, package-lock.json, package.json, README.md, tsconfig.app.json, tsconfig.json, tsconfig.node.json, vite.config.ts, public/, node_modules/
+
+---
+
+## 5) TypeScript rules (keep correctness under AI-generated churn)
+
+- `tsconfig.json` must keep:
+    - `"strict": true`
+    - `"noUncheckedIndexedAccess": true` (recommended)
+    - `"noImplicitOverride": true` (recommended)
+- Do not use `any`.
+    - Use `unknown` for untrusted values.
+
+---
+
+## 6) Firebase rules (single init, modular imports)
+
+- Use Firebase modular SDK (v9+).
+- Create Firebase app and exported clients in exactly one place:
+    - `src/firebase/config.ts`
+- No other file calls `initializeApp`.
+- Import style must be modular:
+
+    `import { initializeApp } from "firebase/app";
+    import { getAuth } from "firebase/auth";
+    import { getFirestore } from "firebase/firestore";`
+    
+
+---
+
+## 7) Motion (Framer Motion) rules (consistent animation strategy)
+
+- Use Motion components for animation (`motion.div`, etc.).
+- Prefer variants for consistency:
+    - store common variants/presets in `src/utils/motionPresets.ts`
+- Do not introduce additional animation libraries.
+
+---
+
+## 8) Tailwind rules (avoid style drift and class chaos)
+
+- Use Tailwind for all styling.
+- Keep global CSS minimal.
+- Do not use arbitrary hex values (e.g., `text-[#ff5733]`).
+- Use Tailwind's default color palette for generic styling, but strictly define Brand colors (primary, secondary, background) using CSS Variables in `index.css`.
+
+---
+
+## 9) Firebase config & rules setup(NO .env required)
+*(Note: Setup Firestore rules and Auth config ONLY IF explicitly requested by the user)*
+**DO NOT use `.env` files for Firebase client configuration.**
+According to official Firebase documentation, values like `apiKey`, `projectId`, and `appId` are safe to expose in client-side code and are intended to be public. Do not waste time setting up environment variables for them. check real value and set
+
+Hardcode the `firebaseConfig` object directly in `src/firebase/config.ts` like this:
+
+```typescript
+const firebaseConfig = {
+  apiKey: "AIzaS...",
+  authDomain: "real-id.firebaseapp.com",
+  projectId: "real-id",
+  storageBucket: "real-id.firebasestorage.app",
+  messagingSenderId: "realvalue",
+  appId: "realvalue:web:realvalue"
+};
+And, for proper protection, write Firestore rules like this:
+
+- **general** (collection) / **base** (doc): allow read for everyone (e.g., `allow read: if true`).
+- **users** (collection) / **uid** (doc): restrict access as follows:
+
+`match /users/{userId}/{document=**} {
+  allow read, write: if request.auth != null && request.auth.uid == userId;
+}`
+
+**Exception"** Third-party private keys (e.g., OpenAI, Stripe) must NEVER be hardcoded and MUST USE .env."

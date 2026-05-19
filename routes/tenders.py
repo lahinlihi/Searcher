@@ -1,8 +1,8 @@
 from flask import Blueprint, request, jsonify, g, current_app
-from database import db, Tender, CrawlLog, TenderMemo, DismissedTender, Filter, UserPreference
+from database import db, Tender, CrawlLog, TenderMemo, DismissedTender, Filter
 from decorators import login_required, admin_required
-from scoring import (load_interest_keywords, load_exclude_keywords, load_budget_range,
-                     smart_sort_tenders, smart_sort_tenders_by_keyword_count,
+from scoring import (load_user_prefs, load_interest_keywords,
+                     smart_sort_tenders_by_keyword_count,
                      _score_and_type, get_last_workday)
 from config import Config
 from datetime import datetime, timedelta
@@ -100,29 +100,28 @@ def api_dashboard():
     """대시보드 데이터 조회"""
     try:
         now = datetime.now()
-        yesterday = now - timedelta(days=1)
+        # 어제 자정(00:00:00) 기준 — timedelta(1)은 현재 시각 기준이므로 00:00 공고가 탈락하는 버그 방지
+        yesterday = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # 월요일이면 금요일부터, 아니면 1일전부터
+        # 월요일이면 금요일부터, 아니면 어제 자정부터
         if now.weekday() == 0:  # 월요일
             start_date = get_last_workday(now)  # 금요일
         else:
             start_date = yesterday
 
-        # 포함/제외 키워드 및 금액 범위 로드 (사용자별)
+        # 포함/제외 키워드 및 금액 범위 로드 (사용자별, 단일 DB 조회)
         uid = g.user.id if g.user else None
-        include_keywords = load_interest_keywords(uid)
-        exclude_keywords = load_exclude_keywords(uid)
-        budget_range = load_budget_range(uid)
+        _uprefs = load_user_prefs(uid)
+        include_keywords = _uprefs['interest_keywords']
+        exclude_keywords = _uprefs['exclude_keywords']
+        budget_range = _uprefs['budget_range']
+        user_type_weights = _uprefs['type_weights']
+        user_core_keywords = _uprefs.get('core_keywords', [])
 
         # 관심없음 처리된 공고 ID 목록
         dismissed_ids = [d.tender_id for d in DismissedTender.query.filter_by(user_id=uid).all()] if uid else []
 
-        # 사용자 사업유형 가중치 로드
         from database import AgencyWeight
-        _pref = UserPreference.query.filter_by(user_id=uid).first() if uid else None
-        user_type_weights = _pref.get_type_weights() if _pref else {}
-
-        # 기관별 가중치 로드 {기관명: 점수}
         try:
             _aw_rows = AgencyWeight.query.filter_by(user_id=uid).all() if uid else []
             user_agency_weights = {r.agency_name: r.weight for r in _aw_rows}
@@ -185,12 +184,14 @@ def api_dashboard():
         if dismissed_ids:
             all_pre_new = [t for t in all_pre_new if t.id not in dismissed_ids]
         sorted_pre_new = smart_sort_tenders_by_keyword_count(
-            all_pre_new, include_keywords, user_type_weights, user_agency_weights)
+            all_pre_new, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
         pre_tenders = sorted_pre_new[:24]
 
-        # 6. 신규공고(기타 채널): 금~오늘, 나라장터 제외, 수의계약 제외, 마감 안 지난 것
+        # 6. 신규공고(기타 채널): 7일 이내, 나라장터 제외, 수의계약 제외, 마감 안 지난 것
+        # (나라장터와 동일한 7일 창 사용 — 기타채널도 주중 공고 누락 방지)
+        seven_days_ago_midnight = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
         new_query = Tender.query.filter(
-            Tender.announced_date >= start_date,
+            Tender.announced_date >= seven_days_ago_midnight,
             Tender.announced_date <= now,
             Tender.status != '사전규격',
             Tender.deadline_date >= now,           # 마감일 지난 공고 제외
@@ -214,10 +215,10 @@ def api_dashboard():
         if dismissed_ids:
             all_new = [t for t in all_new if t.id not in dismissed_ids]
         sorted_new = smart_sort_tenders_by_keyword_count(
-            all_new, include_keywords, user_type_weights, user_agency_weights)
+            all_new, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
         recent_tenders = sorted_new[:24]
 
-        seven_days_ago = now - timedelta(days=7)
+        seven_days_ago = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
 
         # 7. 신규공고(나라장터 API): 최근 7일, 수의계약 제외, 마감 안 지난 것 + 3중 필터
         urgent_query = Tender.query.filter(
@@ -245,7 +246,7 @@ def api_dashboard():
         all_urgent = urgent_query.all()
         if dismissed_ids:
             all_urgent = [t for t in all_urgent if t.id not in dismissed_ids]
-        sorted_urgent = smart_sort_tenders_by_keyword_count(all_urgent, include_keywords, user_type_weights, user_agency_weights)
+        sorted_urgent = smart_sort_tenders_by_keyword_count(all_urgent, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
         urgent_tenders = sorted_urgent[:24]
 
         # 전체 필터 적용 후 총 건수 (배지용)
@@ -253,7 +254,7 @@ def api_dashboard():
 
         def _td(t):
             d = t.to_dict(interest_keywords=include_keywords)
-            r = _score_and_type(t, include_keywords, user_type_weights, user_agency_weights)
+            r = _score_and_type(t, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
             d['relevance_score'] = r[0]
             d['business_type'] = r[1]
             d['score_breakdown'] = {'keyword': r[2], 'type': r[3], 'agency': r[4]}
@@ -465,8 +466,27 @@ def api_tenders():
         # 모든 결과 가져오기 (스마트 정렬을 위해)
         all_tenders = query.all()
 
-        # 스마트 정렬 적용
-        sorted_tenders = smart_sort_tenders(all_tenders)
+        # 사용자 설정 단일 조회 (정렬 + 점수 계산 공통)
+        uid = g.user.id if g.user else None
+        _uprefs = load_user_prefs(uid)
+        interest_keywords = _uprefs['interest_keywords']
+        user_type_weights = _uprefs['type_weights']
+        user_core_keywords2 = _uprefs.get('core_keywords', [])
+
+        # 스마트 정렬 적용 (사용자 관심 키워드 기반)
+        from database import AgencyWeight as _AgencyWeight
+        try:
+            _aw_rows2 = _AgencyWeight.query.filter_by(user_id=uid).all() if uid else []
+            user_agency_weights2 = {r.agency_name: r.weight for r in _aw_rows2}
+        except Exception:
+            user_agency_weights2 = {}
+
+        # 점수/정렬은 항상 필터관리에 저장된 관심 키워드 기준 — 검색창 키워드와 무관
+        sort_keywords = interest_keywords
+
+        sorted_tenders = smart_sort_tenders_by_keyword_count(
+            all_tenders, sort_keywords, user_type_weights, user_agency_weights2, user_core_keywords2
+        )
 
         # 동일 사업명 중복 제거 — smart_sort 이후 첫 번째(최신) 공고만 대표로 유지
         import re as _re
@@ -509,9 +529,6 @@ def api_tenders():
 
         pagination = ManualPagination(items, page, per_page, total)
 
-        # 관심 키워드 로드 (사용자별)
-        interest_keywords = load_interest_keywords(g.user.id if g.user else None)
-
         # memo_count 배치 조회
         from sqlalchemy import func as _sql_func
         _page_ids = [t.id for t in pagination.items]
@@ -522,33 +539,15 @@ def api_tenders():
             ).filter(TenderMemo.tender_id.in_(_page_ids)).group_by(TenderMemo.tender_id).all()
             _memo_counts = {r[0]: r[1] for r in _mcrows}
 
-        # 사용자 사업유형 가중치 + 기관별 가중치 로드 (점수 계산용)
-        uid = g.user.id if g.user else None
-        from database import AgencyWeight as _AgencyWeight
-        _pref = UserPreference.query.filter_by(user_id=uid).first() if uid else None
-        user_type_weights = _pref.get_type_weights() if _pref else {}
-        try:
-            _aw_rows2 = _AgencyWeight.query.filter_by(user_id=uid).all() if uid else []
-            user_agency_weights2 = {r.agency_name: r.weight for r in _aw_rows2}
-        except Exception:
-            user_agency_weights2 = {}
-
-        # 검색 키워드를 flat list로 파싱 (점수 계산용)
-        # "AI+교육, 시스템" → ['AI', '교육', '시스템']
-        score_keywords = []
-        kw_source = include_keywords or ', '.join(interest_keywords)
-        for group in kw_source.split(','):
-            for kw in group.split('+'):
-                kw = kw.strip()
-                if kw:
-                    score_keywords.append(kw)
+        # 점수 계산용 키워드 (sort_keywords와 동일한 소스에서 이미 파싱됨)
+        score_keywords = sort_keywords
 
         _tenders_data = []
         for t in pagination.items:
             d = t.to_dict(interest_keywords=interest_keywords)
             d['memo_count'] = _memo_counts.get(t.id, 0)
             if score_keywords:
-                score, btype, kw_s, t_s, a_s = _score_and_type(t, score_keywords, user_type_weights, user_agency_weights2)
+                score, btype, kw_s, t_s, a_s = _score_and_type(t, score_keywords, user_type_weights, user_agency_weights2, user_core_keywords2)
             else:
                 score, btype, kw_s, t_s, a_s = 0, '기타', 0.0, 0.0, 0.0
             d['relevance_score'] = score

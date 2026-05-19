@@ -210,17 +210,20 @@ def api_interest_keywords():
                 exclude_keywords = pref.get_exclude_keywords()
                 budget_range = pref.get_budget_range()
                 type_weights = pref.get_type_weights()
+                core_keywords = pref.get_core_keywords()
             else:
                 # settings.json 폴백 (UserPreference 레코드 없을 때, 레거시 마이그레이션)
                 keywords = load_interest_keywords(g.user.id)
                 exclude_keywords = load_exclude_keywords(g.user.id)
                 budget_range = load_budget_range(g.user.id)
                 type_weights = {}
+                core_keywords = []
             return jsonify({
                 'keywords': keywords,
                 'exclude_keywords': exclude_keywords,
                 'budget_range': budget_range,
                 'type_weights': type_weights,
+                'core_keywords': core_keywords,
             })
         except Exception as e:
             return jsonify({'error': str(e)}), 500
@@ -250,6 +253,12 @@ def api_interest_keywords():
             if type_weights is not None:
                 pref.type_weights = json.dumps(type_weights, ensure_ascii=False)
 
+            core_kws = data.get('core_keywords', None)
+            if core_kws is not None:
+                valid_interest = set(pref.get_interest_keywords())
+                filtered_core = [k for k in core_kws if k in valid_interest]
+                pref.core_keywords = json.dumps(filtered_core, ensure_ascii=False)
+
             db.session.commit()
 
             return jsonify({
@@ -258,6 +267,7 @@ def api_interest_keywords():
                 'exclude_keywords': pref.get_exclude_keywords(),
                 'budget_range': pref.get_budget_range(),
                 'type_weights': pref.get_type_weights(),
+                'core_keywords': pref.get_core_keywords(),
             })
         except Exception as e:
             db.session.rollback()

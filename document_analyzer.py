@@ -539,6 +539,54 @@ def _g2b_prespec_links(bf_spec_reg_no):
     return links
 
 
+# 소상공인24 SPA URL 패턴
+_SBIZ24_RE = re.compile(r'sbiz24\.kr/#/pbanc/(\d+)', re.I)
+
+
+def _sbiz24_fetch_content(pbanc_sn):
+    """
+    소상공인24 공고 본문 텍스트 가져오기.
+    sbiz24는 SPA(hash routing)라 일반 HTML 파싱 불가.
+    1) GET / → WMONID 쿠키 획득
+    2) GET /api/pbanc/{pbancSn} → pbancDtlCn HTML → plain text
+    Returns (text, files_info_list) or ('', []) on failure.
+    """
+    try:
+        from bs4 import BeautifulSoup
+        base = 'https://www.sbiz24.kr'
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': _HEADERS['User-Agent'],
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'Referer': f'{base}/',
+        })
+        # WMONID 쿠키 획득 (auth 응답 자체가 500이어도 쿠키는 설정됨)
+        session.get(f'{base}/', timeout=10)
+        session.post(f'{base}/api/auth', json={}, headers={'Authorization': ''}, timeout=10)
+        resp = session.get(f'{base}/api/pbanc/{pbanc_sn}', timeout=15)
+        if resp.status_code != 200:
+            logger.warning(f"sbiz24 detail API 실패: HTTP {resp.status_code}")
+            return '', []
+        data = resp.json()
+        detail = data.get('data', {}).get('default', {})
+        if not detail:
+            return '', []
+        html = detail.get('pbancDtlCn', '') or ''
+        if not html:
+            return '', []
+        soup = BeautifulSoup(html, 'html.parser')
+        text = soup.get_text(separator='\n', strip=True)
+        if not text or len(text) < 20:
+            return '', []
+        logger.info(f"sbiz24 본문 텍스트 획득: {len(text)}자 (pbancSn={pbanc_sn})")
+        files_info = ['소상공인24 공고 본문 (sbiz24 API)']
+        return text, files_info
+    except Exception as e:
+        logger.warning(f"sbiz24 본문 가져오기 실패: {e}")
+        return '', []
+
+
 def fetch_attachment_links(page_url):
     """
     공고 페이지에서 HWP/HWPX/PDF 첨부파일 링크 수집.
@@ -871,23 +919,17 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality'):
     _MODEL_ORDERS = {
         'speed': [
             'gemini-2.0-flash-lite',
-            'gemini-1.5-flash-8b',
-            'gemini-1.5-flash',
             'gemini-2.0-flash',
             'gemini-2.5-flash',
         ],
         'balanced': [
             'gemini-2.0-flash',
             'gemini-2.0-flash-lite',
-            'gemini-1.5-flash',
-            'gemini-1.5-flash-8b',
             'gemini-2.5-flash',
         ],
         'quality': [
             'gemini-2.5-flash',
             'gemini-2.0-flash',
-            'gemini-1.5-flash',
-            'gemini-1.5-flash-8b',
             'gemini-2.0-flash-lite',
         ],
     }
@@ -997,16 +1039,33 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality'):
                 logger.error(f"Gemini API 오류 ({model_name}): {e}")
                 return {'error': f'[Gemini 오류] {str(e)[:300]}'}
 
-    # 모든 모델 실패
+    # 모든 모델 실패 — 실제 오류 유형별로 메시지 결정
     logger.error(f"Gemini 모든 모델({len(_MODELS)}개) 실패: {failed_models}")
-    return {
-        'error': (
-            '[Gemini 오류] 모든 모델의 일일 무료 할당량이 초과되었습니다.\n'
-            '내일(한국시간 오후 4~5시) 이후 다시 시도하거나, '
-            'Google AI Studio에서 결제를 설정해 주세요.\n'
-            f'(시도한 모델: {", ".join(m.split("(")[0] for m in failed_models)})'
+
+    all_errors = ' '.join(failed_models)
+    has_quota   = '429' in all_errors or 'resource_exhausted' in all_errors.lower()
+    has_unavail = '503' in all_errors or 'unavailable' in all_errors.lower()
+    has_404     = '404' in all_errors
+
+    if has_unavail and not has_quota:
+        msg = (
+            '[Gemini 오류] Gemini 서버가 현재 과부하 상태입니다.\n'
+            '잠시 후 다시 시도해 주세요.'
         )
-    }
+    elif has_quota:
+        msg = (
+            '[Gemini 오류] 일일 무료 할당량이 초과되었습니다.\n'
+            '내일(한국시간 오후 4~5시) 이후 다시 시도하거나, '
+            'Google AI Studio에서 결제를 설정해 주세요.'
+        )
+    else:
+        msg = '[Gemini 오류] 모든 모델 호출에 실패했습니다.'
+
+    if has_404:
+        msg += '\n(일부 구모델이 현재 API에서 지원되지 않습니다 — 관리자에게 문의)'
+
+    msg += f'\n(시도: {", ".join(m.split("(")[0] for m in failed_models)})'
+    return {'error': msg}
 
 
 # ── 통합 분석 함수 ────────────────────────────────────────────────────────────
@@ -1034,6 +1093,29 @@ def analyze_tender(tender_url, tender_title='', api_key=None, source_site='', mo
     if not tender_url:
         result['error'] = '공고 URL이 없습니다.'
         return result
+
+    # ── 소상공인24 SPA 특별 처리 ──────────────────────────────────────────────
+    # sbiz24는 Vue SPA(hash routing)이라 requests로 HTML 파싱 불가.
+    # GET /api/pbanc/{pbancSn} API로 공고 본문(pbancDtlCn)을 직접 가져온다.
+    m_sbiz = _SBIZ24_RE.search(tender_url or '')
+    if m_sbiz:
+        pbanc_sn = m_sbiz.group(1)
+        sbiz_text, sbiz_files = _sbiz24_fetch_content(pbanc_sn)
+        if sbiz_text:
+            result['files_found'] = [f'★ {sbiz_files[0]}'] if sbiz_files else ['★ sbiz24 공고 본문']
+            result['text_length'] = len(sbiz_text)
+            result['rule_extract'] = rule_based_extract(sbiz_text)
+            if api_key:
+                result['gemini_sections'] = gemini_analyze(
+                    sbiz_text, api_key, tender_title, model_priority=model_priority
+                )
+            return result
+        else:
+            result['error'] = (
+                '소상공인24 공고 내용을 불러올 수 없습니다.\n'
+                '공고 원문 페이지(sbiz24.kr)에서 직접 내용을 확인해 주세요.'
+            )
+            return result
 
     # 1. 첨부파일 링크 수집
     links = fetch_attachment_links(tender_url)

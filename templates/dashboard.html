@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}메인화면 - 입찰공고 통합 검색 시스템{% endblock %}
+{% block title %}메인화면 - HIGH-SEARCH{% endblock %}
 
 {% block content %}
 <div class="space-y-5">
@@ -166,7 +166,6 @@
             <div class="flex justify-between items-center">
                 <h3 class="card-title">신규공고 (기타 채널)</h3>
                 <div class="flex items-center gap-2">
-                    <a href="/search" class="text-sm text-blue-600 hover:underline mr-1">전체 보기 →</a>
                     <button class="carousel-nav-btn" id="recent-prev" onclick="prevPage('recent')" disabled>←</button>
                     <span class="text-xs text-gray-400" id="recent-page-indicator">1 / 1</span>
                     <button class="carousel-nav-btn" id="recent-next" onclick="nextPage('recent')">→</button>
@@ -183,7 +182,6 @@
         <div class="card-header">
             <div class="flex justify-between items-center flex-wrap gap-2">
                 <h3 class="card-title">신규공고 (기타 채널)</h3>
-                <a href="/search" class="text-blue-600 hover:underline text-sm shrink-0">전체 보기 →</a>
             </div>
         </div>
         <div class="flex items-center gap-2 px-4 py-2 border-b bg-gray-50">

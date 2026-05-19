@@ -3,25 +3,28 @@
 공고번호 및 제목 기반으로 중복 공고를 제거합니다.
 """
 
-def remove_duplicates(tenders, existing_tender_numbers=None):
+def remove_duplicates(tenders, existing_tender_numbers=None, existing_titles=None):
     """
     중복 공고 제거
 
     Args:
         tenders (list): 공고 리스트
         existing_tender_numbers (set): 이미 DB에 있는 공고번호 집합
+        existing_titles (set): 이미 DB에 있는 공고 제목 집합
 
     Returns:
         tuple: (unique_tenders, duplicate_tenders)
     """
     if existing_tender_numbers is None:
         existing_tender_numbers = set()
+    if existing_titles is None:
+        existing_titles = set()
 
     unique_tenders = []
     duplicate_tenders = []
 
     seen_numbers = existing_tender_numbers.copy()
-    seen_titles = set()
+    seen_titles = existing_titles.copy()
 
     for tender in tenders:
         tender_number = tender.get('tender_number')
@@ -33,7 +36,7 @@ def remove_duplicates(tenders, existing_tender_numbers=None):
             duplicate_tenders.append(tender)
             continue
 
-        # 2. 제목 정확 일치 중복 체크 (O(1)) — SequenceMatcher 대체
+        # 2. 제목 정확 일치 중복 체크 (O(1)) — DB 기존 + 현재 배치 모두 포함
         if title and title in seen_titles:
             tender['is_duplicate'] = True
             duplicate_tenders.append(tender)
@@ -103,10 +106,15 @@ def mark_duplicates_in_db(app, new_tenders):
         # DB에서 모든 공고번호 가져오기
         existing_numbers = set(
             row[0] for row in Tender.query.with_entities(
-                Tender.tender_number).all())
+                Tender.tender_number).filter(Tender.tender_number.isnot(None)).all())
 
-        # 중복 제거
+        # DB에서 모든 공고 제목도 가져오기 (공고번호 없는 소스 방어)
+        existing_titles = set(
+            row[0] for row in Tender.query.with_entities(
+                Tender.title).filter(Tender.title.isnot(None)).all())
+
+        # 중복 제거 (번호 + 제목 모두 DB 비교)
         unique_tenders, duplicate_tenders = remove_duplicates(
-            new_tenders, existing_numbers)
+            new_tenders, existing_numbers, existing_titles)
 
         return unique_tenders, len(duplicate_tenders)

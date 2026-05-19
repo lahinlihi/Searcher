@@ -507,6 +507,7 @@ function removeSite(siteId) {
 
 let currentKeywords = [];
 let currentExcludeKeywords = [];
+let currentCoreKeywords = [];
 
 // 필터 설정 로드
 async function loadInterestKeywords() {
@@ -517,6 +518,7 @@ async function loadInterestKeywords() {
         if (response.ok) {
             currentKeywords = data.keywords || [];
             currentExcludeKeywords = data.exclude_keywords || [];
+            currentCoreKeywords = data.core_keywords || [];
             const br = data.budget_range || {};
             renderKeywordTags();
             renderExcludeKeywordTags();
@@ -537,13 +539,22 @@ function renderKeywordTags() {
         return;
     }
 
-    container.innerHTML = currentKeywords.map((kw, i) => `
-        <span class="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 text-green-800
-                     border border-green-300 rounded-full text-xs font-medium">
+    container.innerHTML = currentKeywords.map((kw, i) => {
+        const isCore = currentCoreKeywords.includes(kw);
+        const bgClass = isCore
+            ? 'bg-yellow-50 border-yellow-400 text-yellow-800'
+            : 'bg-green-100 border-green-300 text-green-800';
+        const starClass = isCore
+            ? 'text-yellow-500 hover:text-yellow-300'
+            : 'text-gray-300 hover:text-yellow-400';
+        const starIcon = isCore ? '★' : '☆';
+        const starTitle = isCore ? '핵심 키워드 해제' : '핵심 키워드로 지정 (2배 가중치)';
+        return `<span class="inline-flex items-center gap-1 px-2 py-0.5 ${bgClass} border rounded-full text-xs font-medium">
             ${escHtml(kw)}
-            <button onclick="removeKeyword(${i})" class="ml-0.5 text-green-600 hover:text-green-900
-                    leading-none font-bold text-sm" title="삭제">×</button>
-        </span>`).join('');
+            <button data-kw="${escHtml(kw)}" onclick="toggleCoreKeyword(this.dataset.kw)" class="${starClass} leading-none" title="${starTitle}">${starIcon}</button>
+            <button onclick="removeKeyword(${i})" class="opacity-60 hover:opacity-100 leading-none font-bold text-sm" title="삭제">×</button>
+        </span>`;
+    }).join('');
 }
 
 // ─ 제외 키워드 태그 렌더링
@@ -584,7 +595,21 @@ function addKeyword() {
 
 // ─ 관심 키워드 삭제
 function removeKeyword(index) {
+    const removed = currentKeywords[index];
     currentKeywords.splice(index, 1);
+    const coreIdx = currentCoreKeywords.indexOf(removed);
+    if (coreIdx !== -1) currentCoreKeywords.splice(coreIdx, 1);
+    renderKeywordTags();
+}
+
+// ─ 핵심 키워드 토글 (★/☆ 버튼)
+function toggleCoreKeyword(kw) {
+    const idx = currentCoreKeywords.indexOf(kw);
+    if (idx === -1) {
+        currentCoreKeywords.push(kw);
+    } else {
+        currentCoreKeywords.splice(idx, 1);
+    }
     renderKeywordTags();
 }
 
@@ -610,17 +635,23 @@ function removeExcludeKeyword(index) {
 function loadBudgetRangeInputs(br) {
     if (!br) return;
 
-    // min 값
+    const minEl = document.getElementById('budget-min');
+    const minUnitEl = document.getElementById('budget-min-unit');
+    const maxEl = document.getElementById('budget-max');
+    const maxUnitEl = document.getElementById('budget-max-unit');
+
+    // 요소가 없는 페이지(settings 등)에서는 무시
+    if (!minEl || !minUnitEl || !maxEl || !maxUnitEl) return;
+
     if (br.min != null) {
         const { val, unit } = decomposeAmount(br.min);
-        document.getElementById('budget-min').value = val;
-        document.getElementById('budget-min-unit').value = String(unit);
+        minEl.value = val;
+        minUnitEl.value = String(unit);
     }
-    // max 값
     if (br.max != null) {
         const { val, unit } = decomposeAmount(br.max);
-        document.getElementById('budget-max').value = val;
-        document.getElementById('budget-max-unit').value = String(unit);
+        maxEl.value = val;
+        maxUnitEl.value = String(unit);
     }
     updateBudgetPreview();
 }
@@ -684,7 +715,8 @@ async function saveKeywordFilters() {
     const payload = {
         keywords: currentKeywords,
         exclude_keywords: currentExcludeKeywords,
-        budget_range: { min: minAmt, max: maxAmt }
+        budget_range: { min: minAmt, max: maxAmt },
+        core_keywords: currentCoreKeywords
     };
 
     try {

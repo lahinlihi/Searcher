@@ -180,7 +180,7 @@ class TenderMemo(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     tender = db.relationship('Tender', backref=db.backref('memos', lazy=True, cascade='all, delete-orphan'))
-    user = db.relationship('User', backref=db.backref('memos', lazy=True))
+    user = db.relationship('User', backref=db.backref('memos', lazy=True, cascade='all, delete-orphan'))
 
     def to_dict(self):
         is_edited = bool(self.updated_at and self.created_at and self.updated_at > self.created_at)
@@ -208,6 +208,9 @@ class DismissedTender(db.Model):
 
     __table_args__ = (db.UniqueConstraint('user_id', 'tender_id'),)
 
+    user = db.relationship('User', backref=db.backref('dismissed_tenders', lazy=True, cascade='all, delete-orphan'))
+    tender = db.relationship('Tender', backref=db.backref('dismissed_by', lazy=True))
+
 
 class UserPreference(db.Model):
     """사용자별 개인 설정 (관심 키워드, 제외 키워드, 금액 범위)"""
@@ -225,8 +228,9 @@ class UserPreference(db.Model):
     budget_max = db.Column(db.BigInteger, nullable=True)
     # 사업유형별 가중치 {"교육운영": 1.5, "시설운영": 0.5, ...} 기본값 1.0
     type_weights = db.Column(db.Text, default='{}')
+    core_keywords = db.Column(db.Text, default='[]')  # JSON array — 핵심 키워드 (2배 가중치)
 
-    user = db.relationship('User', backref=db.backref('preference', uselist=False))
+    user = db.relationship('User', backref=db.backref('preference', uselist=False, cascade='all, delete-orphan'))
 
     def get_interest_keywords(self):
         try:
@@ -260,6 +264,13 @@ class UserPreference(db.Model):
             return json.loads(self.type_weights or '{}')
         except Exception:
             return {}
+
+    def get_core_keywords(self):
+        try:
+            raw = json.loads(self.core_keywords or '[]')
+            return [str(k).strip() for k in raw if str(k).strip()]
+        except Exception:
+            return []
 
 
 class Bookmark(db.Model):
@@ -376,7 +387,7 @@ class AgencyWeight(db.Model):
     weight = db.Column(db.Float, default=5.0)  # 0 / 2.5 / 5 / 7.5 / 10
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    user = db.relationship('User', backref=db.backref('agency_weights', lazy=True))
+    user = db.relationship('User', backref=db.backref('agency_weights', lazy=True, cascade='all, delete-orphan'))
 
     def to_dict(self):
         return {

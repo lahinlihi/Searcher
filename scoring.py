@@ -109,11 +109,18 @@ _BUSINESS_TYPE_CATEGORIES = [
         '페스티벌 운영', '페스티벌 개최',
     ]),
     ('사업운영', 35, [
-        # 수행기관·운영기관 선정 (교육·행사·시설 특정이 아닌 일반 사업)
-        '수행기관 선정', '수행기관 모집', '운영기관 선정',
-        '전담기관 선정', '전담기관 운영',
+        # 수행기관·운영기관 선정/모집 (교육·행사·시설 특정이 아닌 일반 사업)
+        '수행기관 선정', '수행기관 모집', '운영기관 선정', '운영기관 모집',
+        '전담기관 선정', '전담기관 모집', '전담기관 운영',
         '사업단 운영', '사업단운영',
         '사업수행기관 선정', '주관기관 선정',
+        # 총괄·지원기관 선정/모집 (우리가 총괄·지원 역할로 참여하는 사업)
+        '총괄지원기관', '총괄운영기관', '총괄기관 선정', '총괄기관 모집',
+        '지원기관 선정', '지원기관 모집',
+        '수탁기관 선정', '수탁기관 모집',
+        '위탁기관 선정', '위탁기관 모집',
+        '운영단체 선정', '운영단체 모집',
+        '수행단체 선정', '수행단체 모집',
         # 프로그램·서비스 운영 (일반)
         '프로그램 운영', '프로그램운영',
         '서비스 운영', '서비스운영',
@@ -129,6 +136,8 @@ _BUSINESS_TYPE_CATEGORIES = [
         '사업지원단', '추진단 운영', '사업 추진단',
     ]),
     ('지원사업 신청', 5, [
+        # 교육생·수강생 모집 (우리가 수혜 대상인 경우)
+        '교육생 모집', '수강생 모집', '훈련생 모집', '참가자 모집', '수강자 모집',
         # 기업·단체 지원/모집 공고 (우리가 수혜 대상인 경우)
         '지원기업 모집', '참여기업 모집', '신청기업 모집',
         '입주기업 모집', '입주기업 선정', '입주기업',
@@ -182,45 +191,31 @@ _BUSINESS_TYPE_CATEGORIES = [
         '과제 모집', '신규과제 모집',
         '장학금 사업',
     ]),
+    ('유지관리', 10, [
+        # 시스템·장비·시설 유지보수·유지관리 (교육기업 수행 범위 밖)
+        '유지보수', '유지 보수', '유지관리', '유지 관리',
+        '유지보수 용역', '유지관리 용역',
+        '운영 유지보수', '운영유지보수',
+        '유지보수·운영', '유지관리·운영',
+        # 장비·설비·인프라 유지
+        '장비 유지', '설비 유지', '장비유지보수',
+        '통신망 유지', '네트워크 유지',
+        '시스템 유지보수', '시스템유지보수',
+        '서버 유지보수', '서버유지보수',
+        # 시설물 관련 (유지보수 명시)
+        '시설물 유지', '건물 유지보수',
+        # 고도화·교체·구축 (단순 기술 사업)
+        '고도화 사업', '노후 교체', '장비 교체',
+        '통신서비스', '통신 서비스',
+        '전산화 사업', '지하시설물',
+    ]),
 ]
 
 # ── 핵심 키워드 (2배 가중치) ─────────────────────────────────────────────────
 # 등장만 해도 강한 관련성을 시사하는 키워드 → 일반 키워드(1배) 대비 2배
 _CORE_KEYWORDS = {
-    # 디지털/AI 기술
-    'AI', 'AX', '인공지능', '4차산업', 'IOT', 'IT', '데이터',
-    # 교육/훈련 핵심 (우리 주력 서비스)
-    '교육', '역량강화', '직무', '트레이닝',
-    # 주요 대상 사업체
-    '중소기업', '소상공인', '소공인',
-    # 주요 대상 연령층
-    '장년', '노인', '실버', '노년',
-    # 핵심 이슈/산업
-    'ESG', '바이오', '헬스',
+    'AI', '인공지능',
 }
-
-# ── 키워드 시너지 조합 (두 그룹이 함께 등장시 보너스) ────────────────────────
-# (그룹A, 그룹B, 점수) → 최고 조합 1개만 적용 (누적 없음)
-_SYNERGY_COMBOS = [
-    # ★ AI/디지털 + 교육 = 핵심 사업 조합 (최고점)
-    ({'AI', 'AX', '인공지능', '4차산업', 'IOT', 'IT', '데이터'},
-     {'교육', '트레이닝', '역량강화', '직무'}, 15),
-    # ★ 중기/소공인 + 교육/컨설팅
-    ({'중소기업', '소상공인', '소공인'},
-     {'교육', '트레이닝', '역량강화', '직무', '컨설팅'}, 12),
-    # ★ 시니어(장년/노인) + 교육/일자리
-    ({'장년', '노인', '실버', '노년'},
-     {'교육', '트레이닝', '역량강화', '직무', '일자리'}, 10),
-    # ◆ 청년 + 디지털/AI
-    ({'청년'},
-     {'AI', 'AX', '4차산업', 'IOT', 'IT', '데이터', 'ESG'}, 8),
-    # ◆ 전환/미래 + 교육
-    ({'전환', 'AX', '미래'},
-     {'교육', '역량강화', '직무', '트레이닝'}, 7),
-    # ◇ 취업/일자리 + 교육/직무
-    ({'일자리', '직업', '진로', '채용'},
-     {'교육', '트레이닝', '직무', '역량강화'}, 5),
-]
 
 # 한국 행정구역명 (점수 계산 시 제목에서 제거)
 _KOREAN_LOCATIONS = sorted([
@@ -292,69 +287,100 @@ def get_last_workday(from_date=None):
 
 # 관심 키워드 로드 함수
 def _get_user_pref(user_id):
-    """user_id에 해당하는 UserPreference 반환. 없으면 빈 객체 반환"""
+    """user_id에 해당하는 UserPreference 반환. 없으면 None 반환"""
     if user_id is None:
         return None
     return UserPreference.query.filter_by(user_id=user_id).first()
 
 
-def load_interest_keywords(user_id=None):
-    """사용자별 관심 키워드 로드"""
+def load_user_prefs(user_id=None):
+    """단일 DB 조회로 사용자 설정 전체 반환.
+
+    Returns:
+        dict with keys: interest_keywords, exclude_keywords, budget_range,
+                        type_weights, pref (raw UserPreference object or None)
+    """
+    pref = _get_user_pref(user_id) if user_id is not None else None
+
+    if pref:
+        return {
+            'interest_keywords': pref.get_interest_keywords(),
+            'exclude_keywords': pref.get_exclude_keywords(),
+            'budget_range': pref.get_budget_range(),
+            'type_weights': pref.get_type_weights(),
+            'core_keywords': pref.get_core_keywords(),
+            'pref': pref,
+        }
+
+    # fallback: settings.json (레거시, user_id 없는 경우)
     try:
-        if user_id is not None:
-            pref = UserPreference.query.filter_by(user_id=user_id).first()
-            if pref:
-                return pref.get_interest_keywords()
-        # fallback: settings.json (레거시)
         with open('data/settings.json', 'r', encoding='utf-8') as f:
             settings = json.load(f)
-            raw = settings.get('user_preferences', {}).get('interest_keywords', [])
+            up = settings.get('user_preferences', {})
+            raw = up.get('interest_keywords', [])
             keywords = []
             for item in raw:
                 for kw in str(item).split(','):
                     kw = kw.strip()
                     if kw:
                         keywords.append(kw)
-            return keywords
+            return {
+                'interest_keywords': keywords,
+                'exclude_keywords': up.get('exclude_keywords', []),
+                'budget_range': up.get('budget_range', {}),
+                'type_weights': {},
+                'core_keywords': [],
+                'pref': None,
+            }
     except BaseException:
-        return []
+        return {
+            'interest_keywords': [],
+            'exclude_keywords': [],
+            'budget_range': {},
+            'type_weights': {},
+            'core_keywords': [],
+            'pref': None,
+        }
+
+
+def load_interest_keywords(user_id=None):
+    """사용자별 관심 키워드 로드 (단일 조회 helper 사용)"""
+    return load_user_prefs(user_id)['interest_keywords']
 
 
 def load_exclude_keywords(user_id=None):
-    """사용자별 제외 키워드 로드"""
-    try:
-        if user_id is not None:
-            pref = UserPreference.query.filter_by(user_id=user_id).first()
-            if pref:
-                return pref.get_exclude_keywords()
-        with open('data/settings.json', 'r', encoding='utf-8') as f:
-            settings = json.load(f)
-            return settings.get('user_preferences', {}).get('exclude_keywords', [])
-    except BaseException:
-        return []
+    """사용자별 제외 키워드 로드 (단일 조회 helper 사용)"""
+    return load_user_prefs(user_id)['exclude_keywords']
 
 
 def load_budget_range(user_id=None):
-    """사용자별 금액 범위 로드"""
-    try:
-        if user_id is not None:
-            pref = UserPreference.query.filter_by(user_id=user_id).first()
-            if pref:
-                return pref.get_budget_range()
-        with open('data/settings.json', 'r', encoding='utf-8') as f:
-            settings = json.load(f)
-            return settings.get('user_preferences', {}).get('budget_range', {})
-    except BaseException:
-        return {}
+    """사용자별 금액 범위 로드 (단일 조회 helper 사용)"""
+    return load_user_prefs(user_id)['budget_range']
 
 
 def _clean_title_for_scoring(title, agency=None):
     """
     점수 계산용 제목 정제
+    - 연도·공고유형 등 밀도 계산에 불필요한 노이즈 제거
     - 발주처명 구성 단어 제거
     - 한국 행정구역명 제거 (OO시/구/군/읍/면 패턴 포함)
     """
     cleaned = title
+
+    # 연도 표기 제거 (2026년, '25년 등 — 의미 단어 아님)
+    cleaned = re.sub(r'\d{4}년도?', '', cleaned)
+    cleaned = re.sub(r"'\d{2}년도?", '', cleaned)
+
+    # 차수·회차 표기 제거 (제3회, 2차년도 등)
+    cleaned = re.sub(r'제\s*\d+\s*회차?', '', cleaned)
+    cleaned = re.sub(r'\d+\s*차년도', '', cleaned)
+    cleaned = re.sub(r'\d+\s*차\b', '', cleaned)
+
+    # 공고 유형 접미사 제거 (밀도 계산용 노이즈 — 키워드 매칭엔 영향 없음)
+    cleaned = re.sub(
+        r'(모집공고|입찰공고|사전규격공개|사전규격|재공고|긴급공고|정정공고|공모공고|추가공고|수정공고)\s*$',
+        '', cleaned.strip()
+    )
 
     # 발주처명 단어 제거 (괄호 제거 후 2글자 이상 단어)
     if agency:
@@ -392,22 +418,8 @@ def _keyword_match_weight(keyword, title):
         if token.startswith(kw):
             return 0.75
         if token.endswith(kw):
-            return 0.6
+            return 0.75
     return 0.5  # 복합어 중간 (예: 취업지원센터 → 지원)
-
-
-def _synergy_bonus(title_lower):
-    """
-    키워드 조합 시너지 점수 (최대 15점)
-    _SYNERGY_COMBOS 중 가장 높은 조합 1개만 적용 (누적 없음)
-    → 단독 키워드 수보다 '어떤 조합이 함께 등장하는지'가 중요
-    """
-    best = 0
-    for group_a, group_b, pts in _SYNERGY_COMBOS:
-        if (any(k.lower() in title_lower for k in group_a) and
-                any(k.lower() in title_lower for k in group_b)):
-            best = max(best, pts)
-    return best
 
 
 def _detect_business_type(title):
@@ -472,19 +484,15 @@ def _priority_score(tender):
     return min(10.0, round(urgency + price_bonus, 2))
 
 
-def _score_and_type(tender, include_keywords, type_weights=None, agency_weights=None):
+def _score_and_type(tender, include_keywords, type_weights=None, agency_weights=None, core_keywords=None):
     """
     적합도 점수(소수점 1자리, 최대 100.0점) + 사업 유형 계산
 
-    ── 키워드 점수 45점 (A+B+C 혼합) ──────────────────────────────────────
-    A: 밀도 보정 — 제목 의미단어 수 기반 패널티 (긴 제목일수록 낮아짐)
+    ── 키워드 점수 (최대 45점) ────────────────────────────────────────────
+    A: 밀도 보정 — 연도·공고유형 제거 후 의미단어 수 기반 패널티
        density_factor = 1 / (단어수 ^ 0.25)
-    B: 핵심 키워드 2배 가중치 — AI, 교육, 중소기업, 장년 등
-       복합어 내 등장은 0.5~0.75 감점 (취업지원센터→지원 = 0.5)
-    C: 시너지 조합 보너스 — 고정 점수, 제목 길이 무관
-       (AI+교육=15점), (중소기업+교육=12점), (장년+교육=10점) 등 최대 15점
-
-    A×B 기반 점수 (최대 30점) + C 시너지 보너스 (최대 15점) = 최대 45점
+    B: 핵심 키워드 2배 가중치 — _CORE_KEYWORDS 또는 사용자 지정 core_keywords
+    경계 가중치: 독립어=1.0 / 복합어 앞·뒤=0.75 / 복합어 중간=0.5
 
     ── 사업 유형 점수 (사용자 설정, 기본 25점) ────────────────────────────
     최우선(45) / 선호(35) / 보통(25, 기본값) / 낮음(15) / 제외(0)
@@ -507,13 +515,14 @@ def _score_and_type(tender, include_keywords, type_weights=None, agency_weights=
     cleaned_lower = cleaned.lower()
 
     # ── A×B: 가중치 적용 키워드 밀도 점수 (최대 30점) ──────────────────
+    _effective_core = set(core_keywords) if core_keywords else _CORE_KEYWORDS
     matched = []
     weighted_sum = 0.0
     for kw in include_keywords:
         if kw.lower() not in cleaned_lower:
             continue
         matched.append(kw)
-        core_mult = 2.0 if kw in _CORE_KEYWORDS else 1.0   # B: 핵심 2배
+        core_mult = 2.0 if kw in _effective_core else 1.0   # B: 핵심 2배
         boundary_w = _keyword_match_weight(kw, cleaned)     # A: 경계 가중치
         weighted_sum += core_mult * boundary_w
 
@@ -523,12 +532,7 @@ def _score_and_type(tender, include_keywords, type_weights=None, agency_weights=
         # A: 제목 길이 밀도 보정 (의미 단어 수 기준, 최소 4단어로 고정)
         word_count = max(4, len([w for w in cleaned.split() if len(w) >= 2]))
         density_factor = 1.0 / (word_count ** 0.25)
-        ab_score = min(weighted_sum * density_factor * 10, 30)
-
-        # ── C: 시너지 조합 보너스 (최대 15점, 길이와 무관한 고정 점수) ──────
-        syn_score = _synergy_bonus(cleaned_lower)
-
-        keyword_score = min(ab_score + syn_score, 45)
+        keyword_score = min(weighted_sum * density_factor * 10, 45)
 
     # ── 사업 유형 점수 ───────────────────────────────────────────────────
     type_name, raw_type_score = _detect_business_type(cleaned)
@@ -564,11 +568,11 @@ def _score_and_type(tender, include_keywords, type_weights=None, agency_weights=
     return total, type_name, round(keyword_score, 1), round(type_score, 1), round(agency_score, 1)
 
 
-def calculate_relevance_score(tender, include_keywords, type_weights=None, agency_weights=None):
-    return _score_and_type(tender, include_keywords, type_weights, agency_weights)[0]
+def calculate_relevance_score(tender, include_keywords, type_weights=None, agency_weights=None, core_keywords=None):
+    return _score_and_type(tender, include_keywords, type_weights, agency_weights, core_keywords)[0]
 
 
-def smart_sort_tenders_by_keyword_count(tenders, include_keywords, type_weights=None, agency_weights=None):
+def smart_sort_tenders_by_keyword_count(tenders, include_keywords, type_weights=None, agency_weights=None, core_keywords=None):
     """
     관련성 점수 기반 정렬
     1순위: 관련성 점수 (높을수록)
@@ -576,7 +580,7 @@ def smart_sort_tenders_by_keyword_count(tenders, include_keywords, type_weights=
     3순위: 금액 (높을수록)
     """
     def sort_key(tender):
-        score = calculate_relevance_score(tender, include_keywords, type_weights, agency_weights)
+        score = calculate_relevance_score(tender, include_keywords, type_weights, agency_weights, core_keywords)
         if tender.announced_date:
             try:
                 date_ord = tender.announced_date.toordinal()
@@ -586,46 +590,5 @@ def smart_sort_tenders_by_keyword_count(tenders, include_keywords, type_weights=
             date_ord = 0
         price = tender.estimated_price if tender.estimated_price else 0
         return (-score, -date_ord, -price)
-
-    return sorted(tenders, key=sort_key)
-
-
-# 스마트 정렬 함수
-def smart_sort_tenders(tenders, interest_keywords=None):
-    """
-    공고를 스마트하게 정렬
-    1. 마감일이 지나지 않은 공고 우선
-    2. 관심 키워드 매칭 점수 높은 순
-    3. 공고일 최신순
-    """
-    if interest_keywords is None:
-        interest_keywords = load_interest_keywords()
-
-    now = datetime.now()
-
-    def sort_key(tender):
-        # 1. 마감일 체크 (지나지 않은 공고 = 0, 지난 공고 = 1)
-        is_expired = 1 if (
-            tender.deadline_date and tender.deadline_date < now) else 0
-
-        # 2. 관심 키워드 매칭 점수 (높을수록 우선)
-        keyword_score = 0
-        if interest_keywords and tender.title:
-            title_lower = tender.title.lower()
-            for keyword in interest_keywords:
-                if keyword.lower() in title_lower:
-                    keyword_score += 1
-        keyword_score = -keyword_score  # 내림차순을 위해 음수로
-
-        # 3. 공고일 (최신순) — timestamp() 대신 ordinal 사용 (Windows 호환, 연도 3000+ 안전)
-        if tender.announced_date:
-            try:
-                date_ord = tender.announced_date.toordinal()
-            except Exception:
-                date_ord = 0
-        else:
-            date_ord = 0
-
-        return (is_expired, keyword_score, -date_ord)
 
     return sorted(tenders, key=sort_key)

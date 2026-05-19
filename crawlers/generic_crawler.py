@@ -5,6 +5,7 @@
 
 from .base_crawler import BaseCrawler
 from datetime import datetime, timedelta
+import hashlib
 import random
 import re
 import unicodedata
@@ -309,8 +310,8 @@ class GenericCrawler(BaseCrawler):
             announced_date = start_date
             deadline_date = end_date
 
-        # 공고번호 생성
-        tender_number = self._generate_tender_number()
+        # 공고번호 생성 — title 기반 결정론적 해시
+        tender_number = self._generate_tender_number(title)
 
         # 공고 데이터 생성
         tender = {
@@ -354,14 +355,14 @@ class GenericCrawler(BaseCrawler):
 
             self.results.append(tender)
 
-    def _generate_tender_number(self):
-        """공고번호 생성"""
-        # 사이트 이름을 영문으로 변환 (간단한 버전)
-        site_prefix = ''.join([c for c in self.site_name if c.isalnum()])[:10]
-        if not site_prefix:
-            site_prefix = 'SITE'
-
-        return f"{site_prefix.upper()}-{datetime.now().year}-{random.randint(10000, 99999)}"
+    def _generate_tender_number(self, title=None):
+        """공고번호 생성 — 제목 기반 결정론적 해시로 중복 방지"""
+        site_prefix = ''.join([c for c in self.site_name if c.isalnum()])[:10] or 'SITE'
+        if title:
+            h = hashlib.md5(title.encode('utf-8', errors='ignore')).hexdigest()[:8].upper()
+            return f"{site_prefix}-{h}"
+        # 제목 없는 경우(샘플 데이터)만 랜덤
+        return f"{site_prefix}-{datetime.now().year}-{random.randint(10000, 99999)}"
 
     def _sanitize_text(self, text):
         """

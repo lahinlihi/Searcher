@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": [
+      "mcp__plugin_playwright_playwright__browser_take_screenshot",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_evaluate",
+      "mcp__plugin_playwright_playwright__browser_click",
+      "mcp__plugin_playwright_playwright__browser_resize",
+      "mcp__plugin_playwright_playwright__browser_snapshot",
+      "mcp__plugin_playwright_playwright__browser_wait_for",
+      "mcp__plugin_playwright_playwright__browser_console_messages",
+      "mcp__plugin_playwright_playwright__browser_network_requests",
+      "mcp__plugin_playwright_playwright__browser_network_request",
+      "mcp__plugin_playwright_playwright__browser_fill_form",
+      "mcp__plugin_playwright_playwright__browser_type",
+      "mcp__plugin_playwright_playwright__browser_press_key",
+      "mcp__plugin_context7_context7__resolve-library-id",
+      "mcp__plugin_context7_context7__query-docs",
+      "Bash(curl -s http://localhost:5002*)",
+      "Bash(curl -s http://localhost:5001*)",
+      "Bash(curl -s -o /dev/null -w * http://localhost:*)",
+      "Bash(curl -sv http://localhost:5002*)",
+      "Bash(curl -s -c * http://localhost:5002*)",
+      "Bash(curl -s -b * http://localhost:5002*)",
+      "Bash(cmd /c \"netstat -ano | findstr :5002\")",
+      "Bash(cmd /c \"netstat -ano | findstr :5001\")",
+      "Bash(cmd /c \"tasklist*)",
+      "Bash(tasklist *)",
+      "Bash(powershell -Command \"Get-NetTCPConnection*)",
+      "Bash(powershell -Command \"Get-Process python*)",
+      "Bash(powershell -Command \"Get-Service*)"
+    ]
+  }
+}
