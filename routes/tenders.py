@@ -889,116 +889,121 @@ def api_tender_history(tender_id):
     _tender_demand_agency = tender.demand_agency or ''
     _title_norm           = _norm_title(title)   # 현재 공고 정규화명
 
-    # ── 조회 기간: 최근 5년 단일 범위 ────────────────────────────────────────
+    # ── 조회 기간: 최근 3년 × 월별 목록 ─────────────────────────────────────
+    # G2B API 제약: 1개월 초과 범위(07 오류) → 월별 분할 필수
+    # 3년(36개월) × 2 API × 10 workers = 검색당 최대 72 호출
+    # (기존 5년 × 40 workers = 120 호출 → 429 재시도 × 3 = 360 호출)
     now = _dt.now()
-    _bdt = f'{now.year - 5}0101' + '0000'
-    _edt = f'{now.year}{now.month:02d}{_cal.monthrange(now.year, now.month)[1]:02d}' + '2359'
+    periods = []
+    for offset in range(36):   # 3년 = 36개월
+        y, m = now.year, now.month - offset
+        while m <= 0:
+            m += 12; y -= 1
+        last_day = _cal.monthrange(y, m)[1]
+        periods.append((f'{y}{m:02d}010000', f'{y}{m:02d}{last_day:02d}2359'))
 
     RESULT_BASE = 'https://apis.data.go.kr/1230000/as/ScsbidInfoService'
     CNTRCT_BASE = 'https://apis.data.go.kr/1230000/ao/CntrctInfoService'
 
     # ── 공통 파서 ─────────────────────────────────────────────────────────────
-    def _parse_response(data):
-        """items 목록과 totalCount 반환"""
-        body  = data.get('response', {}).get('body', {})
-        total = int(body.get('totalCount') or 0)
-        raw   = body.get('items')
+    def _parse_items(data):
+        body = data.get('response', {}).get('body', {})
+        raw  = body.get('items')
         if isinstance(raw, list):
-            return raw, total
+            return raw
         if isinstance(raw, dict):
             inner = raw.get('item', [])
-            items = [inner] if isinstance(inner, dict) else (inner or [])
-            return items, total
-        return [], total
+            return [inner] if isinstance(inner, dict) else (inner or [])
+        return []
 
     def _safe_get(url, params, timeout=25):
-        """GET 요청 → (items, total_count, error_str). 429/502/503 시 최대 3회 재시도."""
+        """GET 요청 → (items, error_str).
+        - 429(할당량 초과): 즉시 포기 — 재시도해도 quota는 회복 안 됨
+        - 502/503(일시 오류): 최대 2회 재시도
+        """
         for attempt in range(3):
             try:
                 r = _req.get(url, params=params, timeout=timeout)
-                if r.status_code in (429, 502, 503):
+                if r.status_code == 429:
+                    return [], '할당량초과(429)'   # 재시도 없이 즉시 반환
+                if r.status_code in (502, 503):
                     _time.sleep(2 + attempt * 2)
                     continue
                 if r.status_code != 200:
-                    return [], 0, f'HTTP {r.status_code}'
+                    return [], f'HTTP {r.status_code}'
                 text = r.text.strip()
                 if not text or text.startswith('<'):
-                    return [], 0, None
+                    return [], None
                 data = r.json()
+                # G2B 비표준 오류 응답 처리
+                if 'nkoneps.com.response.ResponseError' in data:
+                    err_code = data['nkoneps.com.response.ResponseError'].get('header', {}).get('resultCode', '')
+                    err_msg  = data['nkoneps.com.response.ResponseError'].get('header', {}).get('resultMsg', '')
+                    return [], f'{err_code}:{err_msg}'
                 hdr  = data.get('response', {}).get('header', {})
                 code = str(hdr.get('resultCode', '') or '')
                 msg  = str(hdr.get('resultMsg',  '') or '')
                 if code and code not in ('00', '000'):
-                    return [], 0, f'{code}:{msg}'
-                items, total = _parse_response(data)
-                return items, total, None
+                    return [], f'{code}:{msg}'
+                return _parse_items(data), None
             except Exception as e:
                 if attempt < 2:
                     _time.sleep(1)
                     continue
-                return [], 0, str(e)
-        return [], 0, '재시도 초과'
+                return [], str(e)
+        return [], '재시도 초과'
 
-    # ── 1단계: 개찰결과 + 낙찰결과 — 5년 단일 범위 + 페이지네이션 ──────────────
-    # 기존: 60개월 × 2 API = 120 요청
-    # 변경: 키워드당 2 요청 (결과 100건 초과 시 페이지 추가, 특정 공고 검색은 통상 1페이지)
+    # ── 1단계: 개찰결과 + 낙찰결과 — 월별 병렬 조회 ─────────────────────────
     ops = [
         ('openg', RESULT_BASE, 'getOpengResultListInfoServcPPSSrch'),
         ('award', RESULT_BASE, 'getScsbidListSttusServcPPSSrch'),
     ]
 
-    def fetch_all(kind, base, ep, qnm):
-        """단일 기간 범위로 전체 결과 수집 (페이지네이션 자동 처리)"""
-        all_items = []
-        page = 1
-        while page <= 20:   # 안전 상한 (2000건)
-            items, total, err = _safe_get(
-                f'{base}/{ep}',
-                {'ServiceKey': service_key, 'type': 'json',
-                 'inqryDiv': '1', 'inqryBgnDt': _bdt, 'inqryEndDt': _edt,
-                 'bidNtceNm': qnm, 'pageNo': str(page), 'numOfRows': '100'},
-            )
-            if err:
-                return kind, [], err
-            all_items.extend(items)
-            if len(items) < 100 or len(all_items) >= total:
-                break   # 마지막 페이지
-            page += 1
-        return kind, all_items, None
+    def fetch_period(kind, base, ep, bdt, edt, qnm):
+        items, err = _safe_get(
+            f'{base}/{ep}',
+            {'ServiceKey': service_key, 'type': 'json',
+             'inqryDiv': '1', 'inqryBgnDt': bdt, 'inqryEndDt': edt,
+             'bidNtceNm': qnm, 'pageNo': '1', 'numOfRows': '100'},
+        )
+        return kind, items, err
 
     openg_by_no: dict = {}
     award_by_no: dict = {}
     errors = []
 
     def _run_query(qnm):
-        """주어진 검색어로 openg/award 동시 조회 후 누적"""
-        seen: set = set()
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            futures = {ex.submit(fetch_all, kind, base, ep, qnm): kind
-                       for kind, base, ep in ops}
+        """월별 병렬 조회 (workers=10, 429 즉시 중단)"""
+        _quota_hit = False
+        with ThreadPoolExecutor(max_workers=20) as ex:
+            futures = [
+                ex.submit(fetch_period, kind, base, ep, bdt, edt, qnm)
+                for kind, base, ep in ops
+                for bdt, edt in periods
+            ]
             for fut in as_completed(futures):
                 kind, items, err = fut.result()
                 if err:
+                    if '429' in str(err) or '할당량' in str(err):
+                        _quota_hit = True
                     errors.append(f'{kind}: {err}')
                     continue
                 for item in items:
                     bid_no = item.get('bidNtceNo', '')
                     if not bid_no:
                         continue
-                    key = (bid_no, item.get('bidNtceOrd', '000'), kind)
-                    if key in seen:
-                        continue
-                    seen.add(key)
+                    _dedup_key = (bid_no, item.get('bidNtceOrd', '000'))
                     if kind == 'openg':
                         openg_by_no.setdefault(bid_no, []).append(item)
                     elif kind == 'award':
                         award_by_no.setdefault(bid_no, []).append(item)
+        return _quota_hit
 
     # 주 쿼리 실행
-    _run_query(query_nm)
+    _quota_exceeded = _run_query(query_nm)
 
-    # 보조 쿼리: 주 쿼리 결과 없을 때만 실행
-    if not (openg_by_no or award_by_no) and len(_queries) > 1:
+    # 보조 쿼리: 주 쿼리 결과 없고, 할당량 초과 아닐 때만 실행
+    if not _quota_exceeded and not (openg_by_no or award_by_no) and len(_queries) > 1:
         errors.clear()
         _run_query(query_nm_alt)
 
@@ -1150,7 +1155,7 @@ def api_tender_history(tender_id):
             search_to = min(str(int(search_from[:4]) + 2) + search_from[4:], _today_str)
         except Exception:
             search_to = _today_str
-        cntrct_items, _, _ = _safe_get(
+        cntrct_items, _ = _safe_get(
             f'{CNTRCT_BASE}/getCntrctInfoListServcPPSSrch',
             {'ServiceKey': service_key, 'type': 'json',
              'inqryDiv': '1', 'inqryBgnDate': search_from, 'inqryEndDate': search_to,
