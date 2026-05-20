@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template, g
-from database import Tender, UserPreference, AgencyWeight
+from database import db, Tender, UserPreference, AgencyWeight, TenderView
 from decorators import login_required, admin_required, moderator_required
 from datetime import datetime
 from scoring import load_interest_keywords, _score_and_type
@@ -45,6 +45,13 @@ def settings_page():
 def bookmarks_page():
     """관심공고 페이지"""
     return render_template('bookmarks.html')
+
+
+@bp.route('/review-tenders')
+@login_required
+def review_tenders_page():
+    """검토공고 페이지"""
+    return render_template('review_tenders.html')
 
 
 @bp.route('/logs')
@@ -95,6 +102,18 @@ def tender_detail(tender_id):
     else:
         relevance_score, business_type = None, '기타'
         score_breakdown = None
+
+    # 열람 기록 저장 (upsert)
+    if uid:
+        try:
+            view = TenderView.query.filter_by(user_id=uid, tender_id=tender_id).first()
+            if view:
+                view.viewed_at = datetime.utcnow()
+            else:
+                db.session.add(TenderView(user_id=uid, tender_id=tender_id, viewed_at=datetime.utcnow()))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
     return render_template('detail.html', tender=tender, days_left=days_left,
                            is_expired=is_expired, extra=extra,

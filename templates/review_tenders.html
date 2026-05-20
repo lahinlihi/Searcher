@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}검토공고 - HIGH-SEARCH{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+
+    <!-- 필터 + 정렬 컨트롤 -->
+    <div class="flex flex-wrap items-center justify-between gap-3">
+
+        <!-- 조회 필터: 세그먼트 컨트롤 -->
+        <div class="inline-flex items-center bg-gray-100 rounded-lg p-1 gap-0.5">
+            <button class="filter-btn px-4 py-1.5 text-sm font-medium rounded-md transition-all"
+                    data-filter="all" onclick="setFilter('all')">전체</button>
+            <button class="filter-btn px-4 py-1.5 text-sm font-medium rounded-md transition-all"
+                    data-filter="unread" onclick="setFilter('unread')">미열람</button>
+        </div>
+
+        <!-- 정렬 옵션 -->
+        <div class="flex items-center gap-1.5">
+            <span class="text-xs text-gray-400 mr-0.5">정렬</span>
+            <button class="sort-btn px-2.5 py-1 text-xs rounded border transition-colors"
+                    data-sort="memo_date" onclick="setSort('memo_date')">최신 메모순</button>
+            <button class="sort-btn px-2.5 py-1 text-xs rounded border transition-colors"
+                    data-sort="deadline" onclick="setSort('deadline')">마감일순</button>
+            <button class="sort-btn px-2.5 py-1 text-xs rounded border transition-colors"
+                    data-sort="memo_count" onclick="setSort('memo_count')">메모 많은 순</button>
+        </div>
+
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <div id="review-list" class="space-y-3">
+                <p class="text-gray-400 text-sm text-center py-8">불러오는 중...</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/review_tenders.js') }}"></script>
+{% endblock %}

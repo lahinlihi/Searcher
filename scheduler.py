@@ -12,7 +12,6 @@ from crawlers.sungdonggu_crawler import SungDongGuCrawler
 from crawlers.generic_crawler import GenericCrawler
 from crawlers.g2b_api_crawler import G2BApiCrawler
 from crawlers.g2b_pre_spec_crawler import G2BPreSpecCrawler
-from crawlers.iris_crawler import IrisCrawler
 from crawlers.lh_api_crawler import LHApiCrawler
 from crawlers.smb24_api_crawler import SMB24ApiCrawler
 from crawlers.kosmes_crawler import KosmesCrawler
@@ -32,7 +31,6 @@ from settings_manager import settings_manager
 SUPPORTED_CRAWLER_TYPES = {
     'api',          # G2BApiCrawler
     'pre_spec',     # G2BPreSpecCrawler
-    'iris',         # IrisCrawler
     'lh_api',       # LHApiCrawler
     'smb24_api',    # SMB24ApiCrawler
     'mois_predece', # MOISPredeceCrawler
@@ -316,9 +314,9 @@ class CrawlScheduler:
                     db.session.add(tender)
                     new_count += 1
 
-                # 2) 기존 공고 UPDATE — extra_data 및 주요 필드 갱신
+                # 2) 기존 공고 UPDATE — 주요 필드 갱신 (extra_data 유무와 무관하게 적용)
                 update_numbers = [num for num, td in all_by_number.items()
-                                   if num not in unique_numbers and td.get('extra_data')]
+                                   if num not in unique_numbers]
                 if update_numbers:
                     existing_records = Tender.query.filter(
                         Tender.tender_number.in_(update_numbers)).all()
@@ -346,6 +344,9 @@ class CrawlScheduler:
                             changed = True
                         if td.get('business_number') and not ex.business_number:
                             ex.business_number = td['business_number']
+                            changed = True
+                        if td.get('agency') and ex.agency != td['agency']:
+                            ex.agency = td['agency']
                             changed = True
                         if changed:
                             update_count += 1
@@ -480,9 +481,9 @@ class CrawlScheduler:
                     db.session.add(tender)
                     new_count += 1
 
-                # 2) 기존 공고 UPDATE — extra_data 및 주요 필드 갱신
+                # 2) 기존 공고 UPDATE — 주요 필드 갱신 (extra_data 유무와 무관하게 적용)
                 update_numbers = [num for num, td in all_by_number.items()
-                                   if num not in unique_numbers and td.get('extra_data')]
+                                   if num not in unique_numbers]
                 if update_numbers:
                     existing_records = Tender.query.filter(
                         Tender.tender_number.in_(update_numbers)).all()
@@ -510,6 +511,9 @@ class CrawlScheduler:
                             changed = True
                         if td.get('business_number') and not ex.business_number:
                             ex.business_number = td['business_number']
+                            changed = True
+                        if td.get('agency') and ex.agency != td['agency']:
+                            ex.agency = td['agency']
                             changed = True
                         if changed:
                             update_count += 1
@@ -585,11 +589,6 @@ class CrawlScheduler:
                             site_info.get('name', site_id), site_info)
                         self.crawlers[site_id] = crawler
                         print(f"[스케줄러] {site_id}: 사전규격 API 크롤러 생성")
-                    elif crawler_type == 'iris':
-                        # IRIS 전용 크롤러 (site_info로 max_pages_pre 등 전달)
-                        crawler = IrisCrawler(site_config=site_info)
-                        self.crawlers[site_id] = crawler
-                        print(f"[스케줄러] {site_id}: IRIS 전용 크롤러 생성")
                     elif crawler_type == 'lh_api':
                         # LH API 크롤러
                         crawler = LHApiCrawler(site_info)

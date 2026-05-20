@@ -9,10 +9,34 @@ document.addEventListener('DOMContentLoaded', function() {
     loadSupportedCrawlers().then(() => loadSettings());
     loadDatabaseStats();
     loadLastCrawlResult();
+    resumeCrawlIfRunning();
 });
 
 // ── 수동 크롤링 ──────────────────────────────────────────────────────────────
 let crawlPollInterval = null;
+
+// 페이지 진입 시 크롤링이 이미 진행 중이면 폴링 자동 재개
+async function resumeCrawlIfRunning() {
+    try {
+        const res = await fetch('/api/crawl/status');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.status === 'running') {
+            const btn = document.getElementById('crawl-btn');
+            const box = document.getElementById('crawl-status-box');
+            const title = document.getElementById('crawl-status-title');
+            const detail = document.getElementById('crawl-status-detail');
+            const spinner = document.getElementById('crawl-spinner');
+            if (btn) { btn.disabled = true; btn.textContent = '크롤링 중...'; }
+            if (box) box.classList.remove('hidden');
+            if (title) { title.textContent = '크롤링 진행 중...'; title.className = 'font-medium text-blue-700'; }
+            if (detail) detail.textContent = '백그라운드에서 실행 중입니다.';
+            if (spinner) spinner.classList.remove('hidden');
+            if (crawlPollInterval) clearInterval(crawlPollInterval);
+            crawlPollInterval = setInterval(pollCrawlStatus, 3000);
+        }
+    } catch (_) {}
+}
 
 async function startCrawling() {
     const btn = document.getElementById('crawl-btn');

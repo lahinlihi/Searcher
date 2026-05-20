@@ -229,6 +229,7 @@ class UserPreference(db.Model):
     # 사업유형별 가중치 {"교육운영": 1.5, "시설운영": 0.5, ...} 기본값 1.0
     type_weights = db.Column(db.Text, default='{}')
     core_keywords = db.Column(db.Text, default='[]')  # JSON array — 핵심 키워드 (2배 가중치)
+    memos_last_seen_at = db.Column(db.DateTime, nullable=True)  # 마지막으로 타인 메모 확인한 시각
 
     user = db.relationship('User', backref=db.backref('preference', uselist=False, cascade='all, delete-orphan'))
 
@@ -375,6 +376,20 @@ class TenderAnalysis(db.Model):
             'cached':          True,
             'cached_at':       self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class TenderView(db.Model):
+    """공고 상세 열람 기록 (사용자별 마지막 열람 시각)"""
+    __tablename__ = 'tender_views'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    tender_id = db.Column(db.Integer, db.ForeignKey('tenders.id'), nullable=False)
+    viewed_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (db.UniqueConstraint('user_id', 'tender_id'),)
+
+    user = db.relationship('User', backref=db.backref('tender_views', lazy=True, cascade='all, delete-orphan'))
 
 
 class AgencyWeight(db.Model):

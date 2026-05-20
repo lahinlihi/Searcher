@@ -53,6 +53,10 @@ class GenericCrawler(BaseCrawler):
         self.url_template = site_config.get('url_template', '')
         self.title_attr = site_config.get('title_attr', '')
         self.title_clean_regex = site_config.get('title_clean_regex', '')
+        self.detail_price = site_config.get('detail_price', None)  # {selector, pattern}
+        self.detail_deadline = site_config.get('detail_deadline', None)  # {label: "공고마감일자"} — dt/dd 구조
+        self.default_agency = site_config.get('default_agency', '')  # 고정 수요기관명
+        self.exclude_title_pattern = site_config.get('exclude_title_pattern', '')  # 제목 제외 정규식
 
     def crawl(self, **kwargs):
         """크롤링 실행"""
@@ -227,6 +231,12 @@ class GenericCrawler(BaseCrawler):
 
     def _process_item(self, item, idx):
         """공고 아이템 하나를 파싱하여 results에 추가"""
+        # 제목 제외 패턴 체크 (사전 필터링)
+        if self.exclude_title_pattern:
+            _raw_title = item.get_text(strip=True)
+            if re.search(self.exclude_title_pattern, _raw_title):
+                return
+
         # 제목 추출
         title_selector = self.selectors.get('title', '')
         title_elem = None
@@ -235,11 +245,11 @@ class GenericCrawler(BaseCrawler):
             if title_elem:
                 if self.title_attr:
                     raw = title_elem.get(self.title_attr, '')
-                    if self.title_clean_regex:
-                        raw = re.sub(self.title_clean_regex, '', raw).strip()
-                    title = self._sanitize_text(raw)
                 else:
-                    title = self._sanitize_text(title_elem.get_text(strip=True))
+                    raw = title_elem.get_text(strip=True)
+                if self.title_clean_regex:
+                    raw = re.sub(self.title_clean_regex, '', raw).strip()
+                title = self._sanitize_text(raw)
             else:
                 # 셀렉터가 설정됐는데 요소를 못 찾으면 빈 행으로 간주 → 스킵
                 return
@@ -252,9 +262,9 @@ class GenericCrawler(BaseCrawler):
         if agency_selector:
             agency_elem = item.select_one(agency_selector)
             agency = self._sanitize_text(agency_elem.get_text(
-                strip=True)) if agency_elem else self.site_name
+                strip=True)) if agency_elem else (self.default_agency or self.site_name)
         else:
-            agency = self.site_name
+            agency = self.default_agency or self.site_name
 
         # 링크 추출
         link_selector = self.selectors.get('link', 'a')
@@ -273,7 +283,10 @@ class GenericCrawler(BaseCrawler):
                     if search_text:
                         m = re.search(self.onclick_pattern, search_text)
                         if m:
-                            link = self.url_template.format(id=m.group(1))
+                            groups = m.groups()
+                            fmt_kwargs = {f'id{i+1}': g for i, g in enumerate(groups)}
+                            fmt_kwargs['id'] = groups[0] if groups else ''
+                            link = self.url_template.format(**fmt_kwargs)
                             break
 
             if not link and href and href != '#' and not href.startswith('javascript:'):
@@ -313,6 +326,52 @@ class GenericCrawler(BaseCrawler):
         # 공고번호 생성 — title 기반 결정론적 해시
         tender_number = self._generate_tender_number(title)
 
+        # 상세 페이지 공통 fetch (detail_price 또는 detail_deadline 사용 시)
+        estimated_price = None
+        detail_url = link if link else None
+        _detail_soup = None
+        if detail_url and (self.detail_price or self.detail_deadline):
+            try:
+                import requests as _req
+                from bs4 import BeautifulSoup as _BS
+                _headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                _r = _req.get(detail_url, headers=_headers, timeout=8, verify=self.verify_ssl)
+                _detail_soup = _BS(_r.text, 'html.parser')
+            except Exception:
+                pass
+
+        # 상세 페이지에서 가격 추출 (detail_price 설정된 경우)
+        if self.detail_price and _detail_soup:
+            try:
+                _sel = self.detail_price.get('selector', '')
+                _pat = self.detail_price.get('pattern', '')
+                _target = _detail_soup.select_one(_sel) if _sel else _detail_soup.body
+                if _target and _pat:
+                    _text = _target.get_text(separator='\n')
+                    _m = re.search(_pat, _text)
+                    if _m:
+                        _price_str = _m.group(1).replace(',', '').replace(' ', '')
+                        estimated_price = int(_price_str)
+            except Exception:
+                pass
+
+        # 상세 페이지에서 마감일 추출 (detail_deadline 설정된 경우)
+        # 설정 형식: {"label": "공고마감일자"} — <dt>라벨</dt><dd>날짜</dd> 구조 대응
+        if self.detail_deadline and _detail_soup:
+            try:
+                _label = self.detail_deadline.get('label', '')
+                if _label:
+                    for _dt in _detail_soup.find_all('dt'):
+                        if _label in _dt.get_text(strip=True):
+                            _dd = _dt.find_next_sibling('dd')
+                            if _dd:
+                                _parsed = self._parse_date(_dd.get_text(strip=True))
+                                if _parsed:
+                                    deadline_date = _parsed
+                                    break
+            except Exception:
+                pass
+
         # 공고 데이터 생성
         tender = {
             'title': title[:200],
@@ -321,7 +380,7 @@ class GenericCrawler(BaseCrawler):
             'announced_date': announced_date,
             'deadline_date': deadline_date,
             'opening_date': deadline_date + timedelta(days=random.randint(1, 15)) if deadline_date else None,
-            'estimated_price': random.randint(50, 300) * 1000000,
+            'estimated_price': estimated_price,
             'bid_method': '일반경쟁입찰',
             'status': '일반',
             'is_sme_only': False,
@@ -345,7 +404,7 @@ class GenericCrawler(BaseCrawler):
                 'announced_date': datetime.now() - timedelta(days=random.randint(1, 10)),
                 'deadline_date': datetime.now() + timedelta(days=random.randint(5, 25)),
                 'opening_date': datetime.now() + timedelta(days=random.randint(6, 26)),
-                'estimated_price': random.randint(50, 200) * 1000000,
+                'estimated_price': None,
                 'bid_method': '일반경쟁입찰',
                 'status': '일반',
                 'is_sme_only': random.choice([True, False]),

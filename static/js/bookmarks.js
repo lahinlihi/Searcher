@@ -13,7 +13,6 @@ let currentTab = 'bookmarks';
 document.addEventListener('DOMContentLoaded', () => {
     loadBookmarks();
     loadDismissed();
-    loadMemos(); // 탭 선택 여부와 무관하게 카운트 표시
 });
 
 // 뒤로가기/앞으로가기(bfcache)로 복원될 때 재조회
@@ -21,17 +20,17 @@ window.addEventListener('pageshow', function(event) {
     if (event.persisted) {
         loadBookmarks();
         loadDismissed();
-        if (currentTab === 'memos') loadMemos();
     }
 });
 
 // ── 탭 전환 ───────────────────────────────────────────────────────────────────
 function switchTab(tab) {
     currentTab = tab;
-    const tabs = ['bookmarks', 'dismissed', 'memos'];
+    const tabs = ['bookmarks', 'dismissed'];
     tabs.forEach(t => {
         const btn = document.getElementById(`tab-${t}`);
         const panel = document.getElementById(`panel-${t}`);
+        if (!btn || !panel) return;
         if (t === tab) {
             btn.classList.add('tab-active', 'border-blue-600', 'text-blue-600');
             btn.classList.remove('border-transparent', 'text-gray-500');
@@ -42,8 +41,6 @@ function switchTab(tab) {
             panel.classList.add('hidden');
         }
     });
-    // 메모 탭은 첫 진입 시 로드
-    if (tab === 'memos') loadMemos();
 }
 
 function refreshCurrentTab() {
@@ -198,82 +195,6 @@ function labelDropdown(bookmarkId, currentLabel) {
                     title="스크랩 라벨: 라벨에 따라 점수 보너스 부여">
                 ${options}
             </select>`;
-}
-
-// ── 메모 공고 목록 ─────────────────────────────────────────────────────────────
-async function loadMemos() {
-    try {
-        const res = await fetch('/api/memos/tenders');
-        const tenders = await res.json();
-        const countEl = document.getElementById('memos-count');
-        const container = document.getElementById('memos-list');
-
-        if (!Array.isArray(tenders) || tenders.length === 0) {
-            countEl.textContent = '0';
-            container.innerHTML = `
-                <div class="text-center py-12">
-                    <p class="text-gray-400 text-sm">메모가 작성된 공고가 없습니다.</p>
-                </div>`;
-            return;
-        }
-
-        countEl.textContent = tenders.length;
-        container.innerHTML = tenders.map(t => renderMemoCard(t)).join('');
-    } catch (e) {
-        console.error('메모 공고 로드 실패:', e);
-        document.getElementById('memos-list').innerHTML =
-            `<p class="text-red-500 text-sm">불러오기 실패: ${e.message}</p>`;
-    }
-}
-
-function renderMemoCard(tender) {
-    const daysLeft = tender.days_left;
-    const isExpired = daysLeft !== null && daysLeft < 0;
-    const deadlineText = daysLeft !== null ? (isExpired ? `마감 (D${daysLeft})` : `D-${daysLeft}`) : '-';
-    const deadlineClass = isExpired ? 'text-gray-400' : (daysLeft <= 2 ? 'text-red-600 font-semibold' : 'text-gray-600');
-    const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
-    const statusBadge = tender.status === '사전규격'
-        ? '<span class="tender-status-badge tender-status-pre">사전규격</span>'
-        : '<span class="tender-status-badge tender-status-normal">일반</span>';
-    const latestMemo = tender.latest_memo;
-    const latestMemoAt = tender.latest_memo_at ? new Date(tender.latest_memo_at).toLocaleString('ko-KR', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
-
-    const agencyNameMemo = (tender.agency && tender.agency.includes('조달청') && tender.demand_agency)
-        ? escapeHtml(tender.demand_agency) : escapeHtml(tender.agency);
-
-    return `
-        <div class="tender-item" id="memo-card-${tender.id}">
-            <div class="flex justify-between items-start mb-1">
-                <div class="flex flex-wrap items-center gap-1">
-                    ${statusBadge}
-                    <span class="text-xs bg-purple-100 text-purple-700 border border-purple-200 px-2 py-0.5 rounded font-semibold">✎ 메모 ${tender.memo_count}개</span>
-                </div>
-                <div class="flex items-center gap-2 ml-2 shrink-0">
-                    <span class="${deadlineClass} text-sm">${deadlineText}</span>
-                </div>
-            </div>
-            <h4 class="font-medium text-gray-900 mt-1 line-clamp-1 sm:text-sm">
-                <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
-                    ${escapeHtml(tender.title)}
-                </a>
-            </h4>
-            <div class="sm:hidden flex flex-col gap-1 mt-2">
-                <span class="text-sm text-gray-700 font-bold truncate">${agencyNameMemo}</span>
-                <span class="text-sm text-blue-600 font-medium">${price}</span>
-            </div>
-            <div class="hidden sm:flex items-center gap-3 mt-1.5 text-sm flex-wrap">
-                <span class="font-medium text-gray-800 truncate">${agencyNameMemo}</span>
-                <span class="font-medium text-blue-600">${price}</span>
-                <a href="/tender/${tender.id}#memos" class="text-purple-500 hover:underline">메모 보기 →</a>
-                ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-500 hover:underline">공고 원문 →</a>` : ''}
-            </div>
-            ${latestMemo ? `
-            <div class="mt-2 px-3 py-2 bg-purple-50 border border-purple-100 rounded-lg text-sm text-gray-700">
-                <span class="font-semibold text-purple-700">${escapeHtml(latestMemo.username)}</span>
-                <span class="text-gray-400 text-xs ml-1">${latestMemoAt}</span>
-                <p class="mt-0.5 text-gray-600 line-clamp-2">${escapeHtml(latestMemo.content)}</p>
-            </div>` : ''}
-        </div>`;
 }
 
 function renderBookmarkCard(tender) {

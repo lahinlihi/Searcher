@@ -69,6 +69,7 @@
                 <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">메인화면</a>
                 <a href="/search" class="nav-link {% if request.path == '/search' %}active{% endif %}">상세검색</a>
                 <a href="/bookmarks" class="nav-link {% if request.path == '/bookmarks' %}active{% endif %}">관심공고</a>
+                <a href="/review-tenders" class="nav-link {% if request.path == '/review-tenders' %}active{% endif %}">검토공고<span id="memo-badge" class="hidden ml-1 text-xs font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full align-middle"></span></a>
                 {% if g.user %}
                 <a href="/filters" class="nav-link {% if request.path == '/filters' %}active{% endif %}">필터관리</a>
                 {% endif %}
@@ -95,6 +96,7 @@
                         <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">메인화면</a>
                         <a href="/search" class="nav-link {% if request.path == '/search' %}active{% endif %}">상세검색</a>
                         <a href="/bookmarks" class="nav-link {% if request.path == '/bookmarks' %}active{% endif %}">관심공고</a>
+                        <a href="/review-tenders" class="nav-link {% if request.path == '/review-tenders' %}active{% endif %}">검토공고<span id="memo-badge" class="hidden ml-1 text-xs font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full align-middle"></span></a>
                         {% if g.user %}
                         <a href="/filters" class="nav-link {% if request.path == '/filters' %}active{% endif %}">필터관리</a>
                         {% endif %}
@@ -138,6 +140,7 @@
                 <a href="/" class="mobile-nav-link {% if request.path == '/' %}active{% endif %}">메인화면</a>
                 <a href="/search" class="mobile-nav-link {% if request.path == '/search' %}active{% endif %}">상세검색</a>
                 <a href="/bookmarks" class="mobile-nav-link {% if request.path == '/bookmarks' %}active{% endif %}">관심공고</a>
+                <a href="/review-tenders" class="mobile-nav-link {% if request.path == '/review-tenders' %}active{% endif %}">검토공고<span id="memo-badge-mobile" class="hidden ml-1 text-xs font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full align-middle"></span></a>
                 {% if g.user %}
                 <a href="/filters" class="mobile-nav-link {% if request.path == '/filters' %}active{% endif %}">필터관리</a>
                 {% endif %}
@@ -196,5 +199,103 @@
     </script>
 
     {% block extra_js %}{% endblock %}
+
+    {% if g.user %}
+    <!-- 새 메모 토스트 알림 (화면 오른쪽 하단 고정) -->
+    <div id="memo-toast" class="hidden fixed bottom-5 right-5 z-50 w-80 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden"
+         style="animation: slideUp 0.3s ease-out;">
+        <style>
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        </style>
+        <!-- 헤더 -->
+        <div class="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-100">
+            <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></span>
+                <span class="text-xs font-bold text-gray-700">새 메모 알림</span>
+                <span id="toast-count" class="text-xs font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full"></span>
+            </div>
+            <button onclick="dismissMemoToast()" class="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+        </div>
+        <!-- 메모 목록 -->
+        <div id="toast-memo-list" class="divide-y divide-gray-50 max-h-64 overflow-y-auto"></div>
+        <!-- 하단 링크 -->
+        <a href="/review-tenders" onclick="dismissMemoToast()"
+           class="block text-center text-xs text-blue-600 font-medium py-2.5 hover:bg-blue-50 transition-colors border-t border-gray-100">
+            검토공고에서 전체 확인 →
+        </a>
+    </div>
+
+    <script>
+    function dismissMemoToast() {
+        const toast = document.getElementById('memo-toast');
+        if (toast) {
+            toast.style.animation = 'none';
+            toast.classList.add('hidden');
+        }
+        sessionStorage.setItem('memoToastDismissed', '1');
+    }
+
+    (async function loadMemoNotification() {
+        // 이미 이번 세션에서 닫은 경우 표시 안 함
+        if (sessionStorage.getItem('memoToastDismissed')) return;
+        try {
+            const res = await fetch('/api/memos/unread-count');
+            if (!res.ok) return;
+            const data = await res.json();
+            const count = data.count || 0;
+
+            // nav 뱃지 업데이트
+            ['#memo-badge', '#memo-badge-mobile'].forEach(sel => {
+                document.querySelectorAll(sel).forEach(el => {
+                    if (count > 0) {
+                        el.textContent = count > 99 ? '99+' : count;
+                        el.classList.remove('hidden');
+                    }
+                });
+            });
+
+            if (count === 0) return;
+
+            // 토스트 내용 채우기
+            const listEl = document.getElementById('toast-memo-list');
+            const countEl = document.getElementById('toast-count');
+            if (!listEl || !countEl) return;
+
+            countEl.textContent = count;
+
+            const tenders = data.tenders || [];
+            listEl.innerHTML = tenders.map(t => {
+                const diff = Math.floor((Date.now() - new Date(t.created_at)) / 1000);
+                const ago = diff < 60 ? '방금 전'
+                    : diff < 3600 ? Math.floor(diff/60) + '분 전'
+                    : diff < 86400 ? Math.floor(diff/3600) + '시간 전'
+                    : Math.floor(diff/86400) + '일 전';
+                const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                return `<a href="/tender/${t.tender_id}" onclick="dismissMemoToast()"
+                    class="flex items-start gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
+                    <span class="mt-1.5 w-1.5 h-1.5 rounded-full bg-red-400 shrink-0"></span>
+                    <div class="min-w-0">
+                        <p class="text-xs font-semibold text-gray-800 truncate">${esc(t.tender_title)}</p>
+                        <p class="text-xs text-gray-500 mt-0.5 truncate">
+                            <span class="font-medium text-gray-700">${esc(t.author)}</span>: ${esc(t.content_preview)}
+                        </p>
+                        <p class="text-xs text-gray-400 mt-0.5">${ago}</p>
+                    </div>
+                </a>`;
+            }).join('');
+
+            // 0.5초 뒤에 등장 (페이지 로딩 완료 후)
+            setTimeout(() => {
+                const toast = document.getElementById('memo-toast');
+                if (toast) toast.classList.remove('hidden');
+            }, 500);
+
+        } catch (_) {}
+    })();
+    </script>
+    {% endif %}
 </body>
 </html>

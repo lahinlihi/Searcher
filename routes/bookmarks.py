@@ -3,6 +3,7 @@ from database import db, Tender, Bookmark, TenderMemo, AgencyWeight, UserPrefere
 from decorators import login_required
 from scoring import load_user_prefs, _score_and_type
 from sqlalchemy.orm import joinedload
+from datetime import datetime
 
 bp = Blueprint('bookmarks', __name__)
 
@@ -65,9 +66,22 @@ def api_bookmarks():
 @bp.route('/api/memos/tenders')
 @login_required
 def api_memo_tenders():
-    """메모가 있는 공고 목록 (전체 사용자 공개, 최신 메모순)"""
+    """메모가 있는 공고 목록 (전체 사용자 공개, 최신 메모순 + 열람 여부 포함)"""
     try:
         from sqlalchemy import func as _sql_func3
+        from database import TenderView, AgencyWeight
+        uid = g.user.id
+
+        # 사용자 선호도 (점수 계산용)
+        _uprefs = load_user_prefs(uid)
+        include_keywords = _uprefs['interest_keywords']
+        user_type_weights = _uprefs['type_weights']
+        try:
+            _aw_rows = AgencyWeight.query.filter_by(user_id=uid).all()
+            user_agency_weights = {r.agency_name: r.weight for r in _aw_rows}
+        except Exception:
+            user_agency_weights = {}
+
         subq = db.session.query(
             TenderMemo.tender_id,
             _sql_func3.count(TenderMemo.id).label('memo_count'),
@@ -79,8 +93,17 @@ def api_memo_tenders():
             .order_by(subq.c.latest_memo_at.desc())\
             .limit(200).all()
 
-        # 각 공고별 최신 메모 1개 조회
+        # 열람 기록 일괄 조회
         _mt_ids = [r[0].id for r in rows]
+        _view_map = {}
+        if _mt_ids:
+            _views = TenderView.query.filter(
+                TenderView.user_id == uid,
+                TenderView.tender_id.in_(_mt_ids)
+            ).all()
+            _view_map = {v.tender_id: v.viewed_at for v in _views}
+
+        # 최신 메모 1개 조회
         _latest_memos = {}
         if _mt_ids:
             _all_memos = TenderMemo.query\
@@ -94,10 +117,18 @@ def api_memo_tenders():
 
         data = []
         for tender, memo_count, latest_memo_at in rows:
-            d = tender.to_dict()
+            d = tender.to_dict(interest_keywords=include_keywords)
             d['memo_count'] = memo_count
             d['latest_memo_at'] = (latest_memo_at.isoformat() + 'Z') if latest_memo_at else None
             d['latest_memo'] = _latest_memos.get(tender.id)
+            viewed_at = _view_map.get(tender.id)
+            # 미열람: 한번도 안 봤거나, 마지막 열람 이후 새 메모가 달린 경우
+            d['is_unread'] = (viewed_at is None) or (latest_memo_at and latest_memo_at > viewed_at)
+            d['viewed_at'] = (viewed_at.isoformat() + 'Z') if viewed_at else None
+            # 적합도 점수
+            score, btype, *_ = _score_and_type(tender, include_keywords, user_type_weights, user_agency_weights)
+            d['relevance_score'] = round(score, 1)
+            d['business_type'] = btype
             data.append(d)
 
         return jsonify(data)
@@ -157,4 +188,59 @@ def api_bookmark_ids():
         ids = [b.tender_id for b in Bookmark.query.filter_by(user_id=g.user.id).with_entities(Bookmark.tender_id).all()]
         return jsonify(ids)
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/memos/unread-count')
+@login_required
+def api_memos_unread_count():
+    """내가 아직 확인하지 않은 타인의 새 메모 수 + 공고 목록"""
+    try:
+        uid = g.user.id
+        pref = UserPreference.query.filter_by(user_id=uid).first()
+        last_seen = pref.memos_last_seen_at if pref else None
+
+        query = db.session.query(TenderMemo).filter(TenderMemo.user_id != uid)
+        if last_seen:
+            query = query.filter(TenderMemo.created_at > last_seen)
+
+        new_memos = query.order_by(TenderMemo.created_at.desc()).all()
+
+        # 공고별로 묶기 (중복 제거, 최신 메모 기준)
+        seen_tids = set()
+        tenders_with_memos = []
+        for m in new_memos:
+            if m.tender_id not in seen_tids:
+                seen_tids.add(m.tender_id)
+                tenders_with_memos.append({
+                    'tender_id': m.tender_id,
+                    'tender_title': m.tender.title if m.tender else '',
+                    'author': m.user.display_name if m.user else '알 수 없음',
+                    'content_preview': m.content[:60] + ('...' if len(m.content) > 60 else ''),
+                    'created_at': m.created_at.isoformat() + 'Z',
+                })
+
+        return jsonify({
+            'count': len(seen_tids),
+            'tenders': tenders_with_memos[:10],  # 최대 10개 공고만
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/memos/mark-seen', methods=['POST'])
+@login_required
+def api_memos_mark_seen():
+    """타인 메모 확인 처리 — 관심공고 메모 탭 진입 시 호출"""
+    try:
+        uid = g.user.id
+        pref = UserPreference.query.filter_by(user_id=uid).first()
+        if not pref:
+            pref = UserPreference(user_id=uid)
+            db.session.add(pref)
+        pref.memos_last_seen_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
