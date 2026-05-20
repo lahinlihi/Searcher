@@ -18,8 +18,33 @@ function isMobile() {
     return window.innerWidth < 640;
 }
 
+// ── 임베딩 점수 on-demand 로딩 ───────────────────────────────────────────────
+async function fetchEmbedScores(tenderIds) {
+    if (!tenderIds || tenderIds.length === 0) return;
+    try {
+        const resp = await fetch('/api/embed-scores', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tender_ids: tenderIds })
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        for (const [id, info] of Object.entries(data.scores || {})) {
+            const el = document.getElementById(`score-${id}`);
+            if (!el) continue;
+            const score = info.score;
+            let bg;
+            if (score >= 70)      bg = 'bg-green-100 text-green-800 border border-green-300';
+            else if (score >= 40) bg = 'bg-yellow-100 text-yellow-800 border border-yellow-300';
+            else                  bg = 'bg-gray-100 text-gray-600 border border-gray-300';
+            el.className = `inline-flex items-center text-xs font-bold px-2 py-0.5 rounded ${bg}`;
+            el.textContent = score.toFixed(1);
+        }
+    } catch (_) { /* 실패 시 규칙 점수 그대로 유지 */ }
+}
+
 // ── 매칭 점수 배지 (dashboard와 동일 형식) ──────────────────────────────────
-function buildScoreBadge(score, businessType, breakdown) {
+function buildScoreBadge(score, businessType, breakdown, tenderId) {
     if (!score) return '<span class="text-xs text-gray-300">-</span>';
     let bg;
     if (score >= 70)      bg = 'bg-green-100 text-green-800 border border-green-300';
@@ -33,7 +58,8 @@ function buildScoreBadge(score, businessType, breakdown) {
         const typeText = businessType && businessType !== '기타' ? ` · ${businessType}` : '';
         tooltip = `적합도 점수: ${displayScore}점${typeText}`;
     }
-    return `<span class="inline-flex items-center text-xs font-bold px-2 py-0.5 rounded ${bg}"
+    const idAttr = tenderId ? ` id="score-${tenderId}"` : '';
+    return `<span class="inline-flex items-center text-xs font-bold px-2 py-0.5 rounded ${bg}"${idAttr}
                   title="${tooltip}">
         ${displayScore}
     </span>`;
@@ -630,7 +656,7 @@ function renderResultsMobile(tenders) {
             displayAgency = (isJodal && tender.demand_agency) ? tender.demand_agency : tender.agency;
         }
 
-        const scoreBadge = buildScoreBadge(tender.relevance_score ?? null, tender.business_type || '기타', tender.score_breakdown || null);
+        const scoreBadge = buildScoreBadge(tender.relevance_score ?? null, tender.business_type || '기타', tender.score_breakdown || null, tender.id);
         const starBtn = starButton(tender.id);
         const titleStyle = isExpired ? ' style="color:#9CA3AF;"' : '';
 
@@ -683,6 +709,7 @@ function renderResultsMobile(tenders) {
     }
 
     container.innerHTML = html;
+    fetchEmbedScores(tenders.map(t => t.id));
 }
 
 // ── 데스크톱 테이블 레이아웃 ─────────────────────────────────────────────
@@ -759,7 +786,7 @@ function renderResultsDesktop(tenders) {
             ? `<span style="font-size:0.6rem;color:#7C3AED;font-weight:700;line-height:1;" title="메모 ${tender.memo_count}개">✎${tender.memo_count}</span>`
             : '';
 
-        const scoreBadge = buildScoreBadge(tender.relevance_score ?? null, tender.business_type || '기타', tender.score_breakdown || null);
+        const scoreBadge = buildScoreBadge(tender.relevance_score ?? null, tender.business_type || '기타', tender.score_breakdown || null, tender.id);
 
         return `
             <tr class="${rowClass}">
@@ -832,6 +859,7 @@ function renderResultsDesktop(tenders) {
         </table>`;
 
     container.innerHTML = html;
+    fetchEmbedScores(tenders.map(t => t.id));
 }
 
 // 페이징 렌더링

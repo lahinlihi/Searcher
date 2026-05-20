@@ -3,7 +3,7 @@ from database import db, Tender, CrawlLog, TenderMemo, DismissedTender, Filter
 from decorators import login_required, admin_required
 from scoring import (load_user_prefs, load_interest_keywords,
                      smart_sort_tenders_by_keyword_count,
-                     _score_and_type, get_last_workday)
+                     _score_and_type, get_last_workday, compute_embed_sims)
 from config import Config
 from datetime import datetime, timedelta
 import json
@@ -153,11 +153,8 @@ def api_dashboard():
             ~Tender.bid_method.contains('수의계약')
         ).count()
 
-        # 4. 총 공고: 수의계약 제외, 마감일 안 지난 공고
-        total_tenders = Tender.query.filter(
-            Tender.deadline_date >= now,
-            ~Tender.bid_method.contains('수의계약')
-        ).count()
+        # 4. 총 공고: DB에 누적된 전체 공고 수 (중복 없이)
+        total_tenders = Tender.query.count()
 
         # 5. 사전규격: 나라장터 사전규격 중 마감 안 지난 것, 키워드 매칭 순, 20개
         pre_new_query = Tender.query.filter(
@@ -183,9 +180,6 @@ def api_dashboard():
         all_pre_new = pre_new_query.all()
         if dismissed_ids:
             all_pre_new = [t for t in all_pre_new if t.id not in dismissed_ids]
-        sorted_pre_new = smart_sort_tenders_by_keyword_count(
-            all_pre_new, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
-        pre_tenders = sorted_pre_new[:24]
 
         # 6. 신규공고(기타 채널): 7일 이내, 나라장터 제외, 수의계약 제외, 마감 안 지난 것
         # (나라장터와 동일한 7일 창 사용 — 기타채널도 주중 공고 누락 방지)
@@ -214,9 +208,6 @@ def api_dashboard():
         all_new = new_query.all()
         if dismissed_ids:
             all_new = [t for t in all_new if t.id not in dismissed_ids]
-        sorted_new = smart_sort_tenders_by_keyword_count(
-            all_new, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
-        recent_tenders = sorted_new[:24]
 
         seven_days_ago = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -246,7 +237,18 @@ def api_dashboard():
         all_urgent = urgent_query.all()
         if dismissed_ids:
             all_urgent = [t for t in all_urgent if t.id not in dismissed_ids]
-        sorted_urgent = smart_sort_tenders_by_keyword_count(all_urgent, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
+
+        # 규칙 점수 기반 정렬만 수행 — 임베딩은 /api/embed-scores 에서 on-demand 처리
+        sorted_pre_new = smart_sort_tenders_by_keyword_count(
+            all_pre_new, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
+        pre_tenders = sorted_pre_new[:24]
+
+        sorted_new = smart_sort_tenders_by_keyword_count(
+            all_new, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
+        recent_tenders = sorted_new[:24]
+
+        sorted_urgent = smart_sort_tenders_by_keyword_count(
+            all_urgent, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
         urgent_tenders = sorted_urgent[:24]
 
         # 전체 필터 적용 후 총 건수 (배지용)
@@ -274,6 +276,43 @@ def api_dashboard():
             'exclude_keywords': exclude_keywords}
 
         return jsonify(response_data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/embed-scores', methods=['POST'])
+@login_required
+def api_embed_scores():
+    """화면에 보이는 공고 ID 목록 → 임베딩 혼합 점수 반환 (on-demand lazy 처리)"""
+    try:
+        tender_ids = (request.json or {}).get('tender_ids', [])
+        if not tender_ids:
+            return jsonify({'scores': {}})
+
+        uid = g.user.id if g.user else None
+        _uprefs = load_user_prefs(uid)
+        kws = _uprefs['interest_keywords']
+        tw  = _uprefs['type_weights']
+        ck  = _uprefs.get('core_keywords', [])
+
+        from database import AgencyWeight
+        aw_rows = AgencyWeight.query.filter_by(user_id=uid).all() if uid else []
+        aw = {r.agency_name: r.weight for r in aw_rows}
+
+        tenders = Tender.query.filter(Tender.id.in_(tender_ids)).all()
+        sims = compute_embed_sims(tenders, kws, ck)
+
+        scores = {}
+        for t in tenders:
+            s, btype, ks, ts, as_ = _score_and_type(t, kws, tw, aw, ck, embed_sim=sims.get(t.id))
+            scores[str(t.id)] = {
+                'score': s,
+                'keyword': ks,
+                'type': ts,
+                'agency': as_,
+                'business_type': btype,
+            }
+        return jsonify({'scores': scores})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -547,7 +586,8 @@ def api_tenders():
             d = t.to_dict(interest_keywords=interest_keywords)
             d['memo_count'] = _memo_counts.get(t.id, 0)
             if score_keywords:
-                score, btype, kw_s, t_s, a_s = _score_and_type(t, score_keywords, user_type_weights, user_agency_weights2, user_core_keywords2)
+                score, btype, kw_s, t_s, a_s = _score_and_type(
+                    t, score_keywords, user_type_weights, user_agency_weights2, user_core_keywords2)
             else:
                 score, btype, kw_s, t_s, a_s = 0, '기타', 0.0, 0.0, 0.0
             d['relevance_score'] = score

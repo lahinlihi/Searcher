@@ -3,6 +3,77 @@ from datetime import datetime, timedelta
 import json
 import re
 
+# ── 임베딩 모델 (thread-safe lazy load) ─────────────────────────────────────
+import threading as _threading
+_embed_model = None
+_embed_model_lock = _threading.Lock()
+_embed_model_ready = False       # 로딩 완료 후 True — 폴백 판단에 사용
+_profile_cache: dict = {}        # kw_hash → np.ndarray (사용자 프로필 벡터)
+
+
+def _get_embed_model():
+    """스레드 안전 lazy 로딩. 로딩 중이면 블록 없이 None 반환 → 폴백."""
+    global _embed_model, _embed_model_ready
+    if _embed_model_ready:
+        return _embed_model
+    acquired = _embed_model_lock.acquire(blocking=False)
+    if not acquired:
+        return None   # 다른 스레드가 로딩 중 → 호출자가 폴백 처리
+    try:
+        if not _embed_model_ready:
+            from sentence_transformers import SentenceTransformer
+            print('[임베딩] 모델 로딩 중 (jhgan/ko-sroberta-multitask)...')
+            _embed_model = SentenceTransformer('jhgan/ko-sroberta-multitask')
+            _embed_model_ready = True
+            print('[임베딩] 완료')
+        return _embed_model
+    finally:
+        _embed_model_lock.release()
+
+
+def _get_profile_vec(kws: list):
+    """관심 키워드 → 프로필 벡터 (키워드 목록이 같으면 캐시 재사용)"""
+    key = '\x00'.join(sorted(kws))
+    if key not in _profile_cache:
+        model = _get_embed_model()
+        if model is None:
+            return None
+        _profile_cache[key] = model.encode(
+            [' '.join(kws)], show_progress_bar=False
+        )[0]
+    return _profile_cache.get(key)
+
+
+def compute_embed_sims(tenders, kws, ck=None):
+    """
+    tenders 리스트 제목을 배치 인코딩 → {tender.id: similarity(0~1)} 반환
+    - 한 번의 model.encode() 호출로 전체 처리 (요청당 1회)
+    - 핵심 키워드 포함 시 유사도 +0.10 보정
+    - 모델 미준비 시 빈 dict 반환 → 규칙 점수만 사용
+    """
+    if not tenders or not kws:
+        return {}
+    from sklearn.metrics.pairwise import cosine_similarity as _cos
+    import numpy as np
+
+    model = _get_embed_model()
+    if model is None:
+        return {}   # 모델 로딩 중 또는 미준비 → 규칙 점수 폴백
+
+    pv = _get_profile_vec(kws)
+    titles = [t.title for t in tenders]
+    title_vecs = model.encode(titles, batch_size=64, show_progress_bar=False)
+    sims = _cos(title_vecs, [pv]).flatten()
+
+    ck_lower = set(c.lower() for c in (ck or []))
+    result = {}
+    for tender, sim in zip(tenders, sims):
+        s = float(sim)
+        if ck_lower and any(c in tender.title.lower() for c in ck_lower):
+            s = min(1.0, s + 0.10)
+        result[tender.id] = s
+    return result
+
 # ── 채용/참여모집 제외 패턴 ──────────────────────────────────────────────────
 # 이 패턴이 제목에 포함되면 우리가 수행할 용역이 아님 → 점수 0 처리
 _EXCLUDE_PATTERNS = [
@@ -412,7 +483,7 @@ def _keyword_match_weight(keyword, title):
     → 복합어 내 포함된 키워드는 낮은 가중치로 오분류 방지
     """
     kw = keyword.lower()
-    for token in re.split(r'\s+', title.lower()):
+    for token in re.split(r'[\s/·\-]+', title.lower()):
         if token == kw:
             return 1.0
         if token.startswith(kw):
@@ -484,7 +555,7 @@ def _priority_score(tender):
     return min(10.0, round(urgency + price_bonus, 2))
 
 
-def _score_and_type(tender, include_keywords, type_weights=None, agency_weights=None, core_keywords=None):
+def _score_and_type(tender, include_keywords, type_weights=None, agency_weights=None, core_keywords=None, embed_sim=None):
     """
     적합도 점수(소수점 1자리, 최대 100.0점) + 사업 유형 계산
 
@@ -534,6 +605,11 @@ def _score_and_type(tender, include_keywords, type_weights=None, agency_weights=
         density_factor = 1.0 / (word_count ** 0.25)
         keyword_score = min(weighted_sum * density_factor * 10, 45)
 
+    # ── 임베딩 혼합 (규칙 60% + 임베딩 40%) ─────────────────────────────
+    if embed_sim is not None:
+        embed_kw = min(float(embed_sim) * 45.0, 45.0)
+        keyword_score = round(keyword_score * 0.6 + embed_kw * 0.4, 1)
+
     # ── 사업 유형 점수 ───────────────────────────────────────────────────
     type_name, raw_type_score = _detect_business_type(cleaned)
     if type_name == '기타':
@@ -568,19 +644,21 @@ def _score_and_type(tender, include_keywords, type_weights=None, agency_weights=
     return total, type_name, round(keyword_score, 1), round(type_score, 1), round(agency_score, 1)
 
 
-def calculate_relevance_score(tender, include_keywords, type_weights=None, agency_weights=None, core_keywords=None):
-    return _score_and_type(tender, include_keywords, type_weights, agency_weights, core_keywords)[0]
+def calculate_relevance_score(tender, include_keywords, type_weights=None, agency_weights=None, core_keywords=None, embed_sim=None):
+    return _score_and_type(tender, include_keywords, type_weights, agency_weights, core_keywords, embed_sim)[0]
 
 
-def smart_sort_tenders_by_keyword_count(tenders, include_keywords, type_weights=None, agency_weights=None, core_keywords=None):
+def smart_sort_tenders_by_keyword_count(tenders, include_keywords, type_weights=None, agency_weights=None, core_keywords=None, embed_sims=None):
     """
     관련성 점수 기반 정렬
     1순위: 관련성 점수 (높을수록)
     2순위: 공고일 (최신순)
     3순위: 금액 (높을수록)
+    embed_sims: {tender.id: similarity} — compute_embed_sims() 결과를 미리 전달
     """
     def sort_key(tender):
-        score = calculate_relevance_score(tender, include_keywords, type_weights, agency_weights, core_keywords)
+        sim = (embed_sims or {}).get(tender.id)
+        score = calculate_relevance_score(tender, include_keywords, type_weights, agency_weights, core_keywords, sim)
         if tender.announced_date:
             try:
                 date_ord = tender.announced_date.toordinal()

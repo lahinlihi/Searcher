@@ -256,7 +256,37 @@ function starButton(tenderId) {
 }
 
 // 대시보드 데이터 로드
+const _DASH_CACHE_KEY = 'dashboard_cache_v1';
+
+function _applyDashboardData(data, resetPages) {
+    includeKeywords = data.include_keywords || [];
+    renderActiveKeywords(includeKeywords);
+    document.getElementById('new-today').textContent = data.summary.new_today + '건';
+    document.getElementById('pre-announcement').textContent = data.summary.pre_announcement + '건';
+    document.getElementById('deadline-soon').textContent = data.summary.deadline_soon + '건';
+    document.getElementById('total-tenders').textContent = data.summary.total + '건';
+    dashData = data;
+    if (resetPages) {
+        carouselPage.pre = 0;
+        carouselPage.urgent = 0;
+        carouselPage.recent = 0;
+        _embedLoaded.pre = false;
+        _embedLoaded.urgent = false;
+        _embedLoaded.recent = false;
+    }
+    renderDashboard();
+}
+
 async function loadDashboardData() {
+    // 캐시된 데이터가 있으면 즉시 표시 (끊김 방지)
+    try {
+        const cached = localStorage.getItem(_DASH_CACHE_KEY);
+        if (cached) {
+            _applyDashboardData(JSON.parse(cached), true);
+        }
+    } catch (_) {}
+
+    // 백그라운드에서 최신 데이터 요청
     try {
         const response = await fetch('/api/dashboard');
         const data = await response.json();
@@ -266,23 +296,11 @@ async function loadDashboardData() {
             return;
         }
 
-        // 포함 키워드 저장 및 표시
-        includeKeywords = data.include_keywords || [];
-        renderActiveKeywords(includeKeywords);
-
-        // 요약 통계 업데이트
-        document.getElementById('new-today').textContent = data.summary.new_today + '건';
-        document.getElementById('pre-announcement').textContent = data.summary.pre_announcement + '건';
-        document.getElementById('deadline-soon').textContent = data.summary.deadline_soon + '건';
-        document.getElementById('total-tenders').textContent = data.summary.total + '건';
-
-        // 데이터 저장 후 섹션별 정렬 초기화 및 렌더링
+        // 최신 데이터로 교체 (캐시가 있었다면 페이지 위치 유지)
+        const hadCache = !!localStorage.getItem(_DASH_CACHE_KEY);
         _lastFetchTime = Date.now();
-        dashData = data;
-        carouselPage.pre = 0;
-        carouselPage.urgent = 0;
-        carouselPage.recent = 0;
-        renderDashboard();
+        try { localStorage.setItem(_DASH_CACHE_KEY, JSON.stringify(data)); } catch (_) {}
+        _applyDashboardData(data, !hadCache);
 
     } catch (error) {
         console.error('Failed to load dashboard data:', error);
@@ -455,8 +473,11 @@ function renderMobileTenderList(section, tenders) {
     }).join('');
 }
 
+// 섹션별 임베딩 점수 로딩 완료 여부 추적
+const _embedLoaded = { pre: false, urgent: false, recent: false };
+
 // ── 캐러셀 섹션 렌더링 ─────────────────────────────────────────────────────
-function renderCarouselSection(section, tenders) {
+function renderCarouselSection(section, tenders, skipEmbed = false) {
     const page = carouselPage[section];
     const totalPages = Math.max(1, Math.ceil(tenders.length / CARDS_PER_PAGE));
     const start = page * CARDS_PER_PAGE;
@@ -472,6 +493,10 @@ function renderCarouselSection(section, tenders) {
         container.innerHTML = `<p class="col-span-4 text-gray-500 text-sm py-4">${msg}</p>`;
     } else {
         container.innerHTML = pageItems.map(t => renderTenderCard(t)).join('');
+        // 섹션 첫 진입 시에만 전체 24건 임베딩 → 정렬 후 재렌더
+        if (!skipEmbed && !_embedLoaded[section]) {
+            fetchEmbedScores(tenders.map(t => t.id), section);
+        }
     }
 
     const prevBtn   = document.getElementById(`${section}-prev`);
@@ -502,6 +527,37 @@ function nextPage(section) {
         carouselPage[section]++;
         renderSection(section);
     }
+}
+
+// 임베딩 점수 on-demand 로딩 — 섹션 전체(최대 24건) 가져와서 재정렬
+const _sectionKey = { pre: 'pre_tenders', urgent: 'urgent_tenders', recent: 'recent_tenders' };
+
+async function fetchEmbedScores(tenderIds, section) {
+    if (!tenderIds || tenderIds.length === 0) return;
+    try {
+        const resp = await fetch('/api/embed-scores', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tender_ids: tenderIds })
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const scores = data.scores || {};
+
+        // dashData의 해당 섹션 점수 업데이트
+        const key = _sectionKey[section];
+        if (key && dashData?.[key]) {
+            for (const tender of dashData[key]) {
+                const info = scores[String(tender.id)];
+                if (info) tender.relevance_score = info.score;
+            }
+            // 임베딩 점수 기준으로 재정렬
+            dashData[key].sort((a, b) => (b.relevance_score ?? 0) - (a.relevance_score ?? 0));
+            _embedLoaded[section] = true;
+            // 현재 페이지 재렌더 (embed 재호출 없이)
+            renderCarouselSection(section, dashData[key], true);
+        }
+    } catch (_) { /* 실패 시 규칙 점수 순서 그대로 유지 */ }
 }
 
 // 공고 카드 렌더링
@@ -552,7 +608,7 @@ function renderTenderCard(tender) {
     return `
         <div class="dash-tender-card">
             <div class="dc-top">
-                <span class="dc-score" style="${scoreCls}">${score.toFixed(1)}</span>
+                <span class="dc-score" id="score-${tender.id}" style="${scoreCls}">${score.toFixed(1)}</span>
                 <span class="dc-type">유형: ${bizType}</span>
                 <div class="dc-actions">
                     ${starButton(tender.id)}

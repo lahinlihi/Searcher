@@ -171,6 +171,16 @@ if __name__ == '__main__':
             print(f"[스케줄러] 오류: {e}")
             traceback.print_exc()
 
+    # 임베딩 모델을 백그라운드에서 미리 로딩 (첫 요청 지연 방지)
+    import threading as _t
+    def _preload_embed():
+        try:
+            from scoring import _get_embed_model
+            _get_embed_model()
+        except Exception as _e:
+            print(f"[임베딩] 사전 로딩 실패 (규칙 점수로 폴백): {_e}")
+    _t.Thread(target=_preload_embed, daemon=True).start()
+
     try:
         from waitress import serve
         print(f"[서버] waitress WSGI 서버로 시작합니다 (port {Config.PORT})")
