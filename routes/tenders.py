@@ -188,6 +188,7 @@ def api_dashboard():
             Tender.announced_date >= seven_days_ago_midnight,
             Tender.announced_date <= now,
             Tender.status != '사전규격',
+            Tender.status != '결과공고',
             Tender.deadline_date >= now,           # 마감일 지난 공고 제외
             ~Tender.bid_method.contains('수의계약'),  # 수의계약 제외
             ~Tender.source_site.contains('나라장터'),
@@ -216,6 +217,7 @@ def api_dashboard():
             Tender.announced_date >= seven_days_ago,
             Tender.announced_date <= now,
             Tender.status != '사전규격',
+            Tender.status != '결과공고',
             Tender.deadline_date >= now,
             ~Tender.bid_method.contains('수의계약'),
             db.or_(
@@ -348,8 +350,14 @@ def api_tenders():
         demand_agency_include = [t.strip() for t in request.args.get('demand_agency_include', '').split(',') if t.strip()]
         demand_agency_exclude = [t.strip() for t in request.args.get('demand_agency_exclude', '').split(',') if t.strip()]
 
+        # 결과공고 표시 여부 (기본: 제외)
+        show_result_notices = request.args.get('show_result', '0') == '1'
+
         # 수의계약은 검색 결과에서 기본 제외
         query = Tender.query.filter(~Tender.bid_method.contains('수의계약'))
+        # 결과공고(선정결과·낙찰결과 등)는 기본 제외
+        if not show_result_notices:
+            query = query.filter(Tender.status != '결과공고')
 
         # 필터 적용
         if filter_id:

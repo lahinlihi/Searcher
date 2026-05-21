@@ -440,6 +440,7 @@ async function searchTenders(page = 1) {
     const deadlineDateFrom = document.getElementById('deadline-date-from').value;
     const deadlineDateTo = document.getElementById('deadline-date-to').value;
     const includeExpired = document.getElementById('include-expired').checked;
+    const showResultNotices = document.getElementById('show-result-notices')?.checked || false;
 
     // 신규 필터
     const minPriceVal = document.getElementById('min-price').value;
@@ -461,7 +462,8 @@ async function searchTenders(page = 1) {
             announced_date_to: announcedDateTo,
             deadline_date_from: deadlineDateFrom,
             deadline_date_to: deadlineDateTo,
-            include_expired: includeExpired ? '1' : '0'
+            include_expired: includeExpired ? '1' : '0',
+            show_result: showResultNotices ? '1' : '0'
         });
         if (minPrice !== '') params.append('min_price', minPrice);
         if (maxPrice !== '') params.append('max_price', maxPrice);

@@ -56,7 +56,7 @@ class GenericCrawler(BaseCrawler):
         self.detail_price = site_config.get('detail_price', None)  # {selector, pattern}
         self.detail_deadline = site_config.get('detail_deadline', None)  # {label: "공고마감일자"} — dt/dd 구조
         self.default_agency = site_config.get('default_agency', '')  # 고정 수요기관명
-        self.exclude_title_pattern = site_config.get('exclude_title_pattern', '')  # 제목 제외 정규식
+        self.result_notice_pattern = site_config.get('result_notice_pattern', '')  # 결과공고 태깅 패턴 (수집은 하되 status='결과공고'로 마킹)
 
     def crawl(self, **kwargs):
         """크롤링 실행"""
@@ -231,11 +231,6 @@ class GenericCrawler(BaseCrawler):
 
     def _process_item(self, item, idx):
         """공고 아이템 하나를 파싱하여 results에 추가"""
-        # 제목 제외 패턴 체크 (사전 필터링)
-        if self.exclude_title_pattern:
-            _raw_title = item.get_text(strip=True)
-            if re.search(self.exclude_title_pattern, _raw_title):
-                return
 
         # 제목 추출
         title_selector = self.selectors.get('title', '')
@@ -318,7 +313,8 @@ class GenericCrawler(BaseCrawler):
         # 날짜 범위 파싱 실패시 단일 날짜 파싱
         if start_date is None:
             announced_date = self._parse_date(date_text)
-            deadline_date = datetime.now() + timedelta(days=random.randint(7, 30))
+            # detail_deadline이 설정된 경우 상세 페이지에서 날짜를 가져오므로 초기값은 None
+            deadline_date = None if self.detail_deadline else datetime.now() + timedelta(days=random.randint(7, 30))
         else:
             announced_date = start_date
             deadline_date = end_date
@@ -365,10 +361,12 @@ class GenericCrawler(BaseCrawler):
                         if _label in _dt.get_text(strip=True):
                             _dd = _dt.find_next_sibling('dd')
                             if _dd:
-                                _parsed = self._parse_date(_dd.get_text(strip=True))
-                                if _parsed:
-                                    deadline_date = _parsed
-                                    break
+                                _dd_text = _dd.get_text(strip=True)
+                                if _dd_text:  # 빈 dd는 건너뜀 (빈 텍스트 → _parse_date 랜덤 폴백 방지)
+                                    _parsed = self._parse_date(_dd_text)
+                                    if _parsed:
+                                        deadline_date = _parsed
+                                break
             except Exception:
                 pass
 
@@ -382,7 +380,7 @@ class GenericCrawler(BaseCrawler):
             'opening_date': deadline_date + timedelta(days=random.randint(1, 15)) if deadline_date else None,
             'estimated_price': estimated_price,
             'bid_method': '일반경쟁입찰',
-            'status': '일반',
+            'status': '결과공고' if (self.result_notice_pattern and re.search(self.result_notice_pattern, title)) else '일반',
             'is_sme_only': False,
             'source_site': self.site_name,
             'url': link if link else f"{self.base_url}/detail?id={tender_number}"

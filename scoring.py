@@ -576,6 +576,10 @@ def _score_and_type(tender, include_keywords, type_weights=None, agency_weights=
     if not include_keywords or not tender.title:
         return 0, '기타', 0.0, 0.0, 0.0
 
+    # 결과공고(선정결과·낙찰결과 등)는 기본 점수 0 — 필터에서 별도 표시 제어
+    if getattr(tender, 'status', None) == '결과공고':
+        return 0, '결과공고', 0.0, 0.0, 0.0
+
     cleaned = _clean_title_for_scoring(tender.title, tender.agency)
 
     # 채용·참여모집 공고 제외
