@@ -320,12 +320,26 @@ class User(db.Model):
     """사용자 테이블"""
     __tablename__ = 'users'
 
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
-    password_hash = db.Column(db.String(200), nullable=False)
-    role = db.Column(db.String(20), default='user')  # 'admin' | 'user'
-    nickname = db.Column(db.String(80), nullable=True)  # 표시 이름 (닉네임)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    id             = db.Column(db.Integer, primary_key=True)
+    username       = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash  = db.Column(db.String(200), nullable=True)   # 소셜 전용 계정은 NULL
+    role           = db.Column(db.String(20), default='user')   # 'admin'|'moderator'|'user'
+    nickname       = db.Column(db.String(80), nullable=True)
+    created_at     = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # ── 신규 필드 ─────────────────────────────────────────────────
+    email               = db.Column(db.String(120), unique=True, nullable=True)
+    status              = db.Column(db.String(20), default='active')  # 'pending'|'active'|'suspended'
+    last_login_at       = db.Column(db.DateTime, nullable=True)
+
+    # 소셜 로그인 연결
+    kakao_id            = db.Column(db.String(100), unique=True, nullable=True)
+    google_id           = db.Column(db.String(100), unique=True, nullable=True)
+    naver_id            = db.Column(db.String(100), unique=True, nullable=True)
+
+    # 이메일 인증 (임시 저장)
+    email_verify_code   = db.Column(db.String(10), nullable=True)
+    email_verify_expiry = db.Column(db.DateTime, nullable=True)
 
     @property
     def display_name(self):
@@ -339,6 +353,13 @@ class User(db.Model):
             'nickname': self.nickname or '',
             'display_name': self.display_name,
             'role': self.role,
+            'email': self.email or '',
+            'status': self.status or 'active',
+            'last_login_at': self.last_login_at.isoformat() if self.last_login_at else None,
+            'has_password': self.password_hash is not None,
+            'has_kakao': self.kakao_id is not None,
+            'has_google': self.google_id is not None,
+            'has_naver': self.naver_id is not None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 

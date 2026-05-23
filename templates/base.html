@@ -49,14 +49,14 @@
                 <!-- 사용자 정보 -->
                 <div class="flex-shrink-0 flex items-center gap-3">
                     {% if g.user %}
-                    <span class="text-sm text-gray-600">
-                        <span class="font-medium text-gray-800">{{ g.user.display_name }}</span>
+                    <a href="/me" class="text-sm text-gray-600 hover:text-blue-600 transition-colors flex items-center gap-1">
                         {% if g.user.role == 'admin' %}
-                        <span class="ml-1 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-semibold">Admin</span>
+                        <span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-semibold">Admin</span>
                         {% elif g.user.role == 'moderator' %}
-                        <span class="ml-1 text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-semibold">중간관리자</span>
+                        <span class="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-semibold">관리자</span>
                         {% endif %}
-                    </span>
+                        <span class="font-medium text-gray-800">{{ g.user.display_name }}</span>
+                    </a>
                     <a href="/logout" class="text-sm text-gray-500 hover:text-red-600 transition-colors border border-gray-200 rounded px-2.5 py-1">로그아웃</a>
                     {% endif %}
                 </div>
@@ -111,14 +111,14 @@
                 </div>
                 <div class="flex items-center gap-2 sm:gap-3">
                     {% if g.user %}
-                    <span class="hidden sm:inline text-sm text-gray-600">
-                        <span class="font-medium text-gray-800">{{ g.user.display_name }}</span>
+                    <a href="/me" class="hidden sm:inline-flex items-center gap-1 text-sm text-gray-600 hover:text-blue-600 transition-colors">
                         {% if g.user.role == 'admin' %}
-                        <span class="ml-1 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-semibold">Admin</span>
+                        <span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-semibold">Admin</span>
                         {% elif g.user.role == 'moderator' %}
-                        <span class="ml-1 text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-semibold">중간관리자</span>
+                        <span class="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-semibold">관리자</span>
                         {% endif %}
-                    </span>
+                        <span class="font-medium text-gray-800">{{ g.user.display_name }}</span>
+                    </a>
                     <a href="/logout" class="hidden sm:inline text-sm text-gray-500 hover:text-red-600 transition-colors border border-gray-200 rounded px-2 py-1">로그아웃</a>
                     {% endif %}
                     <button id="mobile-menu-btn" onclick="toggleMobileMenu()"
@@ -153,7 +153,14 @@
                 {% endif %}
                 {% if g.user %}
                 <div class="border-t mt-2 pt-2 flex items-center justify-between">
-                    <span class="text-sm text-gray-600 font-medium">{{ g.user.display_name }}</span>
+                    <a href="/me" class="flex items-center gap-1 text-sm text-gray-600 hover:text-blue-600">
+                        {% if g.user.role == 'admin' %}
+                        <span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-semibold">Admin</span>
+                        {% elif g.user.role == 'moderator' %}
+                        <span class="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-semibold">관리자</span>
+                        {% endif %}
+                        <span class="font-medium">{{ g.user.display_name }}</span>
+                    </a>
                     <a href="/logout" class="text-sm text-red-500 hover:text-red-700 font-medium">로그아웃</a>
                 </div>
                 {% endif %}

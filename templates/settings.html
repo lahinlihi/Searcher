@@ -238,6 +238,75 @@
         </div>
     </div>
 
+    <!-- 이메일 변경 -->
+    <div class="bg-white rounded-xl border p-6 mb-6">
+        <h3 class="text-sm font-semibold text-gray-700 mb-4">이메일 변경</h3>
+        <p class="text-sm text-gray-500 mb-3">현재: <span id="current-email" class="font-medium">{{ g.user.email or '미설정' }}</span></p>
+        <div class="flex gap-2 mb-3">
+            <input type="email" id="new-email-input" placeholder="새 이메일 주소"
+                   class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+            <button onclick="requestEmailVerify()"
+                    class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg whitespace-nowrap">인증 코드 발송</button>
+        </div>
+        <div id="verify-code-row" class="hidden flex gap-2">
+            <input type="text" id="verify-code-input" placeholder="6자리 인증 코드" maxlength="6"
+                   class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+            <button onclick="confirmEmailVerify()"
+                    class="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg">확인</button>
+        </div>
+        <p id="email-change-msg" class="text-xs mt-2 hidden"></p>
+    </div>
+
+    <!-- 소셜 계정 연결 -->
+    <div class="bg-white rounded-xl border p-6 mb-6">
+        <h3 class="text-sm font-semibold text-gray-700 mb-4">소셜 계정 연결</h3>
+        <div class="space-y-3">
+            <div class="flex items-center justify-between py-2">
+                <div class="flex items-center gap-2">
+                    <span class="inline-flex items-center justify-center w-6 h-6 bg-yellow-300 rounded text-xs font-bold text-gray-900">K</span>
+                    <span class="text-sm text-gray-700">카카오</span>
+                    {% if g.user.kakao_id %}<span class="text-xs text-green-600 ml-1">연결됨</span>{% endif %}
+                </div>
+                {% if g.user.kakao_id %}
+                <button onclick="disconnectSocial('kakao')"
+                        class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg">연결 해제</button>
+                {% else %}
+                <a href="/auth/kakao?link=1"
+                   class="text-xs bg-yellow-300 hover:bg-yellow-400 text-gray-900 px-3 py-1.5 rounded-lg">연결하기</a>
+                {% endif %}
+            </div>
+            <div class="flex items-center justify-between py-2">
+                <div class="flex items-center gap-2">
+                    <span class="inline-flex items-center justify-center w-6 h-6 bg-white border border-gray-300 rounded text-xs font-bold text-blue-600">G</span>
+                    <span class="text-sm text-gray-700">Google</span>
+                    {% if g.user.google_id %}<span class="text-xs text-green-600 ml-1">연결됨</span>{% endif %}
+                </div>
+                {% if g.user.google_id %}
+                <button onclick="disconnectSocial('google')"
+                        class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg">연결 해제</button>
+                {% else %}
+                <a href="/auth/google?link=1"
+                   class="text-xs bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded-lg">연결하기</a>
+                {% endif %}
+            </div>
+            <div class="flex items-center justify-between py-2">
+                <div class="flex items-center gap-2">
+                    <span class="inline-flex items-center justify-center w-6 h-6 rounded text-xs font-bold text-white" style="background-color:#03C75A;">N</span>
+                    <span class="text-sm text-gray-700">네이버</span>
+                    {% if g.user.naver_id %}<span class="text-xs text-green-600 ml-1">연결됨</span>{% endif %}
+                </div>
+                {% if g.user.naver_id %}
+                <button onclick="disconnectSocial('naver')"
+                        class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg">연결 해제</button>
+                {% else %}
+                <a href="/auth/naver?link=1"
+                   class="text-xs text-white hover:opacity-90 px-3 py-1.5 rounded-lg" style="background-color:#03C75A;">연결하기</a>
+                {% endif %}
+            </div>
+        </div>
+        <p id="social-msg" class="text-xs mt-3 hidden"></p>
+    </div>
+
     <!-- 저장 버튼 -->
     <div class="flex justify-end">
         <button onclick="saveSettings()" class="btn-primary">설정 저장</button>

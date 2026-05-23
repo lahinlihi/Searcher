@@ -27,6 +27,7 @@ class RSSCrawler(BaseCrawler):
         )
         self.rss_url = site_config.get('rss_url', '')
         self.max_items = site_config.get('max_items', 20)
+        self.default_agency = site_config.get('default_agency', site_name)
 
     def crawl(self, **kwargs):
         """크롤링 실행"""
@@ -117,7 +118,7 @@ class RSSCrawler(BaseCrawler):
 
         return {
             'title': title[:200],
-            'agency': self.site_name,
+            'agency': self.default_agency,
             'tender_number': tender_number,
             'announced_date': announced_date,
             'deadline_date': deadline_date,

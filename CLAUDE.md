@@ -2,6 +2,20 @@
 
 ---
 
+## 카카오 OAuth 설정 규칙 (중요)
+
+### Redirect URI 등록 위치
+카카오 Developers에서 Redirect URI는 **"카카오 로그인 → 일반"이 아니라**
+**앱 설정 → 플랫폼 키 → REST API 키 수정** 페이지의 "카카오 로그인 리다이렉트 URI" 항목에 등록한다.
+"카카오 로그인 → 일반" 탭에는 해당 항목이 없다. 이 사실을 사용자에게 안내할 때 절대 "일반 탭에 있다"고 하지 않는다.
+
+### 클라이언트 시크릿
+- 콘솔에서 활성화 **OFF** 시: `client_secret` 제거, `token_endpoint_auth_method='none'` 사용
+- 콘솔에서 활성화 **ON** 시: `.env`에 `KAKAO_CLIENT_SECRET` 등록, `token_endpoint_auth_method='client_secret_post'` 사용
+- 기본값(OFF)으로 운영하는 것이 간단함. 시크릿 값 불일치 시 `Bad client credentials` 오류 발생
+
+---
+
 ## Searcher 프로젝트 — 코드 수정 후 서버 자동 재시작 규칙
 
 ### 규칙: 서버 재시작이 필요한 작업 완료 후 자동으로 재시작 실행

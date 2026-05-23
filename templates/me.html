@@ -1,0 +1,201 @@
+{% extends 'base.html' %}
+{% block title %}내 계정 정보{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto px-4 py-8">
+
+    <h1 class="text-xl font-bold text-gray-800 mb-6">내 계정 정보</h1>
+
+    <!-- 메시지 -->
+    {% if success %}
+    <div class="mb-4 px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+        {% if success == 'kakao_linked' %}카카오 계정이 연결되었습니다.
+        {% elif success == 'google_linked' %}구글 계정이 연결되었습니다.
+        {% elif success == 'naver_linked' %}네이버 계정이 연결되었습니다.
+        {% else %}변경사항이 저장되었습니다.{% endif %}
+    </div>
+    {% endif %}
+    {% if error %}
+    <div class="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+        {% if error == 'kakao_already_linked' %}이미 다른 계정에 연결된 카카오 계정입니다.
+        {% elif error == 'google_already_linked' %}이미 다른 계정에 연결된 구글 계정입니다.
+        {% elif error == 'naver_already_linked' %}이미 다른 계정에 연결된 네이버 계정입니다.
+        {% else %}오류가 발생했습니다.{% endif %}
+    </div>
+    {% endif %}
+    <div id="msg-box" class="hidden mb-4 px-4 py-3 rounded-lg text-sm"></div>
+
+    <!-- 기본 정보 -->
+    <div class="bg-white rounded-xl border p-6 mb-4">
+        <h2 class="text-sm font-semibold text-gray-700 mb-4">기본 정보</h2>
+        <div class="space-y-3 text-sm">
+            <div class="flex justify-between items-center py-2 border-b border-gray-50">
+                <span class="text-gray-500">아이디</span>
+                <span class="font-medium text-gray-800">{{ g.user.username }}</span>
+            </div>
+            <div class="flex justify-between items-center py-2 border-b border-gray-50">
+                <span class="text-gray-500">권한</span>
+                <span>
+                    {% if g.user.role == 'admin' %}
+                    <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-semibold">Admin</span>
+                    {% elif g.user.role == 'moderator' %}
+                    <span class="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded font-semibold">관리자</span>
+                    {% else %}
+                    <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-semibold">일반</span>
+                    {% endif %}
+                </span>
+            </div>
+            <div class="flex justify-between items-center py-2 border-b border-gray-50">
+                <span class="text-gray-500">이메일</span>
+                <span class="text-gray-800">{{ g.user.email or '미설정' }}</span>
+            </div>
+            <div class="flex justify-between items-center py-2">
+                <span class="text-gray-500">가입일</span>
+                <span class="text-gray-800">{{ g.user.created_at.strftime('%Y.%m.%d') if g.user.created_at else '-' }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 닉네임 변경 -->
+    <div class="bg-white rounded-xl border p-6 mb-4">
+        <h2 class="text-sm font-semibold text-gray-700 mb-4">닉네임 변경</h2>
+        <div class="flex gap-2">
+            <input id="nickname-input" type="text" value="{{ g.user.nickname or '' }}"
+                   placeholder="닉네임 입력"
+                   class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <button onclick="saveNickname()"
+                    class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg transition-colors">저장</button>
+        </div>
+    </div>
+
+    <!-- 비밀번호 변경 -->
+    <div class="bg-white rounded-xl border p-6 mb-4">
+        <h2 class="text-sm font-semibold text-gray-700 mb-4">비밀번호 변경</h2>
+        {% if not g.user.password_hash %}
+        <p class="text-xs text-gray-500 mb-3">소셜 전용 계정입니다. 비밀번호를 새로 설정하면 아이디/비밀번호로도 로그인 가능합니다.</p>
+        {% endif %}
+        <div class="space-y-3">
+            {% if g.user.password_hash %}
+            <input id="cur-pw" type="password" placeholder="현재 비밀번호"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            {% endif %}
+            <input id="new-pw" type="password" placeholder="새 비밀번호 (8자 이상)"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <input id="new-pw2" type="password" placeholder="새 비밀번호 확인"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <button onclick="changePassword()"
+                    class="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg transition-colors">비밀번호 변경</button>
+        </div>
+    </div>
+
+    <!-- 소셜 계정 연결 -->
+    <div class="bg-white rounded-xl border p-6">
+        <h2 class="text-sm font-semibold text-gray-700 mb-4">소셜 계정 연결</h2>
+        <div class="space-y-3">
+            <!-- 카카오 -->
+            <div class="flex items-center justify-between py-2 border-b border-gray-50">
+                <div class="flex items-center gap-2">
+                    <span class="inline-flex items-center justify-center w-7 h-7 bg-yellow-300 rounded-lg text-xs font-bold text-gray-900">K</span>
+                    <span class="text-sm text-gray-700">카카오</span>
+                    {% if g.user.kakao_id %}<span class="text-xs text-green-600">연결됨</span>{% endif %}
+                </div>
+                {% if g.user.kakao_id %}
+                <button onclick="disconnectSocial('kakao')"
+                        class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg">연결 해제</button>
+                {% else %}
+                <a href="/auth/kakao?link=1"
+                   class="text-xs bg-yellow-300 hover:bg-yellow-400 text-gray-900 px-3 py-1.5 rounded-lg">연결하기</a>
+                {% endif %}
+            </div>
+            <!-- 구글 -->
+            <div class="flex items-center justify-between py-2 border-b border-gray-50">
+                <div class="flex items-center gap-2">
+                    <span class="inline-flex items-center justify-center w-7 h-7 bg-white border border-gray-200 rounded-lg">
+                        <svg viewBox="0 0 24 24" class="w-4 h-4"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                    </span>
+                    <span class="text-sm text-gray-700">Google</span>
+                    {% if g.user.google_id %}<span class="text-xs text-green-600">연결됨</span>{% endif %}
+                </div>
+                {% if g.user.google_id %}
+                <button onclick="disconnectSocial('google')"
+                        class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg">연결 해제</button>
+                {% else %}
+                <a href="/auth/google?link=1"
+                   class="text-xs bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 py-1.5 rounded-lg">연결하기</a>
+                {% endif %}
+            </div>
+            <!-- 네이버 -->
+            <div class="flex items-center justify-between py-2">
+                <div class="flex items-center gap-2">
+                    <span class="inline-flex items-center justify-center w-7 h-7 rounded-lg text-xs font-bold text-white" style="background-color:#03C75A;">N</span>
+                    <span class="text-sm text-gray-700">네이버</span>
+                    {% if g.user.naver_id %}<span class="text-xs text-green-600">연결됨</span>{% endif %}
+                </div>
+                {% if g.user.naver_id %}
+                <button onclick="disconnectSocial('naver')"
+                        class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg">연결 해제</button>
+                {% else %}
+                <a href="/auth/naver?link=1"
+                   class="text-xs text-white hover:opacity-90 px-3 py-1.5 rounded-lg" style="background-color:#03C75A;">연결하기</a>
+                {% endif %}
+            </div>
+        </div>
+        <p id="social-msg" class="text-xs mt-3 hidden"></p>
+    </div>
+
+</div>
+
+<script>
+function showMsg(msg, isError) {
+    const box = document.getElementById('msg-box');
+    box.textContent = msg;
+    box.className = `mb-4 px-4 py-3 rounded-lg text-sm ${isError ? 'bg-red-50 border border-red-200 text-red-700' : 'bg-green-50 border border-green-200 text-green-700'}`;
+    box.classList.remove('hidden');
+    setTimeout(() => box.classList.add('hidden'), 4000);
+}
+
+function saveNickname() {
+    const nickname = document.getElementById('nickname-input').value.trim();
+    fetch('/api/me/nickname', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({nickname})
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (d.error) showMsg(d.error, true);
+        else { showMsg('닉네임이 변경되었습니다.', false); setTimeout(() => location.reload(), 1000); }
+    });
+}
+
+function changePassword() {
+    const hasPw = {{ 'true' if g.user.password_hash else 'false' }};
+    const curPw = hasPw ? document.getElementById('cur-pw')?.value : '';
+    const newPw = document.getElementById('new-pw').value;
+    const newPw2 = document.getElementById('new-pw2').value;
+    if (newPw !== newPw2) return showMsg('새 비밀번호가 일치하지 않습니다.', true);
+    if (newPw.length < 8) return showMsg('비밀번호는 8자 이상이어야 합니다.', true);
+
+    fetch('/api/me/password', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({current_password: curPw, new_password: newPw})
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (d.error) showMsg(d.error, true);
+        else showMsg(d.message, false);
+    });
+}
+
+function disconnectSocial(provider) {
+    const names = {kakao: '카카오', google: '구글', naver: '네이버'};
+    if (!confirm(`${names[provider]} 연결을 해제하시겠습니까?`)) return;
+    fetch(`/api/me/social/${provider}`, {method: 'DELETE'})
+    .then(r => r.json())
+    .then(d => {
+        if (d.error) showMsg(d.error, true);
+        else { showMsg(d.message, false); setTimeout(() => location.reload(), 1000); }
+    });
+}
+</script>
+{% endblock %}

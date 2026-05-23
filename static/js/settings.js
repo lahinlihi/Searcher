@@ -1072,3 +1072,59 @@ document.addEventListener('DOMContentLoaded', function() {
     loadGeminiKeyStatus();
     loadModelPriority();
 });
+
+// ── 이메일 변경 ────────────────────────────────────────────────
+async function requestEmailVerify() {
+    const email = document.getElementById('new-email-input').value.trim();
+    if (!email) return;
+    const res = await fetch('/api/me/email/request-verify', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({email})
+    });
+    const data = await res.json();
+    const msg = document.getElementById('email-change-msg');
+    msg.className = res.ok
+        ? 'text-xs mt-2 text-green-600'
+        : 'text-xs mt-2 text-red-600';
+    msg.textContent = data.message || data.error;
+    msg.classList.remove('hidden');
+    if (res.ok) document.getElementById('verify-code-row').classList.remove('hidden');
+}
+
+async function confirmEmailVerify() {
+    const code = document.getElementById('verify-code-input').value.trim();
+    if (!code) return;
+    const res = await fetch('/api/me/email/confirm', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({code})
+    });
+    const data = await res.json();
+    const msg = document.getElementById('email-change-msg');
+    msg.className = res.ok
+        ? 'text-xs mt-2 text-green-600'
+        : 'text-xs mt-2 text-red-600';
+    msg.textContent = data.message || data.error;
+    msg.classList.remove('hidden');
+    if (res.ok) {
+        document.getElementById('current-email').textContent =
+            document.getElementById('new-email-input').value.trim();
+        document.getElementById('verify-code-row').classList.add('hidden');
+    }
+}
+
+// ── 소셜 연결 해제 ─────────────────────────────────────────────
+async function disconnectSocial(provider) {
+    const name = provider === 'kakao' ? '카카오' : 'Google';
+    if (!confirm(`${name} 연결을 해제하시겠습니까?`)) return;
+    const res = await fetch(`/api/me/social/${provider}`, {method: 'DELETE'});
+    const data = await res.json();
+    const msg = document.getElementById('social-msg');
+    msg.className = res.ok
+        ? 'text-xs mt-3 text-green-600'
+        : 'text-xs mt-3 text-red-600';
+    msg.textContent = data.message || data.error;
+    msg.classList.remove('hidden');
+    if (res.ok) setTimeout(() => location.reload(), 1200);
+}

@@ -57,6 +57,12 @@ class GenericCrawler(BaseCrawler):
         self.detail_deadline = site_config.get('detail_deadline', None)  # {label: "공고마감일자"} — dt/dd 구조
         self.default_agency = site_config.get('default_agency', '')  # 고정 수요기관명
         self.result_notice_pattern = site_config.get('result_notice_pattern', '')  # 결과공고 태깅 패턴 (수집은 하되 status='결과공고'로 마킹)
+        # 다행 구조 지원: item이 특정 td일 때 이전/다음 tr에서 agency, date 추출
+        _sel = self.selectors
+        self.agency_prev_row_selector = _sel.get('agency_prev_row', '')   # 이전 tr에서 agency 추출
+        self.date_next_row_selector = _sel.get('date_next_row', '')       # 다음 tr에서 announced_date 추출
+        self.deadline_next_row_selector = _sel.get('deadline_next_row', '')  # 다음 tr에서 deadline_date 추출
+        self.text_after_split = site_config.get('text_after_split', '')   # 텍스트에서 '|' 등 구분자 뒤 부분만 사용
 
     def crawl(self, **kwargs):
         """크롤링 실행"""
@@ -261,6 +267,20 @@ class GenericCrawler(BaseCrawler):
         else:
             agency = self.default_agency or self.site_name
 
+        # 다행 구조: 이전 tr에서 기관명 추출 (agency_prev_row 설정 시)
+        if self.agency_prev_row_selector and item.parent:
+            _prev_tr = item.parent.find_previous_sibling('tr')
+            if _prev_tr:
+                _agency_elem = _prev_tr.select_one(self.agency_prev_row_selector)
+                if _agency_elem:
+                    _raw = _agency_elem.get_text(strip=True)
+                    if self.text_after_split and self.text_after_split in _raw:
+                        agency = self._sanitize_text(_raw.split(self.text_after_split)[-1])
+                    else:
+                        agency = self._sanitize_text(_raw)
+            if not agency:
+                agency = self.default_agency or self.site_name
+
         # 링크 추출
         link_selector = self.selectors.get('link', 'a')
         if link_selector:
@@ -307,17 +327,43 @@ class GenericCrawler(BaseCrawler):
         else:
             date_text = item.get_text(strip=True)
 
+        # 다행 구조: 다음 tr에서 날짜 추출 (date_next_row 설정 시)
+        _next_row_announced = None
+        _next_row_deadline = None
+        if (self.date_next_row_selector or self.deadline_next_row_selector) and item.parent:
+            _next_tr = item.parent.find_next_sibling('tr')
+            if _next_tr:
+                if self.date_next_row_selector:
+                    _de = _next_tr.select_one(self.date_next_row_selector)
+                    if _de:
+                        _dt = _de.get_text(strip=True)
+                        if '|' in _dt:
+                            _dt = _dt.split('|')[-1].strip()
+                        _next_row_announced = self._parse_date(_dt)
+                if self.deadline_next_row_selector:
+                    _dd = _next_tr.select_one(self.deadline_next_row_selector)
+                    if _dd:
+                        _dlt = _dd.get_text(strip=True)
+                        if '|' in _dlt:
+                            _dlt = _dlt.split('|')[-1].strip()
+                        _next_row_deadline = self._parse_date(_dlt)
+
         # 날짜 범위 파싱 시도 (시작일~종료일)
         start_date, end_date = self._parse_date_range(date_text)
 
         # 날짜 범위 파싱 실패시 단일 날짜 파싱
         if start_date is None:
-            announced_date = self._parse_date(date_text)
-            # detail_deadline이 설정된 경우 상세 페이지에서 날짜를 가져오므로 초기값은 None
-            deadline_date = None if self.detail_deadline else datetime.now() + timedelta(days=random.randint(7, 30))
+            announced_date = _next_row_announced or self._parse_date(date_text)
+            if _next_row_deadline:
+                deadline_date = _next_row_deadline
+            elif self.detail_deadline:
+                # detail_deadline이 설정된 경우 상세 페이지에서 날짜를 가져오므로 초기값은 None
+                deadline_date = None
+            else:
+                deadline_date = datetime.now() + timedelta(days=random.randint(7, 30))
         else:
-            announced_date = start_date
-            deadline_date = end_date
+            announced_date = _next_row_announced or start_date
+            deadline_date = _next_row_deadline or end_date
 
         # 공고번호 생성 — title 기반 결정론적 해시
         tender_number = self._generate_tender_number(title)
@@ -448,18 +494,32 @@ class GenericCrawler(BaseCrawler):
         if not date_text:
             return datetime.now() - timedelta(days=random.randint(1, 10))
 
-        # 간단한 날짜 파싱 (YYYY-MM-DD, YYYY.MM.DD 등)
-        date_patterns = [
+        # 4자리 연도 패턴 우선 (YYYY-MM-DD, YYYY.MM.DD 등)
+        date_patterns_4y = [
             r'(\d{4})-(\d{1,2})-(\d{1,2})',
             r'(\d{4})\.(\d{1,2})\.(\d{1,2})',
             r'(\d{4})/(\d{1,2})/(\d{1,2})',
         ]
-
-        for pattern in date_patterns:
+        for pattern in date_patterns_4y:
             match = re.search(pattern, date_text)
             if match:
                 try:
                     year, month, day = map(int, match.groups())
+                    return datetime(year, month, day)
+                except BaseException:
+                    pass
+
+        # 2자리 연도 패턴 (YY.MM.DD, YY-MM-DD) — 예: 26.05.22 → 2026-05-22
+        date_patterns_2y = [
+            r'(?<!\d)(\d{2})\.(\d{2})\.(\d{2})(?!\d)',
+            r'(?<!\d)(\d{2})-(\d{2})-(\d{2})(?!\d)',
+        ]
+        for pattern in date_patterns_2y:
+            match = re.search(pattern, date_text)
+            if match:
+                try:
+                    yy, month, day = map(int, match.groups())
+                    year = 2000 + yy
                     return datetime(year, month, day)
                 except BaseException:
                     pass
@@ -515,6 +575,30 @@ class GenericCrawler(BaseCrawler):
                 y1, m1, d1, y2, m2, d2 = map(int, match.groups())
                 start_date = datetime(y1, m1, d1)
                 end_date = datetime(y2, m2, d2)
+                return start_date, end_date
+            except BaseException:
+                pass
+
+        # 2자리 연도 범위 패턴: YY.MM.DD ~ YY.MM.DD (예: 26.05.22 ~ 26.06.05)
+        pattern4 = r'(?<!\d)(\d{2})\.(\d{2})\.(\d{2})\s*~\s*(\d{2})\.(\d{2})\.(\d{2})(?!\d)'
+        match = re.search(pattern4, text)
+        if match:
+            try:
+                y1, m1, d1, y2, m2, d2 = map(int, match.groups())
+                start_date = datetime(2000 + y1, m1, d1)
+                end_date = datetime(2000 + y2, m2, d2)
+                return start_date, end_date
+            except BaseException:
+                pass
+
+        # 2자리 연도 단일 범위: YY-MM-DD ~ YY-MM-DD
+        pattern5 = r'(?<!\d)(\d{2})-(\d{2})-(\d{2})\s*~\s*(\d{2})-(\d{2})-(\d{2})(?!\d)'
+        match = re.search(pattern5, text)
+        if match:
+            try:
+                y1, m1, d1, y2, m2, d2 = map(int, match.groups())
+                start_date = datetime(2000 + y1, m1, d1)
+                end_date = datetime(2000 + y2, m2, d2)
                 return start_date, end_date
             except BaseException:
                 pass

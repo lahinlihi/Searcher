@@ -66,10 +66,9 @@ class CrawlScheduler:
             )
             print(f"[스케줄러] 원격 Sync 모드: {sync_cfg['server_url']}")
         else:
-            # 레거시 크롤러 (하드코딩)
-            self.legacy_crawlers = {
-                'sung-dong-gu': SungDongGuCrawler()
-            }
+            # 레거시 크롤러 (하드코딩) — SungDongGuCrawler는 더미 샘플이므로 제거,
+            # settings.json의 GenericCrawler 설정을 사용
+            self.legacy_crawlers = {}
             # 동적 크롤러는 설정에서 로드
             self.crawlers = {}
             self._load_crawlers()

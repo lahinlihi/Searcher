@@ -7,17 +7,27 @@ bp = Blueprint('admin', __name__)
 
 
 def _role_label(role):
-    return {'admin': 'Admin', 'moderator': '중간관리자', 'user': '일반회원'}.get(role, role)
+    return {'admin': 'Admin', 'moderator': '관리자', 'user': '일반회원'}.get(role, role)
 
 
 @bp.route('/api/admin/users', methods=['GET'])
 @moderator_required
 def api_admin_users():
-    """사용자 목록 — admin: 전체, moderator: user 역할만"""
+    """사용자 목록 — ?status=pending|active|all (기본: active)"""
+    status_filter = request.args.get('status', 'active')
+
     if g.user.role == 'admin':
-        users = User.query.order_by(User.created_at).all()
+        base_q = User.query
     else:
-        users = User.query.filter_by(role='user').order_by(User.created_at).all()
+        base_q = User.query.filter_by(role='user')
+
+    if status_filter == 'pending':
+        users = base_q.filter_by(status='pending').order_by(User.created_at).all()
+    elif status_filter == 'all':
+        users = base_q.order_by(User.created_at).all()
+    else:
+        users = base_q.filter_by(status='active').order_by(User.created_at).all()
+
     return jsonify([u.to_dict() for u in users])
 
 
@@ -33,9 +43,9 @@ def api_admin_create_user():
         return jsonify({'error': '아이디와 비밀번호를 입력하세요.'}), 400
     if role not in ('admin', 'moderator', 'user'):
         return jsonify({'error': '유효하지 않은 역할입니다.'}), 400
-    # 중간관리자는 user만 생성 가능
+    # 관리자는 user만 생성 가능
     if g.user.role == 'moderator' and role != 'user':
-        return jsonify({'error': '중간관리자는 일반회원만 생성할 수 있습니다.'}), 403
+        return jsonify({'error': '관리자는 일반회원만 생성할 수 있습니다.'}), 403
     if User.query.filter_by(username=username).first():
         return jsonify({'error': '이미 존재하는 아이디입니다.'}), 409
     user = User(username=username, password_hash=generate_password_hash(password), role=role)
@@ -51,9 +61,9 @@ def api_admin_delete_user(user_id):
     user = User.query.get_or_404(user_id)
     if user.id == g.user.id:
         return jsonify({'error': '자기 자신은 삭제할 수 없습니다.'}), 400
-    # 중간관리자는 user만 삭제 가능
+    # 관리자는 user만 삭제 가능
     if g.user.role == 'moderator' and user.role != 'user':
-        return jsonify({'error': '중간관리자는 일반회원만 삭제할 수 있습니다.'}), 403
+        return jsonify({'error': '관리자는 일반회원만 삭제할 수 있습니다.'}), 403
     if user.role == 'admin' and User.query.filter_by(role='admin').count() <= 1:
         return jsonify({'error': '마지막 Admin은 삭제할 수 없습니다.'}), 400
     db.session.delete(user)
@@ -67,7 +77,7 @@ def api_admin_change_password(user_id):
     """비밀번호 변경 — admin: 모두, moderator: user만"""
     user = User.query.get_or_404(user_id)
     if g.user.role == 'moderator' and user.role != 'user':
-        return jsonify({'error': '중간관리자는 일반회원의 비밀번호만 변경할 수 있습니다.'}), 403
+        return jsonify({'error': '관리자는 일반회원의 비밀번호만 변경할 수 있습니다.'}), 403
     data = request.json or {}
     new_pw = data.get('password', '').strip()
     if len(new_pw) < 4:
@@ -86,10 +96,10 @@ def api_admin_change_role(user_id):
     new_role = data.get('role', '')
     if new_role not in ('admin', 'moderator', 'user'):
         return jsonify({'error': '유효하지 않은 역할입니다.'}), 400
-    # 중간관리자 제한: user→moderator 승급만 허용
+    # 관리자 제한: user→moderator 승급만 허용
     if g.user.role == 'moderator':
         if user.role != 'user' or new_role != 'moderator':
-            return jsonify({'error': '중간관리자는 일반회원을 중간관리자로 승급하는 것만 가능합니다.'}), 403
+            return jsonify({'error': '관리자는 일반회원을 관리자로 승급하는 것만 가능합니다.'}), 403
     # 자기 자신의 admin 권한 해제 방지
     if user.id == g.user.id and user.role == 'admin' and new_role != 'admin':
         return jsonify({'error': '자신의 Admin 권한은 해제할 수 없습니다.'}), 400
@@ -132,6 +142,53 @@ def api_admin_bulk_nicknames():
             updated += 1
     db.session.commit()
     return jsonify({'updated': updated})
+
+
+@bp.route('/api/admin/users/pending-count', methods=['GET'])
+@moderator_required
+def api_admin_pending_count():
+    """승인 대기 중인 회원 수"""
+    count = User.query.filter_by(status='pending').count()
+    return jsonify({'count': count})
+
+
+@bp.route('/api/admin/users/<int:user_id>/approve', methods=['POST'])
+@moderator_required
+def api_admin_approve_user(user_id):
+    """회원 승인 — pending → active"""
+    user = User.query.get_or_404(user_id)
+    if user.status != 'pending':
+        return jsonify({'error': '승인 대기 중인 계정이 아닙니다.'}), 400
+    user.status = 'active'
+    db.session.commit()
+    return jsonify({'message': f'{user.username} 계정이 승인되었습니다.', 'user': user.to_dict()})
+
+
+@bp.route('/api/admin/users/<int:user_id>/reject', methods=['POST'])
+@moderator_required
+def api_admin_reject_user(user_id):
+    """회원 거절 — 레코드 삭제"""
+    user = User.query.get_or_404(user_id)
+    if user.status != 'pending':
+        return jsonify({'error': '승인 대기 중인 계정만 거절할 수 있습니다.'}), 400
+    username = user.username
+    db.session.delete(user)
+    db.session.commit()
+    return jsonify({'message': f'{username} 가입 신청이 거절되었습니다.'})
+
+
+@bp.route('/api/admin/users/<int:user_id>/suspend', methods=['POST'])
+@moderator_required
+def api_admin_suspend_user(user_id):
+    """회원 정지/복구 — active ↔ suspended 토글"""
+    user = User.query.get_or_404(user_id)
+    if g.user.role == 'moderator' and user.role != 'user':
+        return jsonify({'error': '권한 없음'}), 403
+    if user.id == g.user.id:
+        return jsonify({'error': '자기 자신은 정지할 수 없습니다.'}), 400
+    user.status = 'suspended' if user.status == 'active' else 'active'
+    db.session.commit()
+    return jsonify({'message': f'상태가 {user.status}로 변경되었습니다.', 'user': user.to_dict()})
 
 
 @bp.route('/admin/users')

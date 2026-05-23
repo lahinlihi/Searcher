@@ -1,3 +1,7 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()   # .env 파일 로드 (없으면 조용히 무시)
+
 from settings_manager import settings_manager
 from data_manager import DataManager
 from flask import Flask, jsonify, g
@@ -91,6 +95,56 @@ def internal_error(error):
 CORS(app)
 init_db(app)
 app.data_manager = DataManager(app)
+
+# Flask-Mail 초기화 (MAIL_SERVER 환경변수 있을 때만 활성)
+from flask_mail import Mail
+app.config['MAIL_SERVER']   = os.environ.get('MAIL_SERVER', '')
+app.config['MAIL_PORT']     = int(os.environ.get('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS']  = True
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME', '')
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD', '')
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_USERNAME', '')
+mail = Mail(app)
+app.extensions['mail'] = mail
+
+# OAuth 초기화 (authlib)
+from authlib.integrations.flask_client import OAuth
+oauth = OAuth(app)
+
+oauth.register(
+    name='kakao',
+    client_id=os.environ.get('KAKAO_CLIENT_ID', ''),
+    client_kwargs={
+        'scope': 'profile_nickname',
+        'token_endpoint_auth_method': 'none',  # 카카오: client_secret 미사용 시
+    },
+    access_token_url='https://kauth.kakao.com/oauth/token',
+    authorize_url='https://kauth.kakao.com/oauth/authorize',
+    api_base_url='https://kapi.kakao.com/',
+)
+
+oauth.register(
+    name='google',
+    client_id=os.environ.get('GOOGLE_CLIENT_ID', ''),
+    client_secret=os.environ.get('GOOGLE_CLIENT_SECRET', ''),
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    client_kwargs={'scope': 'openid email profile'},
+)
+
+oauth.register(
+    name='naver',
+    client_id=os.environ.get('NAVER_CLIENT_ID', ''),
+    client_secret=os.environ.get('NAVER_CLIENT_SECRET', ''),
+    client_kwargs={
+        'scope': 'profile',
+        'token_endpoint_auth_method': 'client_secret_post',
+    },
+    access_token_url='https://nid.naver.com/oauth2.0/token',
+    authorize_url='https://nid.naver.com/oauth2.0/authorize',
+    api_base_url='https://openapi.naver.com/v1/nid/',
+)
+
+app.extensions['oauth'] = oauth
 
 # Register blueprints
 from routes.auth import bp as auth_bp

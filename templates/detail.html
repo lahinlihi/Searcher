@@ -1269,7 +1269,7 @@ function renderMemo(m) {
     const roleBadge = m.user_role === 'admin'
         ? '<span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-semibold ml-1">Admin</span>'
         : m.user_role === 'moderator'
-        ? '<span class="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-semibold ml-1">중간관리자</span>'
+        ? '<span class="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-semibold ml-1">관리자</span>'
         : '';
     const canManage = m.user_id === MY_USER_ID || MY_ROLE === 'admin';
     const actionBtns = canManage ? `

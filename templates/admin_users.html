@@ -12,13 +12,27 @@
                 {% if g.user.role == 'admin' %}
                     전체 회원을 관리합니다.
                 {% else %}
-                    일반회원을 관리합니다. (Admin 및 중간관리자는 관리 불가)
+                    일반회원을 관리합니다. (Admin 및 관리자는 관리 불가)
                 {% endif %}
             </p>
         </div>
         <button onclick="showAddModal()"
                 class="btn-primary text-sm flex items-center gap-1">
             <span class="text-base leading-none">+</span> 일반회원 추가
+        </button>
+    </div>
+
+    <!-- 탭 -->
+    <div class="flex border-b border-gray-200 mb-4" id="user-tabs">
+        <button data-tab="active" onclick="switchTab('active')"
+                class="px-4 py-2 text-sm font-medium border-b-2 border-blue-600 text-blue-600 mr-2">
+            전체 회원
+        </button>
+        <button data-tab="pending" onclick="switchTab('pending')"
+                class="relative px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 mr-2">
+            승인 대기
+            <span id="pending-badge"
+                  class="hidden absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full min-w-[16px] h-4 flex items-center justify-center px-1"></span>
         </button>
     </div>
 
@@ -37,6 +51,9 @@
                         <th class="text-left px-4 py-3 font-semibold text-gray-600">닉네임 (표시용)</th>
                         <th class="text-left px-4 py-3 font-semibold text-gray-600">역할</th>
                         <th class="text-left px-4 py-3 font-semibold text-gray-600">등록일</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">최종 접속</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">소셜</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">상태</th>
                         <th class="text-right px-4 py-3 font-semibold text-gray-600">작업</th>
                     </tr>
                 </thead>
@@ -116,7 +133,7 @@ const ME = { id: {{ g.user.id }}, role: '{{ g.user.role }}' };
 
 const ROLE_BADGE = {
     admin:     '<span class="inline-block text-xs font-semibold px-2 py-0.5 rounded bg-blue-100 text-blue-700">Admin</span>',
-    moderator: '<span class="inline-block text-xs font-semibold px-2 py-0.5 rounded bg-orange-100 text-orange-700">중간관리자</span>',
+    moderator: '<span class="inline-block text-xs font-semibold px-2 py-0.5 rounded bg-orange-100 text-orange-700">관리자</span>',
     user:      '<span class="inline-block text-xs font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-600">일반회원</span>',
 };
 
@@ -124,12 +141,12 @@ function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').repla
 
 // ── 목록 로드 ─────────────────────────────────────────────────────────────────
 async function loadUsers() {
-    const res = await fetch('/api/admin/users');
+    const res = await fetch(`/api/admin/users?status=${currentTab}`);
     const data = await res.json();
     const tbody = document.getElementById('users-tbody');
 
     if (!Array.isArray(data) || data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-6 text-center text-gray-400 text-sm">회원이 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="px-4 py-6 text-center text-gray-400 text-sm">회원이 없습니다.</td></tr>';
         return;
     }
 
@@ -151,6 +168,9 @@ async function loadUsers() {
             </td>
             <td class="px-4 py-3">${badge}</td>
             <td class="px-4 py-3 text-gray-500">${date}</td>
+            <td class="px-4 py-3 text-sm text-gray-600">${formatLastLogin(u.last_login_at)}</td>
+            <td class="px-4 py-3 text-sm">${socialIcons(u)}</td>
+            <td class="px-4 py-3">${statusBadge(u.status)}</td>
             <td class="px-4 py-3 text-right">${actions}</td>
         </tr>`;
     }).join('');
@@ -191,7 +211,7 @@ function buildActions(u, isSelf) {
     if (myRole === 'admin') {
         if (u.role === 'user') {
             btns.push(`<button onclick="changeRole(${u.id}, 'moderator')"
-                               class="text-xs text-orange-600 hover:underline">중간관리자 승급</button>`);
+                               class="text-xs text-orange-600 hover:underline">관리자 승급</button>`);
         } else if (u.role === 'moderator') {
             btns.push(`<button onclick="changeRole(${u.id}, 'admin')"
                                class="text-xs text-blue-600 hover:underline">Admin 승급</button>`);
@@ -199,11 +219,11 @@ function buildActions(u, isSelf) {
                                class="text-xs text-gray-500 hover:underline">일반회원 강등</button>`);
         } else if (u.role === 'admin' && !isSelf) {
             btns.push(`<button onclick="changeRole(${u.id}, 'moderator')"
-                               class="text-xs text-gray-500 hover:underline">중간관리자 강등</button>`);
+                               class="text-xs text-gray-500 hover:underline">관리자 강등</button>`);
         }
     } else if (myRole === 'moderator' && u.role === 'user') {
         btns.push(`<button onclick="changeRole(${u.id}, 'moderator')"
-                           class="text-xs text-orange-600 hover:underline">중간관리자 승급</button>`);
+                           class="text-xs text-orange-600 hover:underline">관리자 승급</button>`);
     }
 
     // ── 삭제 ─────────────────────────────────────────────────────────────────
@@ -283,7 +303,7 @@ async function submitPwChange() {
 }
 
 // ── 역할 변경 ────────────────────────────────────────────────────────────────
-const ROLE_NAME = { admin: 'Admin', moderator: '중간관리자', user: '일반회원' };
+const ROLE_NAME = { admin: 'Admin', moderator: '관리자', user: '일반회원' };
 
 async function changeRole(id, newRole) {
     if (!confirm(`이 사용자를 "${ROLE_NAME[newRole]}"(으)로 변경하시겠습니까?`)) return;
@@ -330,6 +350,81 @@ async function changeMyPw() {
     }
 }
 
+// ── 탭 및 배지 ──────────────────────────────────────────────────
+let currentTab = 'active';
+
+async function loadPendingBadge() {
+    try {
+        const res = await fetch('/api/admin/users/pending-count');
+        if (!res.ok) return;
+        const data = await res.json();
+        const badge = document.getElementById('pending-badge');
+        if (badge) {
+            badge.textContent = data.count > 0 ? data.count : '';
+            badge.classList.toggle('hidden', data.count === 0);
+        }
+    } catch {}
+}
+
+function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('[data-tab]').forEach(el => {
+        const active = el.dataset.tab === tab;
+        el.classList.toggle('border-blue-600', active);
+        el.classList.toggle('text-blue-600', active);
+        el.classList.toggle('border-transparent', !active);
+        el.classList.toggle('text-gray-500', !active);
+    });
+    loadUsers();
+}
+
+function formatLastLogin(isoStr) {
+    if (!isoStr) return '<span class="text-gray-300 text-xs">미접속</span>';
+    const d = new Date(isoStr);
+    const now = new Date();
+    const diff = Math.floor((now - d) / 1000);
+    if (diff < 60) return '방금 전';
+    if (diff < 3600) return Math.floor(diff/60) + '분 전';
+    if (diff < 86400) return '오늘 ' + d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+    const days = Math.floor(diff / 86400);
+    if (days < 30) return days + '일 전';
+    return d.toLocaleDateString('ko-KR');
+}
+
+function statusBadge(status) {
+    const map = {
+        active:    'bg-green-100 text-green-700',
+        pending:   'bg-yellow-100 text-yellow-700',
+        suspended: 'bg-red-100 text-red-700',
+    };
+    const labels = { active: '활성', pending: '대기', suspended: '정지' };
+    const cls = map[status] || 'bg-gray-100 text-gray-600';
+    return `<span class="px-2 py-0.5 rounded-full text-xs font-medium ${cls}">${labels[status] || status}</span>`;
+}
+
+function socialIcons(user) {
+    let html = '';
+    if (user.has_kakao) html += '<span title="카카오 연결" class="inline-block bg-yellow-200 text-yellow-800 text-xs px-1 rounded mr-1">K</span>';
+    if (user.has_google) html += '<span title="구글 연결" class="inline-block bg-blue-100 text-blue-700 text-xs px-1 rounded">G</span>';
+    return html || '<span class="text-gray-300 text-xs">-</span>';
+}
+
+async function approveUser(userId) {
+    if (!confirm('승인하시겠습니까?')) return;
+    const res = await fetch(`/api/admin/users/${userId}/approve`, {method:'POST'});
+    const data = await res.json();
+    alert(data.message || data.error);
+    loadUsers(); loadPendingBadge();
+}
+
+async function rejectUser(userId) {
+    if (!confirm('거절하면 가입 신청이 삭제됩니다. 계속하시겠습니까?')) return;
+    const res = await fetch(`/api/admin/users/${userId}/reject`, {method:'POST'});
+    const data = await res.json();
+    alert(data.message || data.error);
+    loadUsers(); loadPendingBadge();
+}
+
 // ── 유틸 ─────────────────────────────────────────────────────────────────────
 function hideModal(id) { document.getElementById(id).classList.add('hidden'); }
 function showErr(el, msg) { el.textContent = msg; el.classList.remove('hidden'); }
@@ -342,6 +437,9 @@ function showToast(msg) {
     setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 400); }, 2000);
 }
 
-document.addEventListener('DOMContentLoaded', loadUsers);
+// 초기 로드
+loadPendingBadge();
+loadUsers();
+setInterval(loadPendingBadge, 60000);
 </script>
 {% endblock %}
