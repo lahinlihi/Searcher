@@ -4,7 +4,7 @@ load_dotenv()   # .env 파일 로드 (없으면 조용히 무시)
 
 from settings_manager import settings_manager
 from data_manager import DataManager
-from flask import Flask, jsonify, g
+from flask import Flask, jsonify, g, session, redirect, request
 from flask_cors import CORS
 from config import Config
 from database import db, init_db
@@ -45,6 +45,20 @@ def add_no_cache_headers(response):
 @app.before_request
 def _load_user():
     g.user = _current_user()
+    if g.user:
+        now = datetime.utcnow()
+        last = g.user.last_login_at
+        # 1시간 비활성 → 자동 로그아웃
+        if last and (now - last).total_seconds() >= 3600:
+            session.clear()
+            g.user = None
+            if not request.path.startswith('/api/'):
+                return redirect('/login?error=session_expired')
+            return
+        # 최종 접속 시간 갱신 — 5분 스로틀 (DB write 최소화)
+        if last is None or (now - last).total_seconds() >= 300:
+            g.user.last_login_at = now
+            db.session.commit()
 
 
 @app.template_filter('format_price')

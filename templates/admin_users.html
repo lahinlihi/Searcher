@@ -380,10 +380,18 @@ function switchTab(tab) {
 
 function formatLastLogin(isoStr) {
     if (!isoStr) return '<span class="text-gray-300 text-xs">미접속</span>';
-    const d = new Date(isoStr);
+    const d = new Date(isoStr + 'Z');  // UTC로 파싱
     const now = new Date();
     const diff = Math.floor((now - d) / 1000);
-    if (diff < 60) return '방금 전';
+    // 10분 이내 → 접속 중 뱃지
+    if (diff < 600) {
+        const timeStr = diff < 60 ? '방금 전' : Math.floor(diff/60) + '분 전';
+        return '<span class="inline-flex items-center gap-1">'
+             + '<span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>'
+             + '<span class="text-green-600 font-medium text-xs">접속 중</span>'
+             + '<span class="text-gray-400 text-xs ml-1">(' + timeStr + ')</span>'
+             + '</span>';
+    }
     if (diff < 3600) return Math.floor(diff/60) + '분 전';
     if (diff < 86400) return '오늘 ' + d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
     const days = Math.floor(diff / 86400);
@@ -404,8 +412,9 @@ function statusBadge(status) {
 
 function socialIcons(user) {
     let html = '';
-    if (user.has_kakao) html += '<span title="카카오 연결" class="inline-block bg-yellow-200 text-yellow-800 text-xs px-1 rounded mr-1">K</span>';
-    if (user.has_google) html += '<span title="구글 연결" class="inline-block bg-blue-100 text-blue-700 text-xs px-1 rounded">G</span>';
+    if (user.has_kakao)  html += '<span title="카카오 연결"  class="inline-block bg-yellow-200 text-yellow-800 text-xs px-1 rounded mr-1">K</span>';
+    if (user.has_google) html += '<span title="구글 연결"    class="inline-block bg-blue-100  text-blue-700  text-xs px-1 rounded mr-1">G</span>';
+    if (user.has_naver)  html += '<span title="네이버 연결"  class="inline-block text-white    text-xs px-1 rounded" style="background:#03C75A;">N</span>';
     return html || '<span class="text-gray-300 text-xs">-</span>';
 }
 

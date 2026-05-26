@@ -773,6 +773,19 @@ def rule_based_extract(text):
     # → "湯湷", "乶乺" 같이 한국어 정부문서에서 한자가 나타나면 거의 깨진 문자임
     _CJK_PAT = re.compile(r'[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF]+\s*')
 
+    # 계약기간 필드 유효성 검사: 연도·날짜·기간 표현이 포함되어야 유효
+    # -> "수행 기간 내 보고서: 과업 중간 추진 현황..." 같은 false positive 방지
+    _DATE_PAT = re.compile(
+        r'\d{4}\s*[년.\-/]'               # 연도 (2024년, 2024.01, 2024-01 등)
+        r'|\d{4}\s*~'                     # 연도~ (2024~2025 등)
+        r'|착수\s*[일~]?'                   # 착수일, 착수~
+        r'|완료\s*[일]?'                    # 완료일
+        r'|계약\s*체결\s*[일]?'            # 계약체결일
+        r'|준공\s*[일]?'                    # 준공일
+        r'|\d+\s*개월'                    # N개월
+        r'|\d+\s*일\s*(?:이내|이후|간)'  # N일 이내/이후/간
+    )
+
     for field, patterns in _RULE_PATTERNS.items():
         for pattern in patterns:
             m = re.search(pattern, text, re.MULTILINE)
@@ -785,6 +798,27 @@ def rule_based_extract(text):
                     # 예산 필드는 실제 금액 숫자가 있어야 유효, 없으면 다음 패턴 시도
                     if field == '예산' and not _MONEY_PAT.search(value):
                         continue
+                    # 계약기간 필드는 날짜·연도·기간 표현이 포함되어야 유효
+                    # -> "수행 기간 내 보고서: 과업 중간 추진 현황..." false positive 방지
+                    if field == '계약기간' and not _DATE_PAT.search(value):
+                        logger.debug(f'계약기간 패턴 매칭 거부 (날짜 없음): {value[:60]!r}')
+                        continue
+                    # 계약기간 후처리: 실제 기간 이후에 딸려오는 다음 섹션 내용 제거
+                    # ex) "계약체결일 ~ 2026. 10. 30.까지 5. 계약방법 : ..." → "계약체결일 ~ 2026. 10. 30.까지"
+                    if field == '계약기간':
+                        _STOP_PAT = re.compile(
+                            r'\s+\d+\s*[.。]\s*[가-힣A-Z]'          # "5. 계약방법", "4. 사업 대상"
+                            r'|제\s*\d+\s*조[\s(]'                   # "제5조", "제 5 조 ("
+                            r'|\s+[○◎●◆□■▶▷]\s'                   # 불릿 기호
+                            r'|\s+ㅇ\s'                              # ㅇ 불릿
+                            r'|\s+(?:기초금액|입찰방법|낙찰방법|소요예산'
+                            r'|사업내용|사업대상|계약방법|계약금액|하자보증|납품장소)'
+                        )
+                        m_stop = _STOP_PAT.search(value)
+                        if m_stop:
+                            value = value[:m_stop.start()].strip()
+                        if len(value) < 5:
+                            continue
                     result[field] = value[:400]
                     break
     return result
@@ -847,7 +881,7 @@ def _select_text_for_gemini(text, max_chars=10000):
     return text[:max_chars]
 
 
-def gemini_analyze(text, api_key, tender_title='', model_priority='quality'):
+def gemini_analyze(text, api_key, tender_title='', model_priority='quality', on_rpm_wait=None):
     """
     Gemini API로 RFP를 4개 섹션으로 구조화 분석.
 
@@ -894,21 +928,57 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality'):
         )
 
     def _is_rpm_error(err_str):
-        """분당 요청 한도 초과 여부 — 35초 대기 후 같은 모델 재시도"""
+        """
+        분당 요청 한도(RPM) 초과 여부 — 35초 대기 후 같은 모델 재시도.
+
+        Gemini API 실제 오류 메시지 형태:
+          "RESOURCE_EXHAUSTED ... GenerateRequestsPerMinutePerProjectPerModel"
+        → 소문자 변환 시 'perminute' 포함 (언더스코어·공백 없음)
+        → 기존 'per_minute'/'per minute' 패턴으로는 탐지 불가 → 버그 수정
+        """
         el = err_str.lower()
         return (
-            'per_minute' in el or 'per minute' in el or
-            'rate_limit_exceeded' in el or 'ratelimitexceeded' in el
+            'perminute' in el or          # Gemini 실제 포맷 (camelCase 소문자화)
+            'per_minute' in el or         # 언더스코어 포맷
+            'per minute' in el or         # 공백 포맷
+            'rate_limit_exceeded' in el or
+            'ratelimitexceeded' in el
+        )
+
+    def _is_rpd_error(err_str):
+        """
+        일별 요청 한도(RPD) 초과 여부 — 다음 모델로 전환.
+
+        Gemini API 실제 오류 메시지 형태:
+          "RESOURCE_EXHAUSTED ... GenerateRequestsPerDayPerProjectPerModel"
+        """
+        el = err_str.lower()
+        return (
+            'perday' in el or             # Gemini 실제 포맷 (camelCase 소문자화)
+            'per_day' in el or
+            'per day' in el or
+            'daily' in el
         )
 
     def _is_retryable(err_str):
-        """다음 모델로 전환해야 하는 오류 (RPD, 404, 서버 오류, 타임아웃)"""
+        """
+        다음 모델로 전환해야 하는 오류 (RPD, 404, 서버 오류, 타임아웃).
+        주의: 429 단독으로는 RPM일 수 있으므로 resource_exhausted 없는 경우
+              RPD 여부를 명시적으로 확인해야 한다.
+        """
         el = err_str.lower()
+        is_429 = '429' in err_str
+        is_resource_exhausted = 'resource_exhausted' in el or 'resourceexhausted' in el
+
+        # 429 + resource_exhausted 조합이면 RPD/RPM 둘 다 가능.
+        # RPM이 아닌 경우에만 다음 모델로 전환 (RPM은 _is_rpm_error에서 처리)
+        if is_429 and is_resource_exhausted and not _is_rpm_error(err_str):
+            return True  # 진짜 RPD → 다음 모델로
+
         return (
-            '429' in err_str or '404' in err_str or
+            '404' in err_str or
             '503' in err_str or '502' in err_str or
-            'unavailable' in el or 'resource_exhausted' in el or
-            'resourceexhausted' in el or
+            'unavailable' in el or
             'timeout' in el or 'timed out' in el or 'readtimeout' in el
         )
 
@@ -1016,17 +1086,29 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality'):
             except Exception as e:
                 err_str = str(e)
 
-                # ── RPM 초과: 65초 대기 후 같은 모델 1회 재시도 ────────────
+                # ── RPM 초과: 35초 대기 후 같은 모델 1회 재시도 ────────────
                 if _is_rpm_error(err_str) and not rpm_retried:
                     logger.warning(
                         f"Gemini {model_name} RPM 한도 초과, "
                         f"35초 대기 후 재시도... (오류: {err_str[:80]})"
                     )
+                    # 대기 중 상태를 호출자에게 알릴 수 있도록 콜백 지원
+                    if on_rpm_wait:
+                        on_rpm_wait(model_name, 35)
                     _time.sleep(35)
                     rpm_retried = True
                     continue  # 같은 모델 재시도
 
-                # ── RPD / 모델 없음 / 서버 오류: 다음 모델로 전환 ───────────
+                # ── RPM 재시도 후에도 실패: 다음 모델로 전환 ────────────────
+                if _is_rpm_error(err_str) and rpm_retried:
+                    logger.warning(
+                        f"Gemini {model_name} RPM 재시도도 실패 → 다음 모델로: {err_str[:80]}"
+                    )
+                    failed_models.append(f"{model_name}(rpm_retry_fail:{err_str[:30]})")
+                    _time.sleep(2)
+                    break
+
+                # ── RPD / 404 / 서버 오류 / 타임아웃: 다음 모델로 전환 ──────
                 if _is_retryable(err_str):
                     logger.warning(
                         f"Gemini {model_name} 실패 → 다음 모델로: {err_str[:100]}"
@@ -1043,16 +1125,31 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality'):
     logger.error(f"Gemini 모든 모델({len(_MODELS)}개) 실패: {failed_models}")
 
     all_errors = ' '.join(failed_models)
-    has_quota   = '429' in all_errors or 'resource_exhausted' in all_errors.lower()
-    has_unavail = '503' in all_errors or 'unavailable' in all_errors.lower()
+    all_errors_lower = all_errors.lower()
+
+    has_rpm     = _is_rpm_error(all_errors)
+    has_rpd     = _is_rpd_error(all_errors)
+    has_quota   = '429' in all_errors or 'resource_exhausted' in all_errors_lower
+    has_unavail = '503' in all_errors or 'unavailable' in all_errors_lower
     has_404     = '404' in all_errors
+
+    # RPM(분당 한도) - 진짜 일별 초과가 아닌 경우
+    # resource_exhausted인데 perday가 없으면 RPM으로 판단
+    is_rpm_only = has_quota and not has_rpd
+
+    tried_models = ', '.join(m.split('(')[0] for m in failed_models)
 
     if has_unavail and not has_quota:
         msg = (
             '[Gemini 오류] Gemini 서버가 현재 과부하 상태입니다.\n'
             '잠시 후 다시 시도해 주세요.'
         )
-    elif has_quota:
+    elif is_rpm_only:
+        msg = (
+            '[Gemini 오류] 분당 요청 한도에 도달했습니다.\n'
+            '1~2분 후 다시 시도해 주세요.'
+        )
+    elif has_rpd or has_quota:
         msg = (
             '[Gemini 오류] 일일 무료 할당량이 초과되었습니다.\n'
             '내일(한국시간 오후 4~5시) 이후 다시 시도하거나, '
@@ -1062,15 +1159,15 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality'):
         msg = '[Gemini 오류] 모든 모델 호출에 실패했습니다.'
 
     if has_404:
-        msg += '\n(일부 구모델이 현재 API에서 지원되지 않습니다 — 관리자에게 문의)'
+        msg += '\n(일부 모델이 현재 API에서 지원되지 않습니다 — 관리자에게 문의)'
 
-    msg += f'\n(시도: {", ".join(m.split("(")[0] for m in failed_models)})'
+    msg += f'\n(시도: {tried_models})'
     return {'error': msg}
 
 
 # ── 통합 분석 함수 ────────────────────────────────────────────────────────────
 
-def analyze_tender(tender_url, tender_title='', api_key=None, source_site='', model_priority='quality'):  # noqa: ARG001 (source_site reserved for future site-specific logic)
+def analyze_tender(tender_url, tender_title='', api_key=None, source_site='', model_priority='quality', on_rpm_wait=None):  # noqa: ARG001 (source_site reserved for future site-specific logic)
     """
     공고 URL에서 첨부파일(RFP)을 찾아 분석.
 
@@ -1107,7 +1204,8 @@ def analyze_tender(tender_url, tender_title='', api_key=None, source_site='', mo
             result['rule_extract'] = rule_based_extract(sbiz_text)
             if api_key:
                 result['gemini_sections'] = gemini_analyze(
-                    sbiz_text, api_key, tender_title, model_priority=model_priority
+                    sbiz_text, api_key, tender_title,
+                    model_priority=model_priority, on_rpm_wait=on_rpm_wait
                 )
             return result
         else:
@@ -1234,7 +1332,8 @@ def analyze_tender(tender_url, tender_title='', api_key=None, source_site='', mo
     # 4. C: Gemini 4개 섹션 분석 (API 키 있을 때만)
     if api_key:
         result['gemini_sections'] = gemini_analyze(
-            combined_text, api_key, tender_title, model_priority=model_priority
+            combined_text, api_key, tender_title,
+            model_priority=model_priority, on_rpm_wait=on_rpm_wait
         )
 
     return result

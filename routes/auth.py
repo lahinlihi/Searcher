@@ -72,6 +72,8 @@ def login_page():
         error = '계정이 정지되었습니다.'
     elif url_error == 'oauth_failed':
         error = '소셜 로그인 중 오류가 발생했습니다. 다시 시도해주세요.'
+    elif url_error == 'session_expired':
+        error = '1시간 동안 활동이 없어 자동 로그아웃되었습니다.'
     return render_template('login.html', error=error, next=request.args.get('next', '/'))
 
 
@@ -168,6 +170,7 @@ def auth_kakao():
     link_mode = request.args.get('link') == '1'
     if link_mode and not g.user:
         return redirect('/login')
+    session.pop('pending_social', None)  # 이전 소셜 연동 대기 데이터 초기화
     session['oauth_link'] = link_mode
     redirect_uri = os.environ.get(
         'KAKAO_REDIRECT_URI',
@@ -228,21 +231,6 @@ def auth_kakao_callback():
         session['role'] = existing.role
         return redirect('/')
 
-    # ── 이메일 일치 계정에 자동 연결 ────────────────────────────────
-    if email:
-        email_user = User.query.filter_by(email=email).first()
-        if email_user and email_user.kakao_id is None:
-            email_user.kakao_id = kakao_id
-            db.session.commit()
-            if email_user.status == 'active':
-                email_user.last_login_at = datetime.utcnow()
-                db.session.commit()
-                session.permanent = True
-                session['user_id'] = email_user.id
-                session['role'] = email_user.role
-                return redirect('/')
-            return redirect('/login?error=pending')
-
     # ── 연결 계정 없음 → 중간 선택 페이지로 ────────────────────────
     session['pending_social'] = {
         'provider': 'kakao',
@@ -261,6 +249,7 @@ def auth_google():
     link_mode = request.args.get('link') == '1'
     if link_mode and not g.user:
         return redirect('/login')
+    session.pop('pending_social', None)  # 이전 소셜 연동 대기 데이터 초기화
     session['oauth_link_google'] = link_mode
     redirect_uri = os.environ.get(
         'GOOGLE_REDIRECT_URI',
@@ -309,21 +298,6 @@ def auth_google_callback():
         session['role'] = existing.role
         return redirect('/')
 
-    # ── 이메일 일치 계정에 자동 연결 ────────────────────────────────
-    if email:
-        email_user = User.query.filter_by(email=email).first()
-        if email_user and email_user.google_id is None:
-            email_user.google_id = google_id
-            db.session.commit()
-            if email_user.status == 'active':
-                email_user.last_login_at = datetime.utcnow()
-                db.session.commit()
-                session.permanent = True
-                session['user_id'] = email_user.id
-                session['role'] = email_user.role
-                return redirect('/')
-            return redirect('/login?error=pending')
-
     # ── 연결 계정 없음 → 중간 선택 페이지로 ────────────────────────
     session['pending_social'] = {
         'provider': 'google',
@@ -342,6 +316,7 @@ def auth_naver():
     link_mode = request.args.get('link') == '1'
     if link_mode and not g.user:
         return redirect('/login')
+    session.pop('pending_social', None)  # 이전 소셜 연동 대기 데이터 초기화
     session['oauth_link_naver'] = link_mode
     redirect_uri = os.environ.get(
         'NAVER_REDIRECT_URI',
@@ -396,21 +371,6 @@ def auth_naver_callback():
         session['user_id'] = existing.id
         session['role'] = existing.role
         return redirect('/')
-
-    # ── 이메일 일치 계정에 자동 연결 ────────────────────────────────
-    if email:
-        email_user = User.query.filter_by(email=email).first()
-        if email_user and email_user.naver_id is None:
-            email_user.naver_id = naver_id
-            db.session.commit()
-            if email_user.status == 'active':
-                email_user.last_login_at = datetime.utcnow()
-                db.session.commit()
-                session.permanent = True
-                session['user_id'] = email_user.id
-                session['role'] = email_user.role
-                return redirect('/')
-            return redirect('/login?error=pending')
 
     # ── 연결 계정 없음 → 중간 선택 페이지로 ────────────────────────
     session['pending_social'] = {

@@ -127,17 +127,15 @@ class SMB24ApiCrawler(BaseCrawler):
         if not title:
             return None
 
-        # 발주기관: 사업수행기관 필드들을 순서대로 시도, 없거나 '기타'면 '중소벤처 24' 표시
-        _INVALID = {'기타', '-', '', '없음', 'none'}
+        # 발주기관: API 필드 순서대로 시도
+        _INVALID = {'기타', '-', '', '없음', 'none', '중소벤처 24'}
         agency = ''
         for _field in ('operInsttNm', 'chargeInsttNm', 'suprtInsttNm',
                        'mnstryNm', 'sportInsttNm'):
             _val = str(item.get(_field) or '').strip()
-            if _val and _val not in _INVALID:
+            if _val and _val.lower() not in _INVALID:
                 agency = _val
                 break
-        if not agency:
-            agency = '중소벤처 24'
 
         # 날짜 파싱
         announced_date = self._parse_date(item.get('creatDt', ''))
@@ -177,7 +175,7 @@ class SMB24ApiCrawler(BaseCrawler):
 
         return {
             'title': title[:200],
-            'agency': agency[:100],
+            'agency': agency[:100] if agency else '',
             'tender_number': f"SMB24-{pbllanc_seq}",
             'announced_date': announced_date,
             'deadline_date': deadline_date,
@@ -191,36 +189,59 @@ class SMB24ApiCrawler(BaseCrawler):
         }
 
     def _scrape_agency(self, url: str) -> str:
-        """상세 페이지 HTML에서 사업수행기관명을 추출 (bizinfo.go.kr 지원)"""
+        """
+        상세 페이지 HTML에서 사업수행기관명을 추출.
+        bizinfo.go.kr / smes.go.kr 두 가지 구조 지원.
+        """
         if not _BS4_OK or not url:
             return ''
         try:
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                       'Accept-Language': 'ko-KR,ko;q=0.9'}
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'Accept-Language': 'ko-KR,ko;q=0.9',
+            }
             resp = self.session.get(url, headers=headers, timeout=10)
             if resp.status_code != 200:
                 return ''
             resp.encoding = 'utf-8'
             soup = BeautifulSoup(resp.text, 'html.parser')
 
-            # bizinfo.go.kr 구조: <span class="s_title">사업수행기관</span> <div class="txt">...
-            INVALID = {'기타', '-', '', '없음'}
-            for span in soup.find_all('span', class_='s_title'):
-                if '사업수행기관' in (span.get_text() or ''):
-                    div = span.find_next_sibling('div', class_='txt')
-                    if div:
-                        val = div.get_text(strip=True)
-                        if val and val not in INVALID:
-                            return val
+            INVALID = {'기타', '-', '', '없음', 'none'}
+            # 탐색할 라벨 키워드 (우선순위 순)
+            LABELS = ['사업수행기관', '주관기관', '운영기관', '담당기관', '지원기관']
 
-            # th-td 구조 (smes.go.kr 등)
-            for th in soup.find_all('th'):
-                if '사업수행기관' in (th.get_text() or ''):
-                    td = th.find_next_sibling('td')
-                    if td:
-                        val = td.get_text(strip=True)
-                        if val and val not in INVALID:
-                            return val
+            # ① bizinfo.go.kr 구조:
+            #    <span class="s_title">사업수행기관</span>
+            #    <div class="txt">인천테크노파크</div>
+            for label in LABELS:
+                for span in soup.find_all('span', class_='s_title'):
+                    if label in (span.get_text() or ''):
+                        div = span.find_next_sibling('div', class_='txt')
+                        if div:
+                            val = div.get_text(strip=True)
+                            if val and val.lower() not in INVALID:
+                                return val
+
+            # ② th-td 테이블 구조 (smes.go.kr, 기타)
+            for label in LABELS:
+                for th in soup.find_all('th'):
+                    if label in (th.get_text() or ''):
+                        td = th.find_next_sibling('td')
+                        if td:
+                            val = td.get_text(strip=True)
+                            if val and val.lower() not in INVALID:
+                                return val
+
+            # ③ dt-dd 정의 목록 구조
+            for label in LABELS:
+                for dt in soup.find_all('dt'):
+                    if label in (dt.get_text() or ''):
+                        dd = dt.find_next_sibling('dd')
+                        if dd:
+                            val = dd.get_text(strip=True)
+                            if val and val.lower() not in INVALID:
+                                return val
+
         except Exception:
             pass
         return ''

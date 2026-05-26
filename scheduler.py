@@ -367,6 +367,9 @@ class CrawlScheduler:
                 print(f"  - 업데이트: {update_count}건")
                 print(f"  - 중복 제거: {duplicate_count}건")
 
+                # 크롤링 후 smb24 기관명 보정 (agency 없는 건 bizinfo 스크래핑)
+                self._fix_smb24_agencies()
+
                 # 크롤링 후 코드 변경사항 자동 push (data/는 .gitignore 제외)
                 self._git_push()
 
@@ -534,6 +537,9 @@ class CrawlScheduler:
                 print(f"  - 업데이트: {update_count}건")
                 print(f"  - 중복 제거: {duplicate_count}건")
 
+                # 크롤링 후 smb24 기관명 보정
+                self._fix_smb24_agencies()
+
                 return {
                     'success': True,
                     'total_found': len(all_tenders),
@@ -643,6 +649,59 @@ class CrawlScheduler:
                     print(f"[스케줄러] {site_id}: 크롤러 생성 실패 - {str(e)}")
 
         print(f"[스케줄러] 총 {len(self.crawlers)}개 크롤러 로드됨")
+
+    def _fix_smb24_agencies(self):
+        """
+        중소벤처 24 공고 중 기관명이 비어있는 건을 bizinfo 페이지 스크래핑으로 보정.
+        크롤링 완료 후 자동 실행되며, 수동 크롤링 후에도 호출됨.
+        - 대상: source_site='중소벤처 24', agency='', url에 'bizinfo' 포함
+        - 0.25초 간격으로 요청하여 레이트 리밋 준수
+        """
+        import time as _time
+
+        try:
+            from crawlers.smb24_api_crawler import SMB24ApiCrawler
+
+            with self.app.app_context():
+                targets = Tender.query.filter(
+                    Tender.source_site == '중소벤처 24',
+                    Tender.agency == '',
+                    Tender.url.like('%bizinfo%')
+                ).all()
+
+                if not targets:
+                    print("[SMB24 기관명 보정] 보정 대상 없음")
+                    return
+
+                print(f"[SMB24 기관명 보정] 보정 대상: {len(targets)}건 — bizinfo 스크래핑 시작")
+
+                # 임시 크롤러 인스턴스로 _scrape_agency 재사용
+                _crawler = SMB24ApiCrawler({'service_key': ''})
+                fixed = 0
+
+                for idx, tender in enumerate(targets):
+                    try:
+                        agency = _crawler._scrape_agency(tender.url)
+                        if agency:
+                            tender.agency = agency[:100]
+                            fixed += 1
+                    except Exception as e:
+                        print(f"  [SMB24 기관명 보정] 오류 (id={tender.id}): {e}")
+
+                    # 50건마다 중간 저장 (메모리 관리)
+                    if (idx + 1) % 50 == 0:
+                        db.session.commit()
+                        print(f"  [{idx + 1}/{len(targets)}] 처리 중... (보정: {fixed}건)")
+
+                    _time.sleep(0.25)
+
+                db.session.commit()
+                print(f"[SMB24 기관명 보정] 완료: {fixed}/{len(targets)}건 보정")
+
+        except Exception as e:
+            print(f"[SMB24 기관명 보정] 실패: {e}")
+            import traceback
+            traceback.print_exc()
 
     def reload_crawlers(self):
         """크롤러 재로드 (설정 변경 시)"""
