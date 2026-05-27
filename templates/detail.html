@@ -831,9 +831,23 @@
 
             <!-- 오류 -->
             <div id="analysis-error" class="hidden p-4">
-                <div class="bg-red-50 border border-red-200 rounded-lg p-4">
-                    <p class="text-sm font-semibold text-red-700 mb-1">⚠ 분석 오류</p>
-                    <p class="text-sm text-red-600 whitespace-pre-line" id="analysis-error-msg"></p>
+                <!-- RPM 오류: 타이머 카드 -->
+                <div id="rpm-error-box" class="hidden ai-rpm-error">
+                    <div class="ai-rpm-icon">⏱</div>
+                    <div class="ai-rpm-title">분당 요청 한도에 도달했습니다</div>
+                    <div class="ai-rpm-timer-wrap">
+                        <div class="ai-rpm-timer" id="rpm-countdown">2:00</div>
+                        <div class="ai-rpm-timer-label">후 자동으로 다시 시도합니다</div>
+                    </div>
+                    <div class="ai-rpm-progress-bar"><div class="ai-rpm-progress-fill" id="rpm-progress-fill"></div></div>
+                </div>
+                <!-- 일반 오류 -->
+                <div id="general-error-box" class="hidden ai-general-error">
+                    <div class="ai-general-error-icon">✕</div>
+                    <div>
+                        <p class="ai-general-error-title">분석 오류</p>
+                        <p class="ai-general-error-msg" id="analysis-error-msg"></p>
+                    </div>
                 </div>
             </div>
 
@@ -1026,7 +1040,63 @@
     .ai-ul { padding-left: 1.3rem; margin: 0 0 0.75rem 0; }
     .ai-ul li { padding: 0.15rem 0; color: #374151; }
 
-    /* ─── KPI 카드 그리드 ───────────────────────────────────── */
+    /* ─── 분석 오류 박스 ────────────────────────────────────── */
+    /* RPM(분당 한도) 오류 — 타이머 카드 */
+    .ai-rpm-error {
+        background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+        border: 2px solid #f59e0b;
+        border-radius: 14px;
+        padding: 2rem 1.5rem 1.5rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.6rem;
+        text-align: center;
+        box-shadow: 0 4px 24px rgba(245,158,11,0.18);
+    }
+    .ai-rpm-icon { font-size: 2.8rem; line-height: 1; }
+    .ai-rpm-title { font-size: 1.15rem; font-weight: 800; color: #92400e; }
+    .ai-rpm-timer-wrap { display: flex; flex-direction: column; align-items: center; margin: 0.4rem 0; }
+    .ai-rpm-timer {
+        font-size: 3.6rem; font-weight: 900; color: #d97706;
+        font-variant-numeric: tabular-nums; line-height: 1;
+        letter-spacing: 0.04em;
+        text-shadow: 0 2px 8px rgba(217,119,6,0.2);
+    }
+    .ai-rpm-timer.ai-rpm-expiring { color: #dc2626; animation: ai-rpm-pulse 0.7s infinite alternate; }
+    @keyframes ai-rpm-pulse { from { opacity:1; } to { opacity:0.55; } }
+    .ai-rpm-timer-label { font-size: 0.82rem; color: #b45309; margin-top: 0.4rem; font-weight: 500; }
+    .ai-rpm-progress-bar {
+        width: 100%; max-width: 280px; height: 6px;
+        background: #fde68a; border-radius: 99px; overflow: hidden; margin-top: 0.5rem;
+    }
+    .ai-rpm-progress-fill {
+        height: 100%; background: linear-gradient(90deg, #f59e0b, #fbbf24);
+        border-radius: 99px; transition: width 1s linear;
+    }
+    /* 일반 오류 */
+    .ai-general-error {
+        background: #fef2f2;
+        border: 2px solid #fca5a5;
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        display: flex;
+        align-items: flex-start;
+        gap: 1rem;
+        box-shadow: 0 2px 12px rgba(239,68,68,0.1);
+    }
+    .ai-general-error-icon {
+        flex-shrink: 0;
+        width: 2.2rem; height: 2.2rem;
+        background: #ef4444; color: #fff;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-weight: 900; font-size: 1rem;
+    }
+    .ai-general-error-title { font-weight: 700; color: #b91c1c; font-size: 1rem; margin-bottom: 0.35rem; }
+    .ai-general-error-msg { font-size: 0.85rem; color: #dc2626; white-space: pre-line; line-height: 1.6; }
+
+    /* ─── KPI 카드 그리드 ────────────────────────────────────── */
     .ai-kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.7rem; margin: 0.75rem 0 1rem 0; }
     /* KPI 카드 — kpi 탭 에메랄드 계열로 통일 */
     .ai-kpi-card {
@@ -1038,6 +1108,27 @@
     .ai-kpi-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(16,185,129,0.18); }
     .ai-kpi-label { font-size: 0.68rem; color: #065f46; line-height: 1.4; margin-bottom: 0.4rem; font-weight: 600; }
     .ai-kpi-value { font-size: 1.2rem; font-weight: 800; color: #047857; }
+
+    /* ─── 교육 과정 카드 + 상세표 (kpi 탭) ─────────────────── */
+    /* 컴팩트 카드 그리드 */
+    .ai-course-grid { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0.6rem 0 0.5rem; }
+    .ai-course-card {
+        background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+        border: 1.5px solid #6ee7b7; border-radius: 10px;
+        padding: 0.6rem 0.85rem; display: flex; flex-direction: column; gap: 0.35rem;
+        min-width: 130px; flex: 1 1 130px; max-width: 220px;
+    }
+    .ai-course-name { font-weight: 700; color: #065f46; font-size: 0.82rem; line-height: 1.35; }
+    .ai-course-stats { display: flex; gap: 0.6rem; align-items: center; margin-top: 0.1rem; }
+    .ai-course-stat { display: flex; align-items: baseline; gap: 0.2rem; }
+    .ai-course-stat-icon { font-size: 0.8rem; }
+    .ai-course-stat-val { font-size: 1.05rem; font-weight: 800; color: #047857; }
+    .ai-course-stat-label { font-size: 0.6rem; color: #6b7280; margin-left: 0.1rem; }
+    .ai-course-stat-sep { color: #d1fae5; font-size: 0.8rem; }
+    /* 상세 정보 표 */
+    .ai-course-detail-table { margin-top: 0.6rem; }
+    .ai-course-detail-table .ai-table td:first-child { font-weight: 600; color: #065f46; }
+    .ai-course-detail-table .ai-table td { font-size: 0.76rem; }
 
     /* ─── 표 ─────────────────────────────────────────────────── */
     .ai-table-wrap { overflow-x: auto; margin: 0.75rem 0; }
@@ -2251,6 +2342,64 @@ function mdToHtml(md, tabType) {
             return;
         }
 
+        // ── 교육 과정별 상세 → 컴팩트 카드 + 상세 표 (kpi 탭, 표 형식) ──
+        if (tabType === 'kpi' && currentH3 === '교육 과정별 상세') {
+            const fc = (name) => header.findIndex(h => h.includes(name));
+            const iName   = fc('과정명');
+            const iHours  = fc('교육시간');
+            const iCount  = fc('목표인원');
+            const iPeriod = fc('교육기간');
+            const iMode   = fc('교육방식');
+            const iTarget = fc('교육대상');
+            const isNone  = (v) => !v || v.trim() === '-' || v.trim() === '';
+            // ① 컴팩트 카드
+            html += '<div class="ai-course-grid">';
+            body.forEach(row => {
+                const name  = iName  >= 0 ? row[iName]  : '과정';
+                const hours = iHours >= 0 ? row[iHours] : '-';
+                const count = iCount >= 0 ? row[iCount] : '-';
+                html += `<div class="ai-course-card">
+                    <div class="ai-course-name">${escHtml(name)}</div>
+                    <div class="ai-course-stats">
+                        <span class="ai-course-stat">
+                            <span class="ai-course-stat-icon">👥</span>
+                            <span class="ai-course-stat-val">${escHtml(count)}</span>
+                            <span class="ai-course-stat-label">명</span>
+                        </span>
+                        <span class="ai-course-stat-sep">·</span>
+                        <span class="ai-course-stat">
+                            <span class="ai-course-stat-icon">⏱</span>
+                            <span class="ai-course-stat-val">${escHtml(hours)}</span>
+                        </span>
+                    </div>
+                </div>`;
+            });
+            html += '</div>';
+            // ② 상세 표
+            const hasDetail = body.some(row =>
+                (iPeriod >= 0 && !isNone(row[iPeriod])) ||
+                (iMode   >= 0 && !isNone(row[iMode]))   ||
+                (iTarget >= 0 && !isNone(row[iTarget]))
+            );
+            if (hasDetail) {
+                html += `<div class="ai-course-detail-table ai-table-wrap"><table class="ai-table">
+                    <thead><tr><th>과정명</th><th>교육기간</th><th>교육방식</th><th>교육대상</th></tr></thead><tbody>`;
+                body.forEach(row => {
+                    const period = iPeriod >= 0 ? row[iPeriod] : '';
+                    const mode   = iMode   >= 0 ? row[iMode]   : '';
+                    const target = iTarget >= 0 ? row[iTarget] : '';
+                    html += `<tr>
+                        <td>${escHtml(iName >= 0 ? row[iName] : '')}</td>
+                        <td>${isNone(period) ? '<span class="text-gray-300">-</span>' : escHtml(period)}</td>
+                        <td>${isNone(mode)   ? '<span class="text-gray-300">-</span>' : escHtml(mode)}</td>
+                        <td>${isNone(target) ? '<span class="text-gray-300">-</span>' : escHtml(target)}</td>
+                    </tr>`;
+                });
+                html += '</tbody></table></div>';
+            }
+            return;
+        }
+
         let t = `<div class="ai-table-wrap"><table class="ai-table"><thead><tr>`;
         t += header.map(c => `<th>${inlineMd(c)}</th>`).join('');
         t += `</tr></thead><tbody>`;
@@ -2265,6 +2414,61 @@ function mdToHtml(md, tabType) {
         if (!listItems.length) return;
         const items = listItems;
         listItems = [];
+
+        // ── [0] 교육 과정별 상세 → 컴팩트 카드 + 상세 표 (kpi 탭) ───────
+        if (isKpi && currentH3 === '교육 과정별 상세') {
+            const courses = [];
+            let cur = null;
+            items.forEach(item => {
+                if (item.type !== 'info') return;
+                if (item.key === '과정명') {
+                    cur = { name: item.val, 교육시간:'-', 목표인원:'-', 교육기간:'', 교육방식:'', 교육대상:'' };
+                    courses.push(cur);
+                } else if (cur) {
+                    if (['교육시간','목표인원','교육기간','교육방식','교육대상'].includes(item.key))
+                        cur[item.key] = item.val;
+                }
+            });
+            if (courses.length > 0) {
+                const isNone = v => !v || v.trim() === '-' || v.trim() === '';
+                // ① 컴팩트 카드: 과정명 + 목표인원 + 교육시간
+                html += '<div class="ai-course-grid">';
+                courses.forEach(c => {
+                    html += `<div class="ai-course-card">
+                        <div class="ai-course-name">${escHtml(c.name)}</div>
+                        <div class="ai-course-stats">
+                            <span class="ai-course-stat">
+                                <span class="ai-course-stat-icon">👥</span>
+                                <span class="ai-course-stat-val">${escHtml(c.목표인원)}</span>
+                                <span class="ai-course-stat-label">명</span>
+                            </span>
+                            <span class="ai-course-stat-sep">·</span>
+                            <span class="ai-course-stat">
+                                <span class="ai-course-stat-icon">⏱</span>
+                                <span class="ai-course-stat-val">${escHtml(c.교육시간)}</span>
+                            </span>
+                        </div>
+                    </div>`;
+                });
+                html += '</div>';
+                // ② 상세 표: 교육기간·교육방식·교육대상
+                const hasDetail = courses.some(c => !isNone(c.교육기간) || !isNone(c.교육방식) || !isNone(c.교육대상));
+                if (hasDetail) {
+                    html += `<div class="ai-course-detail-table ai-table-wrap"><table class="ai-table">
+                        <thead><tr><th>과정명</th><th>교육기간</th><th>교육방식</th><th>교육대상</th></tr></thead><tbody>`;
+                    courses.forEach(c => {
+                        html += `<tr>
+                            <td>${escHtml(c.name)}</td>
+                            <td>${isNone(c.교육기간) ? '<span class="text-gray-300">-</span>' : escHtml(c.교육기간)}</td>
+                            <td>${isNone(c.교육방식) ? '<span class="text-gray-300">-</span>' : escHtml(c.교육방식)}</td>
+                            <td>${isNone(c.교육대상) ? '<span class="text-gray-300">-</span>' : escHtml(c.교육대상)}</td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table></div>';
+                }
+                return;
+            }
+        }
 
         // summary 탭: 계약 기간·예산 규모는 상단 하이라이트 바에 표시됨 → 생략
         if (tabType === 'summary' && (currentH3 === '계약 기간' || currentH3 === '예산 규모')) return;
@@ -2485,12 +2689,59 @@ let _pollTimer = null;
 let _pollCount = 0;
 const _POLL_INTERVAL = 3000;   // 3초마다 상태 확인
 const _POLL_MAX      = 250;    // 최대 12.5분 대기 (5개 모델 × 90초 최악 = 7.5분 커버)
+let _rpmTimer = null;
+const _RPM_COUNTDOWN_SEC = 120; // RPM 타이머 2분
+
+function _clearRpmTimer() {
+    if (_rpmTimer) { clearInterval(_rpmTimer); _rpmTimer = null; }
+}
+
+function _startRpmCountdown(tenderId) {
+    _clearRpmTimer();
+    const timerEl    = document.getElementById('rpm-countdown');
+    const fillEl     = document.getElementById('rpm-progress-fill');
+    let remaining    = _RPM_COUNTDOWN_SEC;
+
+    function tick() {
+        const m = Math.floor(remaining / 60);
+        const s = remaining % 60;
+        timerEl.textContent = `${m}:${s.toString().padStart(2,'0')}`;
+        const pct = (remaining / _RPM_COUNTDOWN_SEC) * 100;
+        if (fillEl) fillEl.style.width = pct + '%';
+        if (remaining <= 10) timerEl.classList.add('ai-rpm-expiring');
+        else                 timerEl.classList.remove('ai-rpm-expiring');
+        if (remaining <= 0) {
+            _clearRpmTimer();
+            runAnalysis(tenderId, true);
+        }
+        remaining--;
+    }
+    tick();
+    _rpmTimer = setInterval(tick, 1000);
+}
+
+function _showError(errMsg, tenderId) {
+    document.getElementById('analysis-loading').classList.add('hidden');
+    document.getElementById('analysis-error').classList.remove('hidden');
+    const isRpm = errMsg.startsWith('[RPM]');
+    document.getElementById('rpm-error-box').classList.toggle('hidden', !isRpm);
+    document.getElementById('general-error-box').classList.toggle('hidden', isRpm);
+    if (isRpm) {
+        _startRpmCountdown(tenderId);
+    } else {
+        _clearRpmTimer();
+        document.getElementById('analysis-error-msg').textContent = errMsg;
+    }
+}
 
 function _showLoading(msg) {
+    _clearRpmTimer();
     document.querySelector('#analysis-loading p.font-medium').textContent = msg || '첨부파일을 다운로드하고 분석 중입니다…';
     document.getElementById('analysis-loading').classList.remove('hidden');
     document.getElementById('analysis-result').classList.add('hidden');
     document.getElementById('analysis-error').classList.add('hidden');
+    document.getElementById('rpm-error-box').classList.add('hidden');
+    document.getElementById('general-error-box').classList.add('hidden');
 }
 
 async function _pollResult(tenderId) {
@@ -2505,9 +2756,7 @@ async function _pollResult(tenderId) {
             if (_pollCount < _POLL_MAX) {
                 _pollTimer = setTimeout(() => _pollResult(tenderId), _POLL_INTERVAL);
             } else {
-                document.getElementById('analysis-loading').classList.add('hidden');
-                document.getElementById('analysis-error-msg').textContent = '분석 시간이 초과됐습니다. 잠시 후 페이지를 새로고침하거나 다시 분석을 눌러주세요.';
-                document.getElementById('analysis-error').classList.remove('hidden');
+                _showError('분석 시간이 초과됐습니다. 잠시 후 페이지를 새로고침하거나 다시 분석을 눌러주세요.', tenderId);
                 _resetBtn(tenderId);
             }
             return;
@@ -2516,13 +2765,16 @@ async function _pollResult(tenderId) {
         // 결과 수신 완료
         clearTimeout(_pollTimer);
         document.getElementById('analysis-loading').classList.add('hidden');
+        if (data.error) {
+            _showError(data.error, tenderId);
+            _resetBtn(tenderId);
+            return;
+        }
         _renderResult(data, tenderId);
 
     } catch (err) {
         clearTimeout(_pollTimer);
-        document.getElementById('analysis-loading').classList.add('hidden');
-        document.getElementById('analysis-error-msg').textContent = '결과 확인 중 오류: ' + err.message;
-        document.getElementById('analysis-error').classList.remove('hidden');
+        _showError('결과 확인 중 오류: ' + err.message, tenderId);
         _resetBtn(tenderId);
     }
 }
@@ -2564,8 +2816,7 @@ async function runAnalysis(tenderId, force = false) {
         document.getElementById('analysis-loading').classList.add('hidden');
 
         if (data.error) {
-            document.getElementById('analysis-error-msg').textContent = data.error;
-            document.getElementById('analysis-error').classList.remove('hidden');
+            _showError(data.error, tenderId);
             _resetBtn(tenderId);
             return;
         }
@@ -2574,8 +2825,7 @@ async function runAnalysis(tenderId, force = false) {
 
     } catch (err) {
         document.getElementById('analysis-loading').classList.add('hidden');
-        document.getElementById('analysis-error-msg').textContent = '분석 요청 중 오류: ' + err.message;
-        document.getElementById('analysis-error').classList.remove('hidden');
+        _showError('분석 요청 중 오류: ' + err.message, tenderId);
         _resetBtn(tenderId);
     }
 }

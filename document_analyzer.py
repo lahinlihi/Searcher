@@ -803,16 +803,19 @@ def rule_based_extract(text):
                     if field == '계약기간' and not _DATE_PAT.search(value):
                         logger.debug(f'계약기간 패턴 매칭 거부 (날짜 없음): {value[:60]!r}')
                         continue
-                    # 계약기간 후처리: 실제 기간 이후에 딸려오는 다음 섹션 내용 제거
-                    # ex) "계약체결일 ~ 2026. 10. 30.까지 5. 계약방법 : ..." → "계약체결일 ~ 2026. 10. 30.까지"
-                    if field == '계약기간':
+                    # 후처리: 다음 섹션 내용이 딸려오는 경우 제거
+                    # "계약체결일~2026.10.30.까지 5. 계약방법 ..." → "계약체결일~2026.10.30.까지"
+                    # "510,000,000원 6. 입찰 방식 : ..."          → "510,000,000원"
+                    if field in ('계약기간', '예산'):
+                        # (?<![.。]): 직전 문자가 마침표면 날짜 도트이므로 제외
+                        #   STOP → "4. 사업 대상", "6. 입찰 방식"  (직전이 한글/괄호)
+                        #   SKIP → "2026. 12. 18.까지"            (직전이 마침표)
                         _STOP_PAT = re.compile(
-                            r'\s+\d+\s*[.。]\s*[가-힣A-Z]'          # "5. 계약방법", "4. 사업 대상"
-                            r'|제\s*\d+\s*조[\s(]'                   # "제5조", "제 5 조 ("
-                            r'|\s+[○◎●◆□■▶▷]\s'                   # 불릿 기호
-                            r'|\s+ㅇ\s'                              # ㅇ 불릿
-                            r'|\s+(?:기초금액|입찰방법|낙찰방법|소요예산'
-                            r'|사업내용|사업대상|계약방법|계약금액|하자보증|납품장소)'
+                            r'(?<![.。])\s+\d{1,2}\s*[.。]\s+[가-힣]'  # 넘버링 섹션 헤더
+                            r'|제\s*\d+\s*조[\s(]'                      # 제5조 등
+                            r'|\s+[○◎●◆□■▶▷]\s'                        # 불릿 기호
+                            r'|\s+[●•]\s*'
+                            r'|\s+ㅇ\s+'
                         )
                         m_stop = _STOP_PAT.search(value)
                         if m_stop:
@@ -1145,10 +1148,7 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality', on_
             '잠시 후 다시 시도해 주세요.'
         )
     elif is_rpm_only:
-        msg = (
-            '[Gemini 오류] 분당 요청 한도에 도달했습니다.\n'
-            '1~2분 후 다시 시도해 주세요.'
-        )
+        msg = '[RPM] 분당 요청 한도에 도달했습니다.'
     elif has_rpd or has_quota:
         msg = (
             '[Gemini 오류] 일일 무료 할당량이 초과되었습니다.\n'
@@ -1161,7 +1161,6 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality', on_
     if has_404:
         msg += '\n(일부 모델이 현재 API에서 지원되지 않습니다 — 관리자에게 문의)'
 
-    msg += f'\n(시도: {tried_models})'
     return {'error': msg}
 
 
