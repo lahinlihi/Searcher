@@ -655,9 +655,9 @@ class CrawlScheduler:
         중소벤처 24 공고 중 기관명이 비어있는 건을 bizinfo 페이지 스크래핑으로 보정.
         크롤링 완료 후 자동 실행되며, 수동 크롤링 후에도 호출됨.
         - 대상: source_site='중소벤처 24', agency='', url에 'bizinfo' 포함
-        - 0.25초 간격으로 요청하여 레이트 리밋 준수
+        - ThreadPoolExecutor(15 workers)로 병렬 처리
         """
-        import time as _time
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         try:
             from crawlers.smb24_api_crawler import SMB24ApiCrawler
@@ -673,27 +673,38 @@ class CrawlScheduler:
                     print("[SMB24 기관명 보정] 보정 대상 없음")
                     return
 
-                print(f"[SMB24 기관명 보정] 보정 대상: {len(targets)}건 — bizinfo 스크래핑 시작")
+                print(f"[SMB24 기관명 보정] 보정 대상: {len(targets)}건 — 병렬 스크래핑 시작")
 
-                # 임시 크롤러 인스턴스로 _scrape_agency 재사용
                 _crawler = SMB24ApiCrawler({'service_key': ''})
-                fixed = 0
 
-                for idx, tender in enumerate(targets):
+                def _scrape(tender_id, url):
                     try:
-                        agency = _crawler._scrape_agency(tender.url)
-                        if agency:
-                            tender.agency = agency[:100]
-                            fixed += 1
-                    except Exception as e:
-                        print(f"  [SMB24 기관명 보정] 오류 (id={tender.id}): {e}")
+                        return tender_id, _crawler._scrape_agency(url)
+                    except Exception:
+                        return tender_id, ''
 
-                    # 50건마다 중간 저장 (메모리 관리)
-                    if (idx + 1) % 50 == 0:
-                        db.session.commit()
-                        print(f"  [{idx + 1}/{len(targets)}] 처리 중... (보정: {fixed}건)")
+                # 병렬 스크래핑
+                id_to_agency = {}
+                done = 0
+                with ThreadPoolExecutor(max_workers=15) as executor:
+                    futures = {
+                        executor.submit(_scrape, t.id, t.url): t.id
+                        for t in targets
+                    }
+                    for future in as_completed(futures):
+                        tender_id, agency = future.result()
+                        id_to_agency[tender_id] = agency
+                        done += 1
+                        if done % 30 == 0:
+                            print(f"  [{done}/{len(targets)}] 스크래핑 중...")
 
-                    _time.sleep(0.25)
+                # DB 일괄 업데이트
+                fixed = 0
+                for tender in targets:
+                    agency = id_to_agency.get(tender.id, '')
+                    if agency:
+                        tender.agency = agency[:100]
+                        fixed += 1
 
                 db.session.commit()
                 print(f"[SMB24 기관명 보정] 완료: {fixed}/{len(targets)}건 보정")

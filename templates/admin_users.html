@@ -380,9 +380,10 @@ function switchTab(tab) {
 
 function formatLastLogin(isoStr) {
     if (!isoStr) return '<span class="text-gray-300 text-xs">미접속</span>';
-    const d = new Date(isoStr + 'Z');  // UTC로 파싱
+    const d = new Date(isoStr + 'Z');  // UTC → 로컬 시간으로 파싱
     const now = new Date();
     const diff = Math.floor((now - d) / 1000);
+
     // 10분 이내 → 접속 중 뱃지
     if (diff < 600) {
         const timeStr = diff < 60 ? '방금 전' : Math.floor(diff/60) + '분 전';
@@ -393,8 +394,16 @@ function formatLastLogin(isoStr) {
              + '</span>';
     }
     if (diff < 3600) return Math.floor(diff/60) + '분 전';
-    if (diff < 86400) return '오늘 ' + d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
-    const days = Math.floor(diff / 86400);
+
+    // 자정 00:00 기준으로 오늘/어제/N일 전 구분
+    const hhmm = d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterdayMidnight = new Date(todayMidnight.getTime() - 86400000);
+
+    if (d >= todayMidnight)     return '오늘 ' + hhmm;
+    if (d >= yesterdayMidnight) return '어제 ' + hhmm;
+
+    const days = Math.floor((todayMidnight - d) / 86400000);
     if (days < 30) return days + '일 전';
     return d.toLocaleDateString('ko-KR');
 }

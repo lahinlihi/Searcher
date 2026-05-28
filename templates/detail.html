@@ -38,6 +38,8 @@
         {# 공고 종류 판별 — title + ntceKindNm(API 필드) 동시 감지 #}
         {% set _t_lower = tender.title | lower %}
         {% set _ntce_api = extra.get('ntceKindNm', '') | lower %}
+        {# 중소벤처 24 여부 — opening_date=접수시작, deadline_date=접수마감으로 쓰임 #}
+        {% set is_smb24 = tender.source_site == '중소벤처 24' %}
         {% set _is_urgent  = '긴급' in _t_lower or '긴급' in _ntce_api %}
         {% set _is_re      = '재공고' in _t_lower or '재입찰' in _t_lower or '재공고' in _ntce_api %}
         {% set _is_modify  = '수정공고' in _t_lower or '정정공고' in _t_lower or '취소공고' in _t_lower
@@ -176,7 +178,7 @@
                         <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
                         </svg>
-                        <span class="text-[11px] font-semibold text-orange-500">{% if tender.status == '사전규격' %}의견마감{% else %}입찰마감{% endif %}</span>
+                        <span class="text-[11px] font-semibold text-orange-500">{% if tender.status == '사전규격' %}의견마감{% elif is_smb24 %}신청마감{% else %}입찰마감{% endif %}</span>
                     </div>
                     {% if tender.deadline_date %}
                     <div class="flex items-baseline gap-1.5 whitespace-nowrap">
@@ -189,7 +191,7 @@
                 </div>
                 {# 데스크톱: 상세 날짜 #}
                 <div class="hidden sm:block">
-                    <div class="text-xs font-medium text-gray-500 mb-1">{% if tender.status == '사전규격' %}의견등록 마감{% else %}입찰마감{% endif %}</div>
+                    <div class="text-xs font-medium text-gray-500 mb-1">{% if tender.status == '사전규격' %}의견등록 마감{% elif is_smb24 %}신청 접수 마감{% else %}입찰마감{% endif %}</div>
                     {% if tender.deadline_date %}
                     <div class="text-base font-bold {% if is_expired %}text-gray-400{% elif days_left <= 2 %}text-red-600{% elif days_left <= 5 %}text-orange-500{% else %}text-gray-800{% endif %} whitespace-nowrap tabular-nums">
                         {{ tender.deadline_date.strftime('%Y-%m-%d') }} <span class="font-semibold">{{ tender.deadline_date.strftime('%H:%M') }}</span>
@@ -592,10 +594,14 @@
                                    sublabel=_begin.strftime('%Y.%m.%d %H:%M') + ' 개시' if _begin else '') }}
                             {% endif %}
 
-                            {# 6. 입찰서 제출 #}
+                            {# 6. 입찰서 제출 / 중소벤처 24는 신청 접수 마감 #}
+                            {% if is_smb24 %}
+                            {{ trow('신청 접수 마감', tender.deadline_date, is_dl=true, dday=days_left) }}
+                            {% else %}
                             {% set _begin = parse_g2b_dt(extra.get('bidBeginDt', '')) %}
                             {{ trow('입찰서 제출', tender.deadline_date, is_dl=true, dday=days_left,
                                    sublabel=_begin.strftime('%Y.%m.%d %H:%M') + ' 개시' if _begin else '') }}
+                            {% endif %}
 
                             {# 7. 제안서 평가 (협상 시) #}
                             {% if is_negotiated %}
@@ -612,8 +618,12 @@
                             {% set _dt = parse_g2b_dt(extra.get('pqApplDocRcptDt', '')) %}
                             {{ trow('PQ 신청 마감', _dt) }}
 
-                            {# 10. 개찰 (순간 이벤트 — 완료/대기만) #}
+                            {# 10. 개찰 (순간 이벤트) / 중소벤처 24는 신청 접수 시작일 #}
+                            {% if is_smb24 %}
+                            {{ trow('신청 접수 시작', tender.opening_date) }}
+                            {% else %}
                             {{ trow('개찰', tender.opening_date, is_event=true) }}
+                            {% endif %}
                         </div>
                     </div>
                 </div>
