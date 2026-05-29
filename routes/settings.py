@@ -89,6 +89,27 @@ def api_gemini_key():
             return jsonify({'error': str(e)}), 500
 
 
+@bp.route('/api/settings/groq-key', methods=['GET', 'POST'])
+@admin_required
+def api_groq_key():
+    """Groq API 키 조회/저장"""
+    if request.method == 'GET':
+        try:
+            key = settings_manager.get('groq_api_key', '')
+            masked = key[:8] + '...' if len(key) > 8 else ('설정됨' if key else '')
+            return jsonify({'has_key': bool(key), 'masked': masked})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    else:
+        try:
+            data = request.json or {}
+            new_key = data.get('api_key', '').strip()
+            settings_manager.set('groq_api_key', new_key)
+            return jsonify({'message': 'Groq API 키가 저장되었습니다.'})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+
 @bp.route('/api/settings/gemini-model-priority', methods=['GET', 'POST'])
 @admin_required
 def api_gemini_model_priority():

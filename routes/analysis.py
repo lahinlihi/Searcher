@@ -13,7 +13,7 @@ _analysis_in_progress = set()
 _analysis_lock = threading.Lock()
 
 
-def _run_analysis_background(tender_id, tender_url, tender_title, source_site, api_key, model_priority='quality', _app=None):
+def _run_analysis_background(tender_id, tender_url, tender_title, source_site, api_key, model_priority='quality', groq_api_key=None, _app=None):
     """백그라운드 스레드에서 분석 실행 후 DB 저장"""
     import traceback as _tb
     import time as _time
@@ -66,6 +66,7 @@ def _run_analysis_background(tender_id, tender_url, tender_title, source_site, a
                     tender_url=tender_url,
                     tender_title=tender_title,
                     api_key=api_key,
+                    groq_api_key=groq_api_key,
                     source_site=source_site,
                     model_priority=model_priority,
                     on_rpm_wait=_on_rpm_wait,
@@ -140,8 +141,9 @@ def api_analyze_tender(tender_id):
         if already_running:
             return jsonify({'status': 'processing', 'message': '분석이 진행 중입니다. 잠시 후 다시 확인합니다.'})
 
-        # ── Gemini API 키 및 모델 우선순위 로드 ──────────────────────────
-        api_key = settings_manager.get('gemini_api_key', '').strip() or None
+        # ── API 키 및 모델 우선순위 로드 ─────────────────────────────────
+        api_key      = settings_manager.get('gemini_api_key', '').strip() or None
+        groq_api_key = settings_manager.get('groq_api_key',  '').strip() or None
         model_priority = settings_manager.get('gemini_model_priority', 'quality')
 
         # ── 백그라운드 스레드에서 분석 시작 ──────────────────────────────
@@ -150,7 +152,7 @@ def api_analyze_tender(tender_id):
         t = threading.Thread(
             target=_run_analysis_background,
             args=(tender_id, tender.url, tender.title, tender.source_site or '', api_key, model_priority),
-            kwargs={'_app': _app},
+            kwargs={'groq_api_key': groq_api_key, '_app': _app},
             daemon=True,
         )
         t.start()

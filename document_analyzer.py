@@ -884,6 +884,43 @@ def _select_text_for_gemini(text, max_chars=10000):
     return text[:max_chars]
 
 
+def _route_analyze(text, gemini_key, groq_key, tender_title, model_priority='quality', on_rpm_wait=None):
+    """
+    model_priority에 따라 Groq 또는 Gemini로 라우팅.
+
+    speed    → Groq (groq_key 있을 때) → 실패 시 Gemini 폴백
+    balanced → Gemini gemini-3.1-flash-lite
+    quality  → Gemini gemini-3.5-flash
+    """
+    if model_priority == 'speed' and groq_key:
+        logger.info("[Route] speed 모드 → Groq 시도")
+        try:
+            result = groq_analyze(text, groq_key, tender_title, on_rpm_wait=on_rpm_wait)
+        except Exception as e:
+            logger.warning(f"[Route] Groq 예외 발생: {e}")
+            result = {'error': str(e)}
+
+        if result and 'error' not in result:
+            result['_model'] = 'groq-llama-3.3-70b'
+            logger.info("[Route] Groq 성공")
+            return result
+
+        # Groq 실패 → Gemini 폴백
+        err_detail = result.get('error', '') if result else '응답 없음'
+        logger.warning(f"[Route] Groq 실패 → Gemini 폴백: {err_detail}")
+        if gemini_key:
+            return gemini_analyze(text, gemini_key, tender_title,
+                                  model_priority='speed', on_rpm_wait=on_rpm_wait)
+        return result  # Gemini 키도 없으면 Groq 오류 그대로 반환
+
+    # balanced / quality → Gemini
+    if gemini_key:
+        return gemini_analyze(text, gemini_key, tender_title,
+                              model_priority=model_priority, on_rpm_wait=on_rpm_wait)
+
+    return {'error': 'API 키가 설정되지 않았습니다. 설정에서 Gemini 또는 Groq API 키를 입력해 주세요.'}
+
+
 def gemini_analyze(text, api_key, tender_title='', model_priority='quality', on_rpm_wait=None):
     """
     Gemini API로 RFP를 4개 섹션으로 구조화 분석.
@@ -986,24 +1023,27 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality', on_
         )
 
     # 우선순위별 모델 시작 순서 (소진 시 뒤 모델로 자동 폴백)
-    # speed    : 빠른 모델 우선 — flash-lite(5–10s) → 1.5-8b → 1.5 → 2.0 → 2.5
-    # balanced : 균형 모델 우선 — 2.0-flash(8–12s) → flash-lite → 1.5 → 2.5
-    # quality  : 고품질 모델 우선 — 2.5-flash(30–90s) → 2.0 → 1.5 → 1.5-8b → lite
+    # 2025-06 기준 무료 티어 한도:
+    #   gemini-3.5-flash      : RPM  5, RPD  20  — 최신 고품질 (quality 전용)
+    #   gemini-3.1-flash-lite : RPM 15, RPD 500  — 최대 여유 (balanced 전용)
+    #   gemini-2.5-flash      : RPM  5, RPD  20  — 공통 폴백
+    #   gemini-2.0-flash*     : RPD   0 (Deprecated — 사용 불가)
+    #
+    # speed    : Groq 사용 (groq_analyze() 로 별도 라우팅됨, 이 목록은 Groq 실패 시 폴백)
+    # balanced : gemini-3.1-flash-lite(RPD500) 단일 우선 → 폴백 gemini-2.5-flash
+    # quality  : gemini-3.5-flash 단일 우선 → 폴백 gemini-2.5-flash
     _MODEL_ORDERS = {
         'speed': [
-            'gemini-2.0-flash-lite',
-            'gemini-2.0-flash',
-            'gemini-2.5-flash',
+            'gemini-3.1-flash-lite',   # Groq 실패 시 폴백 (RPM 15, RPD 500)
+            'gemini-2.5-flash',        # 최후 폴백
         ],
         'balanced': [
-            'gemini-2.0-flash',
-            'gemini-2.0-flash-lite',
-            'gemini-2.5-flash',
+            'gemini-3.1-flash-lite',   # RPM 15, RPD 500 — balanced 1순위
+            'gemini-2.5-flash',        # RPM  5, RPD  20 — 폴백
         ],
         'quality': [
-            'gemini-2.5-flash',
-            'gemini-2.0-flash',
-            'gemini-2.0-flash-lite',
+            'gemini-3.5-flash',        # RPM  5, RPD  20 — quality 1순위
+            'gemini-2.5-flash',        # RPM  5, RPD  20 — 폴백
         ],
     }
     _MODELS = _MODEL_ORDERS.get(model_priority, _MODEL_ORDERS['quality'])
@@ -1164,9 +1204,112 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality', on_
     return {'error': msg}
 
 
+# ── Groq 분석 함수 ────────────────────────────────────────────────────────────
+
+def groq_analyze(text, api_key, tender_title='', on_rpm_wait=None):
+    """
+    Groq API로 RFP를 4개 섹션으로 구조화 분석 (speed 모드 전용).
+
+    모델 폴백 순서:
+      1. llama-3.3-70b-versatile  (RPM 30, 고품질)
+      2. llama-3.1-8b-instant     (RPM 30, 빠른 폴백)
+
+    Returns dict with keys: summary, kpi, proposal_requirements, special_notes
+    각 값은 마크다운 문자열. 오류 시 {'error': '...'} 반환.
+    """
+    try:
+        from groq import Groq, RateLimitError, APIStatusError
+    except ImportError:
+        logger.warning("groq 미설치: pip install groq")
+        return {'error': '[Groq] groq 패키지 미설치 — pip install groq 실행 후 재시도'}
+
+    import json as _json
+    import time as _time
+
+    _GROQ_MODELS = [
+        'llama-3.3-70b-versatile',   # RPM 30 — 고품질
+        'llama-3.1-8b-instant',      # RPM 30 — 빠른 폴백
+    ]
+
+    truncated = _select_text_for_gemini(text, max_chars=5000)  # Groq free tier 413 방지
+    # Groq은 system/user 분리 방식 사용
+    system_msg = (
+        '당신은 한국 공공 입찰 RFP 문서를 분석하는 전문가입니다. '
+        '반드시 유효한 JSON만 출력하고, 마크다운 코드블록(```json)을 사용하지 마세요.'
+    )
+    user_msg = _GEMINI_PROMPT.format(title=tender_title, text=truncated)
+
+    client = Groq(api_key=api_key)
+    failed_models = []
+
+    for model_name in _GROQ_MODELS:
+        rpm_retried = False
+        while True:
+            try:
+                logger.info(f"Groq 분석 시작: {model_name}")
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {'role': 'system', 'content': system_msg},
+                        {'role': 'user',   'content': user_msg},
+                    ],
+                    temperature=0.1,
+                    max_tokens=2048,
+                    response_format={'type': 'json_object'},
+                )
+                raw = response.choices[0].message.content or ''
+                parsed = _json.loads(raw)
+
+                # 필수 키 검증
+                required = {'summary', 'kpi', 'proposal_requirements', 'special_notes'}
+                if not required.issubset(parsed.keys()):
+                    raise ValueError(f'필수 키 누락: {required - parsed.keys()}')
+
+                logger.info(f"Groq 분석 성공: {model_name}")
+                return parsed
+
+            except RateLimitError as e:
+                err_str = str(e).lower()
+                if not rpm_retried and 'rate_limit' in err_str:
+                    # RPM 초과 — 35초 대기 후 재시도
+                    logger.warning(f"Groq RPM 초과 ({model_name}), 35초 대기 후 재시도")
+                    if on_rpm_wait:
+                        on_rpm_wait(model_name, 35)
+                    else:
+                        _time.sleep(35)
+                    rpm_retried = True
+                    continue
+                # RPD 초과 또는 재시도 실패 → 다음 모델
+                failed_models.append(f"{model_name}(rate_limit)")
+                break
+
+            except APIStatusError as e:
+                err_str = str(e).lower()
+                if e.status_code == 503 or 'overloaded' in err_str:
+                    # 서버 과부하 → 다음 모델
+                    failed_models.append(f"{model_name}(503)")
+                    break
+                failed_models.append(f"{model_name}(api_err:{e.status_code})")
+                break
+
+            except (_json.JSONDecodeError, ValueError) as e:
+                logger.warning(f"Groq 파싱 오류 ({model_name}): {e}")
+                failed_models.append(f"{model_name}(parse_err)")
+                break
+
+            except Exception as e:
+                logger.warning(f"Groq 예외 ({model_name}): {e}")
+                failed_models.append(f"{model_name}(exception)")
+                break
+
+    logger.error(f"Groq 모든 모델 실패: {failed_models}")
+    return {'error': '[RPM] 분당 요청 한도에 도달했습니다.' if all('rate_limit' in m for m in failed_models)
+            else f'[Groq 오류] 모든 모델 호출에 실패했습니다. ({", ".join(failed_models)})'}
+
+
 # ── 통합 분석 함수 ────────────────────────────────────────────────────────────
 
-def analyze_tender(tender_url, tender_title='', api_key=None, source_site='', model_priority='quality', on_rpm_wait=None):  # noqa: ARG001 (source_site reserved for future site-specific logic)
+def analyze_tender(tender_url, tender_title='', api_key=None, groq_api_key=None, source_site='', model_priority='quality', on_rpm_wait=None):  # noqa: ARG001 (source_site reserved for future site-specific logic)
     """
     공고 URL에서 첨부파일(RFP)을 찾아 분석.
 
@@ -1201,11 +1344,10 @@ def analyze_tender(tender_url, tender_title='', api_key=None, source_site='', mo
             result['files_found'] = [f'★ {sbiz_files[0]}'] if sbiz_files else ['★ sbiz24 공고 본문']
             result['text_length'] = len(sbiz_text)
             result['rule_extract'] = rule_based_extract(sbiz_text)
-            if api_key:
-                result['gemini_sections'] = gemini_analyze(
-                    sbiz_text, api_key, tender_title,
-                    model_priority=model_priority, on_rpm_wait=on_rpm_wait
-                )
+            result['gemini_sections'] = _route_analyze(
+                sbiz_text, api_key, groq_api_key, tender_title,
+                model_priority=model_priority, on_rpm_wait=on_rpm_wait
+            )
             return result
         else:
             result['error'] = (
@@ -1328,11 +1470,10 @@ def analyze_tender(tender_url, tender_title='', api_key=None, source_site='', mo
     # 3. A: 규칙 기반 핵심 정보 추출 (빠른 보조 데이터)
     result['rule_extract'] = rule_based_extract(combined_text)
 
-    # 4. C: Gemini 4개 섹션 분석 (API 키 있을 때만)
-    if api_key:
-        result['gemini_sections'] = gemini_analyze(
-            combined_text, api_key, tender_title,
-            model_priority=model_priority, on_rpm_wait=on_rpm_wait
-        )
+    # 4. C: AI 4개 섹션 분석 (speed=Groq, balanced/quality=Gemini)
+    result['gemini_sections'] = _route_analyze(
+        combined_text, api_key, groq_api_key, tender_title,
+        model_priority=model_priority, on_rpm_wait=on_rpm_wait
+    )
 
     return result

@@ -152,16 +152,13 @@
     <!-- AI 분석 설정 -->
     <div class="card">
         <div class="card-header">
-            <h3 class="card-title">AI 분석 설정 (Gemini)</h3>
+            <h3 class="card-title">AI 분석 설정</h3>
         </div>
         <div class="card-body">
             <div class="space-y-4">
-                <p class="text-sm text-gray-600">
-                    공고 상세 페이지에서 첨부파일(RFP)을 AI로 요약하려면 Gemini API 키가 필요합니다.<br>
-                    <span class="text-xs text-gray-500">무료 티어: 1,500 요청/일, 비용 없음</span>
-                </p>
+                <!-- Gemini API 키 -->
                 <div class="form-group">
-                    <label class="form-label">Gemini API 키</label>
+                    <label class="form-label">Gemini API 키 <span class="text-xs text-gray-400">(balanced · quality 모드)</span></label>
                     <div class="flex gap-2">
                         <input type="password" id="gemini-api-key" class="form-input"
                             placeholder="AIzaSy...">
@@ -170,8 +167,20 @@
                     <p class="text-xs text-gray-500 mt-1" id="gemini-key-status">로드 중...</p>
                 </div>
 
+                <!-- Groq API 키 -->
                 <div class="form-group">
-                    <label class="form-label">분석 우선순위</label>
+                    <label class="form-label">Groq API 키 <span class="text-xs text-gray-400">(speed 모드 — <a href="https://console.groq.com/keys" target="_blank" class="text-blue-500 underline">무료 발급</a>)</span></label>
+                    <div class="flex gap-2">
+                        <input type="password" id="groq-api-key" class="form-input"
+                            placeholder="gsk_...">
+                        <button type="button" onclick="saveGroqKey()" class="btn-primary whitespace-nowrap">저장</button>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1" id="groq-key-status">로드 중...</p>
+                </div>
+
+                <!-- 모드 선택 -->
+                <div class="form-group">
+                    <label class="form-label">분석 모드</label>
                     <div class="grid grid-cols-3 gap-2" id="model-priority-selector">
                         <label class="model-priority-option cursor-pointer">
                             <input type="radio" name="model_priority" value="speed" class="sr-only">
@@ -179,7 +188,7 @@
                                 <div class="text-lg mb-1">⚡</div>
                                 <div class="text-sm font-medium text-gray-800">속도 우선</div>
                                 <div class="text-xs text-gray-500 mt-1">5–10초</div>
-                                <div class="text-xs text-gray-400">flash-lite 우선</div>
+                                <div class="text-xs text-gray-400">Groq llama-3.3-70b</div>
                             </div>
                         </label>
                         <label class="model-priority-option cursor-pointer">
@@ -187,22 +196,22 @@
                             <div class="border-2 rounded-lg p-3 text-center transition-all border-gray-200 hover:border-blue-300">
                                 <div class="text-lg mb-1">⚖️</div>
                                 <div class="text-sm font-medium text-gray-800">균형</div>
-                                <div class="text-xs text-gray-500 mt-1">8–15초</div>
-                                <div class="text-xs text-gray-400">2.0-flash 우선</div>
+                                <div class="text-xs text-gray-500 mt-1">10–20초</div>
+                                <div class="text-xs text-gray-400">Gemini 3.1 Flash Lite</div>
                             </div>
                         </label>
                         <label class="model-priority-option cursor-pointer">
                             <input type="radio" name="model_priority" value="quality" class="sr-only">
                             <div class="border-2 rounded-lg p-3 text-center transition-all border-gray-200 hover:border-blue-300">
                                 <div class="text-lg mb-1">🎯</div>
-                                <div class="text-sm font-medium text-gray-800">품질 우선</div>
-                                <div class="text-xs text-gray-500 mt-1">30–90초</div>
-                                <div class="text-xs text-gray-400">2.5-flash 우선</div>
+                                <div class="text-sm font-medium text-gray-800">성능 우선</div>
+                                <div class="text-xs text-gray-500 mt-1">20–60초</div>
+                                <div class="text-xs text-gray-400">Gemini 3.5 Flash</div>
                             </div>
                         </label>
                     </div>
                     <p class="text-xs text-gray-500 mt-2">
-                        어떤 옵션이든 할당량 초과 시 자동으로 다음 모델로 전환됩니다.
+                        speed 모드는 Groq API 키 필요. 실패 시 Gemini로 자동 폴백됩니다.
                     </p>
                     <div class="mt-2">
                         <button type="button" onclick="saveModelPriority()" class="btn-primary">분석 설정 저장</button>

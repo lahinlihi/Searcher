@@ -994,6 +994,48 @@ async function saveGeminiKey() {
     }
 }
 
+// Groq API 키 로드
+async function loadGroqKeyStatus() {
+    try {
+        const resp = await fetch('/api/settings/groq-key');
+        const data = await resp.json();
+        const status = document.getElementById('groq-key-status');
+        if (!status) return;
+        if (data.has_key) {
+            status.innerHTML = `✅ 서버에 로드됨: <strong>${data.masked}</strong>`;
+            status.className = 'text-xs text-green-600 mt-1';
+        } else {
+            status.innerHTML = '미설정 — speed 모드 사용 시 필요 (<a href="https://console.groq.com/keys" target="_blank" class="text-blue-500 underline">무료 발급</a>)';
+            status.className = 'text-xs text-gray-400 mt-1';
+        }
+    } catch (e) {
+        console.error('Groq key status load failed:', e);
+    }
+}
+
+// Groq API 키 저장
+async function saveGroqKey() {
+    const key = document.getElementById('groq-api-key').value.trim();
+    if (!key) { alert('API 키를 입력해 주세요.'); return; }
+    try {
+        const resp = await fetch('/api/settings/groq-key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: key })
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            alert(data.message || 'Groq API 키가 저장되었습니다.');
+            document.getElementById('groq-api-key').value = '';
+            loadGroqKeyStatus();
+        } else {
+            alert('저장 실패: ' + (data.error || '알 수 없는 오류'));
+        }
+    } catch (e) {
+        alert('저장 중 오류가 발생했습니다: ' + e.message);
+    }
+}
+
 // 분석 우선순위 라디오 버튼 UI 처리
 function _initModelPriorityUI(selectedValue) {
     const options = document.querySelectorAll('#model-priority-selector .model-priority-option');
@@ -1070,6 +1112,7 @@ async function saveModelPriority() {
 // 페이지 로드 시 Gemini 키 상태 및 모델 우선순위 로드
 document.addEventListener('DOMContentLoaded', function() {
     loadGeminiKeyStatus();
+    loadGroqKeyStatus();
     loadModelPriority();
 });
 
