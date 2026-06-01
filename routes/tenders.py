@@ -504,9 +504,12 @@ def api_tenders():
             query = query.filter(db.or_(*inc_conditions))
 
         # ── 수요기관 제외 필터 (AND NOT) ─────────────────────────────────────────
+        # 주의: demand_agency=NULL 인 일반공고는 NOT ILIKE가 NULL로 평가되어 제외됨
+        # → NULL이면 "해당 없음(대학 아님)"으로 간주하여 통과시켜야 함
         for term in demand_agency_exclude:
             query = query.filter(
-                ~Tender.demand_agency.ilike(f'%{term}%'),
+                db.or_(Tender.demand_agency.is_(None),
+                       ~Tender.demand_agency.ilike(f'%{term}%')),
                 ~Tender.agency.ilike(f'%{term}%'),
             )
 

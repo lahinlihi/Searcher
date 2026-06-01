@@ -108,10 +108,19 @@ def mark_duplicates_in_db(app, new_tenders):
             row[0] for row in Tender.query.with_entities(
                 Tender.tender_number).filter(Tender.tender_number.isnot(None)).all())
 
-        # DB에서 모든 공고 제목도 가져오기 (공고번호 없는 소스 방어)
+        # DB에서 공고 제목 가져오기 (공고번호 없는 소스 방어)
+        # 사전규격 source는 제외: 사전규격과 동명의 본 공고를 중복으로 처리하면 안 됨
+        # (사전규격 공고번호 R26BD..., 본 공고 R26BK... — 번호가 달라 number 체크를 통과하므로
+        #  title 체크까지 걸리면 본 공고가 저장되지 않는 문제 발생)
+        PRE_SPEC_SOURCES = {'나라장터 사전규격 (용역)', '나라장터 사전규격 (물품)',
+                            '나라장터 사전규격 (공사)', '나라장터 사전규격 (외자)'}
         existing_titles = set(
-            row[0] for row in Tender.query.with_entities(
-                Tender.title).filter(Tender.title.isnot(None)).all())
+            row[0] for row in Tender.query.with_entities(Tender.title)
+            .filter(
+                Tender.title.isnot(None),
+                ~Tender.source_site.in_(PRE_SPEC_SOURCES)
+            ).all()
+        )
 
         # 중복 제거 (번호 + 제목 모두 DB 비교)
         unique_tenders, duplicate_tenders = remove_duplicates(

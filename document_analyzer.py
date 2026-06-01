@@ -1060,7 +1060,13 @@ def gemini_analyze(text, api_key, tender_title='', model_priority='quality', on_
                 if raw.startswith('```'):
                     raw = re.sub(r'^```[a-z]*\n?', '', raw)
                     raw = re.sub(r'\n?```$', '', raw)
-                data = _json.loads(raw)
+                try:
+                    data = _json.loads(raw)
+                except _json.JSONDecodeError:
+                    # Gemini가 JSON 뒤에 여분 텍스트를 붙인 경우
+                    # (response_mime_type='application/json' 설정에도 불구하고 발생 가능)
+                    # raw_decode: 첫 번째 완전한 JSON 객체만 읽고 나머지 무시
+                    data, _ = _json.JSONDecoder().raw_decode(raw)
 
                 def _to_md(v, depth=0):
                     """중첩 dict/list를 마크다운 문자열로 재귀 변환"""
