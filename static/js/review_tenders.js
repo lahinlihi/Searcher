@@ -132,7 +132,7 @@ function renderReviewCard(tender) {
                 <span class="${deadlineClass} text-sm shrink-0 ml-2">${deadlineText}</span>
             </div>
             <h4 class="font-medium ${tender.is_unread ? 'text-gray-900' : 'text-gray-500'} mt-1 line-clamp-1 sm:text-sm">
-                <a href="/tender/${tender.id}" class="hover:text-blue-600 hover:underline">
+                <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="hover:text-blue-600 hover:underline">
                     ${escapeHtml(tender.title)}
                 </a>
             </h4>
@@ -143,7 +143,7 @@ function renderReviewCard(tender) {
             <div class="hidden sm:flex items-center gap-3 mt-1.5 text-sm flex-wrap">
                 <span class="font-medium text-gray-800 truncate">${agency}</span>
                 <span class="font-medium text-blue-600">${price}</span>
-                <a href="/tender/${tender.id}#memos" class="text-purple-500 hover:underline text-xs">의견 보기 →</a>
+                <a href="/tender/${tender.id}#memos" target="_blank" rel="noopener" class="text-purple-500 hover:underline text-xs">의견 보기 →</a>
                 ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-500 hover:underline text-xs">공고 원문 →</a>` : ''}
             </div>
             ${latestMemo ? `

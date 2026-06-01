@@ -134,7 +134,7 @@ function renderDismissedCard(tender) {
                 </div>
             </div>
             <h4 class="font-medium text-gray-700 mt-1 line-clamp-1 sm:text-sm">
-                <a href="/tender/${tender.id}" class="hover:text-blue-600 hover:underline">
+                <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="hover:text-blue-600 hover:underline">
                     ${escapeHtml(tender.title)}
                 </a>
             </h4>
@@ -240,7 +240,7 @@ function renderBookmarkCard(tender) {
                 </div>
             </div>
             <h4 class="font-medium text-gray-900 mt-1 line-clamp-1 sm:text-sm">
-                <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
+                <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="text-gray-900 hover:text-blue-600 hover:underline">
                     ${escapeHtml(tender.title)}
                 </a>
             </h4>
@@ -255,7 +255,7 @@ function renderBookmarkCard(tender) {
                 <span class="font-medium text-gray-800 truncate">${agencyNameBm}</span>
                 <span class="font-medium text-blue-600">${price}</span>
                 ${announcedDate ? `<span class="text-gray-400">등록: ${announcedDate}</span>` : ''}
-                <a href="/tender/${tender.id}" class="text-blue-500 hover:underline">상세보기 →</a>
+                <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="text-blue-500 hover:underline">상세보기 →</a>
                 ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-500 hover:underline">공고 원문 →</a>` : ''}
             </div>
         </div>`;

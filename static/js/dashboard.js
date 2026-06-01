@@ -433,7 +433,7 @@ function renderMobileKeywordTenders(section, tenders) {
                     </div>
                 </div>
                 <h4 class="font-medium text-gray-900 mt-1 line-clamp-2">
-                    <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">${noticeBadges}${highlightedTitle}</a>
+                    <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="text-gray-900 hover:text-blue-600 hover:underline">${noticeBadges}${highlightedTitle}</a>
                 </h4>
                 <div class="flex flex-col gap-1 mt-2">
                     <span class="text-sm text-gray-700 font-bold truncate">${agencyName}</span>
@@ -474,7 +474,7 @@ function renderMobileTenderList(section, tenders) {
                     </div>
                 </div>
                 <h4 class="font-medium text-gray-900 mt-1 line-clamp-2">
-                    <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">${noticeBadges}${highlightedTitle}</a>
+                    <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="text-gray-900 hover:text-blue-600 hover:underline">${noticeBadges}${highlightedTitle}</a>
                 </h4>
                 <div class="flex flex-col gap-1 mt-2">
                     <span class="text-sm text-gray-700 font-bold truncate">${agencyName}</span>
@@ -645,7 +645,7 @@ function renderTenderCard(tender) {
                 </div>
             </div>
             <div class="dc-title">
-                <a href="/tender/${tender.id}" class="dc-title-link">${inlineBadges}${highlightedTitle}</a>
+                <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="dc-title-link">${inlineBadges}${highlightedTitle}</a>
             </div>
             <div class="dc-price">${price}</div>
             <div class="dc-footer">
@@ -718,7 +718,7 @@ function renderKeywordTenders(elementId, tenders, keywords) {
                     </div>
                 </div>
                 <h4 class="font-medium text-gray-900 mt-1 line-clamp-2 sm:line-clamp-1 sm:text-sm">
-                    <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
+                    <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="text-gray-900 hover:text-blue-600 hover:underline">
                         ${noticeBadges}${highlightedTitle}
                     </a>
                 </h4>
@@ -729,7 +729,7 @@ function renderKeywordTenders(elementId, tenders, keywords) {
                 <div class="hidden sm:flex items-center gap-3 mt-1.5 text-sm flex-wrap">
                     <span class="font-medium text-gray-800 truncate">${agencyName}</span>
                     <span class="font-medium text-blue-600">${price}</span>
-                    <a href="/tender/${tender.id}" class="text-blue-500 hover:underline">상세보기 →</a>
+                    <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="text-blue-500 hover:underline">상세보기 →</a>
                     ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-500 hover:underline">원본 공고 →</a>` : ''}
                 </div>
             </div>
@@ -803,7 +803,7 @@ function renderTenderList(elementId, tenders) {
                     </div>
                 </div>
                 <h4 class="font-medium text-gray-900 mt-1 line-clamp-2 sm:line-clamp-1 sm:text-sm">
-                    <a href="/tender/${tender.id}" class="text-gray-900 hover:text-blue-600 hover:underline">
+                    <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="text-gray-900 hover:text-blue-600 hover:underline">
                         ${noticeBadges}${highlightedTitle}
                     </a>
                 </h4>
@@ -814,7 +814,7 @@ function renderTenderList(elementId, tenders) {
                 <div class="hidden sm:flex items-center gap-3 mt-1.5 text-sm flex-wrap">
                     <span class="font-medium text-gray-800 truncate">${agencyName}</span>
                     <span class="font-medium text-blue-600">${price}</span>
-                    <a href="/tender/${tender.id}" class="text-blue-500 hover:underline">상세보기 →</a>
+                    <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="text-blue-500 hover:underline">상세보기 →</a>
                     ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-500 hover:underline">원본 공고 →</a>` : ''}
                 </div>
             </div>

@@ -675,7 +675,7 @@ function renderResultsMobile(tenders) {
                     ${deadlineHtml}
                 </div>
             </div>
-            <a href="/tender/${tender.id}" class="card-title-link block mb-1.5"${titleStyle}>${highlightedTitle}</a>
+            <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="card-title-link block mb-1.5"${titleStyle}>${highlightedTitle}</a>
             <div class="flex items-center justify-between gap-2">
                 <div>
                     <div class="card-agency truncate max-w-[200px]" title="${(displayAgency || '').replace(/"/g,'&quot;')}">${displayAgency || '-'}</div>
@@ -801,7 +801,7 @@ function renderResultsDesktop(tenders) {
                 <td style="text-align:center;width:46px;">${statusBadge}</td>
                 <td style="text-align:center;width:72px;">${scoreBadge}</td>
                 <td class="title-col">
-                    <a href="/tender/${tender.id}" class="title-link"${titleStyle} title="${cleanNoticeTitle(tender.title).replace(/"/g,'&quot;')}">${noticeBadges}${highlightedTitle}</a>
+                    <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="title-link"${titleStyle} title="${cleanNoticeTitle(tender.title).replace(/"/g,'&quot;')}">${noticeBadges}${highlightedTitle}</a>
                 </td>
                 <td class="agency-col" title="${agencyTooltip.replace(/"/g,'&quot;')}">${displayAgency}</td>
                 <td style="text-align:right;">${price}</td>
