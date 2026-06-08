@@ -16,6 +16,12 @@ app.config.from_object(Config)
 app.secret_key = settings_manager.get('secret_key') or 'change-me-in-production-please'
 app.permanent_session_lifetime = timedelta(days=7)
 
+# ── 리버스 프록시(Cloudflare 등) 지원 ────────────────────────────────────────
+# Cloudflare Tunnel / nginx 뒤에서 X-Forwarded-Host, X-Forwarded-Proto 헤더를 신뢰
+# → url_for(_external=True)가 localhost:5002 대신 실제 도메인(ht-search.com)을 생성
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
 
 def _parse_g2b_dt(s):
     """G2B API 날짜 문자열을 datetime으로 파싱"""
@@ -40,6 +46,25 @@ def add_no_cache_headers(response):
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         response.headers['Pragma'] = 'no-cache'
     return response
+
+
+_PUBLIC_HOST = os.environ.get('PUBLIC_HOST', 'ht-search.com')
+
+
+@app.before_request
+def _fix_https_scheme():
+    """Cloudflare/리버스 프록시 뒤에서 X-Forwarded-Proto 헤더를 읽어 HTTPS 스킴 적용.
+    url_for(_external=True)가 http:// 대신 https://를 생성하도록 보정."""
+    proto = request.headers.get('X-Forwarded-Proto', '')
+    if proto.lower() == 'https':
+        request.environ['wsgi.url_scheme'] = 'https'
+
+    # localhost:5002 직접 접속 → ht-search.com 으로 리다이렉트 (일원화)
+    # API 엔드포인트, 정적 파일은 제외 (서버 내부 통신 영향 방지)
+    host = request.host  # 예: "localhost:5002"
+    if host.startswith('localhost') or host.startswith('127.0.0.1'):
+        path = request.full_path.rstrip('?')
+        return redirect(f'https://{_PUBLIC_HOST}{path}', code=301)
 
 
 @app.before_request
@@ -252,8 +277,13 @@ if __name__ == '__main__':
     try:
         from waitress import serve
         print(f"[서버] waitress WSGI 서버로 시작합니다 (port {Config.PORT})")
+        # trusted_proxy='*': 모든 역방향 프록시(Cloudflare 등)의 X-Forwarded-* 헤더 신뢰
+        # trusted_proxy_headers: 신뢰할 헤더 목록 (scheme·host 자동 반영)
         serve(app, host=Config.HOST, port=Config.PORT, threads=8,
-              connection_limit=200, cleanup_interval=30, channel_timeout=120)
+              connection_limit=200, cleanup_interval=30, channel_timeout=120,
+              trusted_proxy='*',
+              trusted_proxy_headers='x-forwarded-for x-forwarded-host x-forwarded-proto x-forwarded-port',
+              log_untrusted_proxy_headers=True)
     except ImportError:
         print("[서버] waitress 미설치 — Flask 개발 서버로 폴백합니다")
         app.run(host=Config.HOST, port=Config.PORT, debug=False,

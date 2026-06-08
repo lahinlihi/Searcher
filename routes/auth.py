@@ -12,6 +12,35 @@ from decorators import login_required
 bp = Blueprint('auth', __name__)
 
 
+def _build_callback_url(endpoint: str) -> str:
+    """접속한 호스트·스킴에 맞는 OAuth 콜백 URL을 동적 생성.
+
+    Cloudflare(또는 nginx) 뒤에 있을 때도 올바른 도메인/프로토콜을 사용:
+      - X-Forwarded-Proto: https  → scheme = https
+      - X-Forwarded-Host / Host   → 실제 도메인 (예: ht-search.com)
+    로컬 직접 접속 시: http://localhost:5002/...
+    """
+    # 1) 스킴: 프록시가 보낸 X-Forwarded-Proto 우선, 없으면 request.scheme
+    proto = (request.headers.get('X-Forwarded-Proto')
+             or request.headers.get('CF-Visitor')  # Cloudflare 보조
+             or request.scheme)
+    # CF-Visitor는 JSON 형태("{"scheme":"https"}") 이므로 간단 파싱
+    if '{' in proto:
+        import json as _j
+        try:
+            proto = _j.loads(proto).get('scheme', 'https')
+        except Exception:
+            proto = 'https'
+
+    # 2) 호스트: X-Forwarded-Host 우선, 없으면 Host 헤더(=request.host)
+    host = (request.headers.get('X-Forwarded-Host') or request.host)
+
+    # 3) 경로만 url_for로 가져오기 (_external=False)
+    path = url_for(endpoint)
+
+    return f"{proto}://{host}{path}"
+
+
 @bp.route('/me')
 @login_required
 def my_profile():
@@ -172,10 +201,7 @@ def auth_kakao():
         return redirect('/login')
     session.pop('pending_social', None)  # 이전 소셜 연동 대기 데이터 초기화
     session['oauth_link'] = link_mode
-    redirect_uri = os.environ.get(
-        'KAKAO_REDIRECT_URI',
-        url_for('auth.auth_kakao_callback', _external=True)
-    )
+    redirect_uri = _build_callback_url('auth.auth_kakao_callback')
     return current_app.extensions['oauth'].kakao.authorize_redirect(redirect_uri)
 
 
@@ -251,10 +277,7 @@ def auth_google():
         return redirect('/login')
     session.pop('pending_social', None)  # 이전 소셜 연동 대기 데이터 초기화
     session['oauth_link_google'] = link_mode
-    redirect_uri = os.environ.get(
-        'GOOGLE_REDIRECT_URI',
-        url_for('auth.auth_google_callback', _external=True)
-    )
+    redirect_uri = _build_callback_url('auth.auth_google_callback')
     return current_app.extensions['oauth'].google.authorize_redirect(redirect_uri)
 
 
@@ -318,10 +341,7 @@ def auth_naver():
         return redirect('/login')
     session.pop('pending_social', None)  # 이전 소셜 연동 대기 데이터 초기화
     session['oauth_link_naver'] = link_mode
-    redirect_uri = os.environ.get(
-        'NAVER_REDIRECT_URI',
-        url_for('auth.auth_naver_callback', _external=True)
-    )
+    redirect_uri = _build_callback_url('auth.auth_naver_callback')
     return current_app.extensions['oauth'].naver.authorize_redirect(redirect_uri)
 
 
