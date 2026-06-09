@@ -75,6 +75,11 @@ def _run_analysis_background(tender_id, tender_url, tender_title, source_site, a
                 secs = result.get('gemini_sections')
                 if isinstance(secs, dict):
                     _dbg(f'gemini_sections: model={secs.get("_model")} gs_error={secs.get("error")}')
+                    # gemini_sections에만 오류가 있고 상위 error가 없으면 전파
+                    # (RPM 오류 등은 gemini_sections.error에만 담기므로 프론트엔드가
+                    #  data.error로 감지해 _showError → 카운트다운을 시작하게 함)
+                    if secs.get('error') and not result.get('error'):
+                        result['error'] = secs['error']
                 model = secs.get('_model') if isinstance(secs, dict) else None
                 payload = dict(
                     files_found=json.dumps(result.get('files_found', []), ensure_ascii=False),

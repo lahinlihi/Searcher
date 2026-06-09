@@ -2703,6 +2703,9 @@ const _POLL_INTERVAL = 3000;   // 3초마다 상태 확인
 const _POLL_MAX      = 250;    // 최대 12.5분 대기 (5개 모델 × 90초 최악 = 7.5분 커버)
 let _rpmTimer = null;
 const _RPM_COUNTDOWN_SEC = 120; // RPM 타이머 2분
+// 폴링 세대 번호: runAnalysis 호출마다 증가. 이전 세대의 in-flight fetch 응답이
+// 늦게 도착해도 _showLoading/_showError를 호출하지 않도록 guard한다.
+let _pollGeneration = 0;
 
 function _clearRpmTimer() {
     if (_rpmTimer) { clearInterval(_rpmTimer); _rpmTimer = null; }
@@ -2766,17 +2769,20 @@ function _showLoading(msg) {
     document.getElementById('general-error-box').classList.add('hidden');
 }
 
-async function _pollResult(tenderId) {
+async function _pollResult(tenderId, generation) {
     try {
         const resp = await fetch(`/api/tender/${tenderId}/analyze`);
         const data = await resp.json();
+
+        // 이전 세대의 stale 응답 무시 (카운트다운 시작 후 오래된 fetch가 돌아오는 경우 방지)
+        if (generation !== _pollGeneration) return;
 
         if (data.status === 'processing') {
             _pollCount++;
             const elapsed = Math.round(_pollCount * _POLL_INTERVAL / 1000);
             _showLoading(`분석 중… (${elapsed}초 경과, 자동으로 결과를 불러옵니다)`);
             if (_pollCount < _POLL_MAX) {
-                _pollTimer = setTimeout(() => _pollResult(tenderId), _POLL_INTERVAL);
+                _pollTimer = setTimeout(() => _pollResult(tenderId, generation), _POLL_INTERVAL);
             } else {
                 _showError('분석 시간이 초과됐습니다. 잠시 후 페이지를 새로고침하거나 다시 분석을 눌러주세요.', tenderId);
                 _resetBtn(tenderId);
@@ -2795,6 +2801,7 @@ async function _pollResult(tenderId) {
         _renderResult(data, tenderId);
 
     } catch (err) {
+        if (generation !== _pollGeneration) return;
         clearTimeout(_pollTimer);
         _showError('결과 확인 중 오류: ' + err.message, tenderId);
         _resetBtn(tenderId);
@@ -2814,6 +2821,8 @@ async function runAnalysis(tenderId, force = false) {
 
     clearTimeout(_pollTimer);
     _pollCount = 0;
+    _pollGeneration++;                        // 세대 증가 → 이전 in-flight 응답 무효화
+    const myGeneration = _pollGeneration;
 
     btn.disabled = true;
     btn.textContent = force ? '재분석 요청 중…' : '분석 요청 중…';
@@ -2830,7 +2839,7 @@ async function runAnalysis(tenderId, force = false) {
             // 백그라운드 분석 시작됨 → 폴링 개시
             btn.textContent = '분석 중…';
             _showLoading(data.message || '분석 중입니다. 자동으로 결과를 불러옵니다…');
-            _pollTimer = setTimeout(() => _pollResult(tenderId), _POLL_INTERVAL);
+            _pollTimer = setTimeout(() => _pollResult(tenderId, myGeneration), _POLL_INTERVAL);
             return;
         }
 
@@ -2885,8 +2894,11 @@ function _renderResult(data, tenderId) {
             document.getElementById('gemini-tabs').classList.remove('hidden');
             switchTab('summary');
         } else if (gs && gs.error) {
-            document.getElementById('analysis-error-msg').textContent = gs.error;
-            document.getElementById('analysis-error').classList.remove('hidden');
+            // 구 캐시 레코드처럼 data.error가 없고 gemini_sections.error에만 오류가 있는 경우 대응.
+            // _showError를 통해 올바른 박스 표시 + 버튼 활성화 + [RPM]이면 카운트다운 시작
+            _showError(gs.error, tenderId);
+            _resetBtn(tenderId);
+            return;
         } else {
             // gemini_sections가 null — 이전 캐시에 API 키 없이 저장된 경우
             // 사용자가 분석 버튼을 이미 눌렀으므로, force=true로 자동 재분석
