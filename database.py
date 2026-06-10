@@ -274,6 +274,37 @@ class UserPreference(db.Model):
             return []
 
 
+class UserPreferenceHistory(db.Model):
+    """사용자 키워드 변경 이력 — 저장 직전 상태를 자동 스냅샷, 최대 10건 유지"""
+    __tablename__ = 'user_preferences_history'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    interest_keywords = db.Column(db.Text, default='[]')
+    exclude_keywords = db.Column(db.Text, default='[]')
+    core_keywords = db.Column(db.Text, default='[]')
+    budget_min = db.Column(db.BigInteger, nullable=True)
+    budget_max = db.Column(db.BigInteger, nullable=True)
+    type_weights = db.Column(db.Text, default='{}')
+    saved_at = db.Column(db.DateTime, nullable=False)
+
+    user = db.relationship('User', backref=db.backref('pref_history', lazy=True, cascade='all, delete-orphan'))
+
+    def to_dict(self):
+        import json as _json
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'interest_keywords': _json.loads(self.interest_keywords or '[]'),
+            'exclude_keywords': _json.loads(self.exclude_keywords or '[]'),
+            'core_keywords': _json.loads(self.core_keywords or '[]'),
+            'budget_min': self.budget_min,
+            'budget_max': self.budget_max,
+            'type_weights': _json.loads(self.type_weights or '{}'),
+            'saved_at': self.saved_at.isoformat() if self.saved_at else None,
+        }
+
+
 class Bookmark(db.Model):
     """즐겨찾기 테이블"""
     __tablename__ = 'bookmarks'

@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, g
-from database import db, UserPreference
+from database import db, UserPreference, UserPreferenceHistory
 from decorators import login_required, admin_required
 from settings_manager import settings_manager
 from email_notifier import email_notifier, EmailNotifier
@@ -251,8 +251,9 @@ def api_interest_keywords():
 
     elif request.method == 'POST':
         try:
+            from datetime import datetime
             data = request.json
-            keywords = data.get('keywords', [])
+            keywords = data.get('keywords', None)   # None = 필드 미포함 → 기존 값 유지
             exclude_kws = data.get('exclude_keywords', None)
             budget_range = data.get('budget_range', None)
             type_weights = data.get('type_weights', None)
@@ -263,8 +264,40 @@ def api_interest_keywords():
                                       interest_keywords='[]',
                                       exclude_keywords='[]')
                 db.session.add(pref)
+                db.session.flush()  # pref.id 확보
 
-            pref.interest_keywords = json.dumps(keywords, ensure_ascii=False)
+            # ── 변경 전 상태를 히스토리에 스냅샷 ──────────────────────
+            # interest_keywords 또는 exclude_keywords 또는 core_keywords가 실제로 바뀔 때만 기록
+            _new_kws = json.dumps(keywords, ensure_ascii=False) if keywords is not None else pref.interest_keywords
+            _new_ex  = json.dumps(exclude_kws, ensure_ascii=False) if exclude_kws is not None else pref.exclude_keywords
+            core_kws_raw = data.get('core_keywords', None)
+            _new_core = json.dumps(core_kws_raw, ensure_ascii=False) if core_kws_raw is not None else pref.core_keywords
+            _changed = (_new_kws != pref.interest_keywords or
+                        _new_ex  != pref.exclude_keywords  or
+                        _new_core != (pref.core_keywords or '[]'))
+            if _changed:
+                snap = UserPreferenceHistory(
+                    user_id=g.user.id,
+                    interest_keywords=pref.interest_keywords or '[]',
+                    exclude_keywords=pref.exclude_keywords or '[]',
+                    core_keywords=pref.core_keywords or '[]',
+                    budget_min=pref.budget_min,
+                    budget_max=pref.budget_max,
+                    type_weights=pref.type_weights or '{}',
+                    saved_at=datetime.utcnow(),
+                )
+                db.session.add(snap)
+                db.session.flush()
+                # 최대 10건 유지: 오래된 것부터 삭제
+                old_snaps = (UserPreferenceHistory.query
+                             .filter_by(user_id=g.user.id)
+                             .order_by(UserPreferenceHistory.saved_at.desc())
+                             .offset(10).all())
+                for s in old_snaps:
+                    db.session.delete(s)
+
+            if keywords is not None:
+                pref.interest_keywords = json.dumps(keywords, ensure_ascii=False)
             if exclude_kws is not None:
                 pref.exclude_keywords = json.dumps(exclude_kws, ensure_ascii=False)
             if budget_range is not None:
@@ -274,10 +307,9 @@ def api_interest_keywords():
             if type_weights is not None:
                 pref.type_weights = json.dumps(type_weights, ensure_ascii=False)
 
-            core_kws = data.get('core_keywords', None)
-            if core_kws is not None:
+            if core_kws_raw is not None:
                 valid_interest = set(pref.get_interest_keywords())
-                filtered_core = [k for k in core_kws if k in valid_interest]
+                filtered_core = [k for k in core_kws_raw if k in valid_interest]
                 pref.core_keywords = json.dumps(filtered_core, ensure_ascii=False)
 
             db.session.commit()
@@ -294,3 +326,104 @@ def api_interest_keywords():
             db.session.rollback()
             print(f"[오류] 키워드 필터 저장 실패: {str(e)}")
             return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/admin/users/<int:target_user_id>/keyword-history', methods=['GET'])
+@admin_required
+def api_keyword_history(target_user_id):
+    """관리자: 특정 사용자의 키워드 변경 이력 조회"""
+    try:
+        snaps = (UserPreferenceHistory.query
+                 .filter_by(user_id=target_user_id)
+                 .order_by(UserPreferenceHistory.saved_at.desc())
+                 .limit(10).all())
+        return jsonify({'history': [s.to_dict() for s in snaps]})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/admin/users/<int:target_user_id>/keyword-restore/<int:history_id>', methods=['POST'])
+@admin_required
+def api_keyword_restore(target_user_id, history_id):
+    """관리자: 특정 히스토리 스냅샷으로 키워드 복원"""
+    try:
+        from datetime import datetime
+        snap = UserPreferenceHistory.query.filter_by(
+            id=history_id, user_id=target_user_id).first()
+        if not snap:
+            return jsonify({'error': '해당 히스토리가 없습니다.'}), 404
+
+        pref = UserPreference.query.filter_by(user_id=target_user_id).first()
+        if not pref:
+            pref = UserPreference(user_id=target_user_id)
+            db.session.add(pref)
+
+        # 복원 전 현재 상태를 히스토리에 저장
+        current_snap = UserPreferenceHistory(
+            user_id=target_user_id,
+            interest_keywords=pref.interest_keywords or '[]',
+            exclude_keywords=pref.exclude_keywords or '[]',
+            core_keywords=pref.core_keywords or '[]',
+            budget_min=pref.budget_min,
+            budget_max=pref.budget_max,
+            type_weights=pref.type_weights or '{}',
+            saved_at=datetime.utcnow(),
+        )
+        db.session.add(current_snap)
+
+        pref.interest_keywords = snap.interest_keywords
+        pref.exclude_keywords = snap.exclude_keywords
+        pref.core_keywords = snap.core_keywords
+        pref.budget_min = snap.budget_min
+        pref.budget_max = snap.budget_max
+        pref.type_weights = snap.type_weights
+        db.session.commit()
+        return jsonify({
+            'message': f'히스토리 #{history_id} (저장시각: {snap.saved_at})로 복원 완료',
+            'keywords': pref.get_interest_keywords(),
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/admin/users/<int:target_user_id>/keyword-copy-from/<int:source_user_id>', methods=['POST'])
+@admin_required
+def api_keyword_copy(target_user_id, source_user_id):
+    """관리자: 특정 사용자의 키워드를 다른 사용자에게 복사"""
+    try:
+        from datetime import datetime
+        src = UserPreference.query.filter_by(user_id=source_user_id).first()
+        if not src:
+            return jsonify({'error': '원본 사용자의 설정이 없습니다.'}), 404
+
+        dst = UserPreference.query.filter_by(user_id=target_user_id).first()
+        if not dst:
+            dst = UserPreference(user_id=target_user_id)
+            db.session.add(dst)
+            db.session.flush()
+
+        # 복사 전 현재 상태 히스토리 저장
+        snap = UserPreferenceHistory(
+            user_id=target_user_id,
+            interest_keywords=dst.interest_keywords or '[]',
+            exclude_keywords=dst.exclude_keywords or '[]',
+            core_keywords=dst.core_keywords or '[]',
+            budget_min=dst.budget_min,
+            budget_max=dst.budget_max,
+            type_weights=dst.type_weights or '{}',
+            saved_at=datetime.utcnow(),
+        )
+        db.session.add(snap)
+
+        dst.interest_keywords = src.interest_keywords
+        dst.core_keywords = src.core_keywords
+        db.session.commit()
+        return jsonify({
+            'message': f'user_id={source_user_id} → user_id={target_user_id} 키워드 복사 완료',
+            'keywords': dst.get_interest_keywords(),
+            'core_keywords': dst.get_core_keywords(),
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
