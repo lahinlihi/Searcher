@@ -32,24 +32,65 @@ Flask 서버는 코드 변경 사항을 실시간 반영하지 않으므로, 아
 - `database.py` 수정
 - `document_analyzer.py` 수정
 
-#### 서버 재시작 절차 (자동화)
+#### ⚠️ 절대 금지 사항
 
+- `cmd /c "taskkill /PID $PID /F"` — Git Bash(MSYS)에서 경로 변환 문제로 프로세스를 죽이지 못하는 경우가 있음. **사용 금지**
+- 포트 확인 없이 "재시작 완료" 선언 — 구버전 프로세스가 살아있으면 구버전 코드가 계속 서빙됨
+- HTTP 200/302 확인만으로 "코드 적용 완료" 선언 — 구버전 서버도 HTTP 응답을 반환함
+
+#### 서버 재시작 절차 — 6단계 필수
+
+**Step 1: PowerShell로 기존 프로세스 종료**
 ```bash
-# 1. 기존 프로세스 종료 (포트 5002 점유 프로세스)
-OLD_PID=$(netstat -ano 2>/dev/null | grep ':5002' | grep LISTENING | awk '{print $NF}' | head -1)
-[ -n "$OLD_PID" ] && cmd /c "taskkill /PID $OLD_PID /F"
-
-# 2. 새 프로세스 시작 (백그라운드)
-cd /c/Users/USER/Searcher
-nohup python app.py > server_restart.log 2>&1 &
-
-# 3. 기동 확인 (302 또는 200 이면 정상)
-curl -s -o /dev/null -w "%{http_code}" http://localhost:5002/
+# Git Bash에서 실행
+powershell -Command "
+\$p = (Get-NetTCPConnection -LocalPort 5002 -ErrorAction SilentlyContinue).OwningProcess | Select-Object -First 1
+if (\$p) { Stop-Process -Id \$p -Force; Write-Host \"PID \$p 종료\" }
+else { Write-Host '포트 5002 미사용' }
+"
 ```
 
-#### 재시작 후 검증
-- HTTP 응답 302(로그인 리다이렉트) 또는 200 → 정상 기동
-- 수정한 기능을 API 직접 호출하여 동작 확인
+**Step 2: 포트 해제 확인 (최대 10초 대기)**
+```bash
+for i in $(seq 1 10); do
+    r=$(powershell -Command "Get-NetTCPConnection -LocalPort 5002 -ErrorAction SilentlyContinue" 2>/dev/null)
+    [ -z "$r" ] && echo "포트 5002 해제 확인" && break
+    echo "대기 중... ${i}초"; sleep 1
+done
+```
+
+**Step 3: 새 서버 시작**
+```bash
+cd /c/Users/USER/Searcher
+nohup python app.py > server_restart.log 2>&1 &
+echo "새 PID: $!"
+```
+
+**Step 4: 서버 HTTP 응답 확인 (최대 15초 대기)**
+```bash
+for i in $(seq 1 15); do
+    s=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5002/ 2>/dev/null)
+    { [ "$s" = "200" ] || [ "$s" = "302" ]; } && echo "서버 기동 확인: HTTP $s" && break
+    echo "대기 중... ${i}초"; sleep 1
+done
+```
+
+**Step 5: 신규 코드 적용 확인 (수정한 모듈·함수 기준)**
+```bash
+cd /c/Users/USER/Searcher
+python -c "
+import sys, inspect; sys.path.insert(0, '.')
+from routes.tenders import 수정한_함수명   # 수정한 모듈/함수로 교체
+src = inspect.getsource(수정한_함수명)
+assert '핵심_변경_패턴' in src, '신규 코드 미적용!'
+print('신규 코드 적용 확인')
+"
+```
+> 예시: 반기 제거 패턴 확인 → `assert '상하반기' in src`
+> Step 5 실패 시: `cat server_restart.log` 로 에러 확인 후 원인 분석
+
+**Step 6: 사용자에게 보고**
+Step 1~5가 모두 통과한 이후에만 "적용 완료"를 보고한다.
 
 ---
 

@@ -841,6 +841,10 @@ def api_tender_history(tender_id):
     clean = _re.sub(r'\d+\s*차년도', '', clean)
     clean = _re.sub(r'\d+\s*차\b', '', clean)
     clean = _re.sub(r'^\(?\s*(?:입찰재공고|입찰공고|재공고|재입찰)\s*\)?[\s-]*', '', clean)
+    # 상·하반기 / 학기 표현 제거: 매년 동일 사업이 "상반기"/"하반기"로 나뉘어 공고될 때
+    # 쿼리에 "하반기"가 포함되면 "상반기" 공고가 조회되지 않으므로 제거
+    clean = _re.sub(r'[상하]반기', '', clean)
+    clean = _re.sub(r'[1-4]학기', '', clean)
     clean = _re.sub(r'\s+', ' ', clean).strip()
 
     # ── API 검색어 빌딩 ───────────────────────────────────────────────────────

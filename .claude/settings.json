@@ -29,7 +29,8 @@
       "Bash(tasklist *)",
       "Bash(powershell -Command \"Get-NetTCPConnection*)",
       "Bash(powershell -Command \"Get-Process python*)",
-      "Bash(powershell -Command \"Get-Service*)"
+      "Bash(powershell -Command \"Get-Service*)",
+      "Bash(powershell -Command \"Stop-Process *)"
     ]
   }
 }

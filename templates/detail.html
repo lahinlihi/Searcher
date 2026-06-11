@@ -2588,22 +2588,12 @@ function mdToHtml(md, tabType) {
             return;
         }
 
-        // ── [5] KPI 카드 그리드 (kpi 탭) ─────────────────────────────
-        const kpiItems    = items.filter(i => i.isKpi);
-        const nonKpiItems = items.filter(i => !i.isKpi);
-        if (isKpi && kpiItems.length) {
-            html += '<div class="ai-kpi-grid">';
-            kpiItems.forEach(({key, val}) => {
-                html += `<div class="ai-kpi-card">
-                    <div class="ai-kpi-label">${escHtml(key.replace(/_/g,' '))}</div>
-                    <div class="ai-kpi-value">${escHtml(val)}</div>
-                </div>`;
-            });
-            html += '</div>';
-        }
+        // ── [5] KPI 탭: 카드 대신 전체 items를 표/리스트로 렌더링 ──────
+        // 카드는 수치 값의 맥락(어떤 과정인지)을 잃게 하므로 사용하지 않음.
+        // 반복 key 패턴(과정별 행)이 감지되면 buildAutoTable이 다열 표로 자동 변환.
 
         // ── [6] 일반 info 행 / 불릿 리스트 (기본 렌더링) ─────────────
-        const renderItems = isKpi ? nonKpiItems : items;
+        const renderItems = items;
         if (!renderItems.length) return;
 
         const allInfo = renderItems.every(i => i.type === 'info');
