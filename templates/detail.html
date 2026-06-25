@@ -2703,23 +2703,33 @@ function _clearRpmTimer() {
 
 function _startRpmCountdown(tenderId) {
     _clearRpmTimer();
-    const timerEl    = document.getElementById('rpm-countdown');
-    const fillEl     = document.getElementById('rpm-progress-fill');
-    let remaining    = _RPM_COUNTDOWN_SEC;
+    const timerEl  = document.getElementById('rpm-countdown');
+    const fillEl   = document.getElementById('rpm-progress-fill');
+    // 절대 마감 시각(deadline) 기준으로 매번 남은 시간을 다시 계산한다.
+    // 단순히 매초 1씩 빼는 방식은 백그라운드 탭에서 setInterval이 스로틀링되면
+    // (브라우저가 비활성 탭의 타이머 호출 빈도를 줄임) tick()이 늦게/덜 호출되어
+    // remaining이 실제 경과 시간을 따라가지 못하고 화면이 멈춘 것처럼 보이는 문제가 있었다.
+    const deadline = Date.now() + _RPM_COUNTDOWN_SEC * 1000;
 
     function tick() {
+        const remaining = Math.max(0, Math.round((deadline - Date.now()) / 1000));
         const m = Math.floor(remaining / 60);
         const s = remaining % 60;
-        timerEl.textContent = `${m}:${s.toString().padStart(2,'0')}`;
+        if (timerEl) timerEl.textContent = `${m}:${s.toString().padStart(2,'0')}`;
         const pct = (remaining / _RPM_COUNTDOWN_SEC) * 100;
         if (fillEl) fillEl.style.width = pct + '%';
-        if (remaining <= 10) timerEl.classList.add('ai-rpm-expiring');
-        else                 timerEl.classList.remove('ai-rpm-expiring');
+        if (timerEl) {
+            if (remaining <= 10) timerEl.classList.add('ai-rpm-expiring');
+            else                 timerEl.classList.remove('ai-rpm-expiring');
+        }
         if (remaining <= 0) {
             _clearRpmTimer();
-            runAnalysis(tenderId, true);
+            // 재시도 호출 실패(네트워크 오류 등) 시 조용히 멈추지 않고 에러로 표시
+            runAnalysis(tenderId, true).catch(err => {
+                console.error('RPM 자동 재시도 실패:', err);
+                _showError('자동 재시도 중 오류: ' + err.message, tenderId);
+            });
         }
-        remaining--;
     }
     tick();
     _rpmTimer = setInterval(tick, 1000);

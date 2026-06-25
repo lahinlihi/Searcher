@@ -93,12 +93,16 @@ class CrawlScheduler:
             return
 
         # 크롤러 모드: 매일 09:00, 17:00
+        # misfire_grace_time: APScheduler 기본값(1초)이 너무 짧아 스케줄러 스레드가
+        # 트리거 시점에 잠깐만 지연돼도(다른 작업 충돌, GC 등) 그날 실행이 조용히 스킵되는
+        # 문제가 반복됐음. 여유 있게 잡아 트리거 시점이 지나도 그날 안에는 늦게라도 실행되게 함.
         self.scheduler.add_job(
             func=self.run_crawl_job,
             trigger=CronTrigger(hour=9, minute=0),
             id='crawl_morning',
             name='오전 크롤링',
-            replace_existing=True
+            replace_existing=True,
+            misfire_grace_time=3600
         )
 
         self.scheduler.add_job(
@@ -106,7 +110,8 @@ class CrawlScheduler:
             trigger=CronTrigger(hour=17, minute=0),
             id='crawl_evening',
             name='오후 크롤링',
-            replace_existing=True
+            replace_existing=True,
+            misfire_grace_time=3600
         )
 
         self.scheduler.start()

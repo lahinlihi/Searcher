@@ -153,6 +153,7 @@ class GenericCrawler(BaseCrawler):
         pagination = self.site_config.get('pagination', {})
         param_name = pagination.get('param') if pagination else None
         start_page = pagination.get('start', 1) if pagination else 1
+        page_step = pagination.get('step', 1) if pagination else 1
 
         page = start_page
         seen_titles = set()
@@ -170,7 +171,9 @@ class GenericCrawler(BaseCrawler):
                 soup = self._selenium_click_page(page)
             elif param_name:
                 # URL 파라미터 방식 (Selenium/requests 모두 지원)
-                url = self._build_page_url(self.crawl_url, param_name, page)
+                # step이 설정된 경우 오프셋 기반 페이지네이션 지원 (예: Start=0,10,20...)
+                page_value = start_page + (page - start_page) * page_step
+                url = self._build_page_url(self.crawl_url, param_name, page_value)
                 soup = self.fetch_page(url)
             else:
                 break  # 페이지네이션 설정 없음
@@ -289,21 +292,27 @@ class GenericCrawler(BaseCrawler):
             link_elem = item.find('a')
 
         link = ''
+        href = ''
         if link_elem:
             href = link_elem.get('href', '')
+            onclick_sources = [href, link_elem.get('onclick', ''), item.get('onclick', '')]
+        else:
+            # <a> 태그가 없고 onclick이 행(item) 자체에 있는 구조 (예: <tr onclick="...">)
+            onclick_sources = [item.get('onclick', '')]
 
-            # onclick/javascript: 기반 URL 추출
-            if self.onclick_pattern and self.url_template:
-                for search_text in [href, link_elem.get('onclick', ''), item.get('onclick', '')]:
-                    if search_text:
-                        m = re.search(self.onclick_pattern, search_text)
-                        if m:
-                            groups = m.groups()
-                            fmt_kwargs = {f'id{i+1}': g for i, g in enumerate(groups)}
-                            fmt_kwargs['id'] = groups[0] if groups else ''
-                            link = self.url_template.format(**fmt_kwargs)
-                            break
+        # onclick/javascript: 기반 URL 추출
+        if self.onclick_pattern and self.url_template:
+            for search_text in onclick_sources:
+                if search_text:
+                    m = re.search(self.onclick_pattern, search_text)
+                    if m:
+                        groups = m.groups()
+                        fmt_kwargs = {f'id{i+1}': g for i, g in enumerate(groups)}
+                        fmt_kwargs['id'] = groups[0] if groups else ''
+                        link = self.url_template.format(**fmt_kwargs)
+                        break
 
+        if link_elem:
             if not link and href and href != '#' and not href.startswith('javascript:'):
                 # jsessionid 제거 (예: path;jsessionid=xxx?params)
                 if ';jsessionid=' in href:
