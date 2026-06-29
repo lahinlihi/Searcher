@@ -34,11 +34,19 @@ async function loadLogs() {
             }
 
             const siteResults = log.site_results || {};
-            const siteResultsHtml = Object.entries(siteResults).map(([site, result]) => {
-                const icon = result.success ? '✓' : '✗';
-                const color = result.success ? 'text-green-600' : 'text-red-600';
-                return `<span class="${color}">${site}: ${icon}</span>`;
-            }).join(' | ');
+            const successSites = [];
+            const failSites = [];
+            Object.entries(siteResults).forEach(([site, result]) => {
+                if (result.success) {
+                    successSites.push(`<span class="text-green-600">${site}: ✓ (${result.count || 0}건)</span>`);
+                } else {
+                    const errMsg = (result.errors && result.errors.length > 0)
+                        ? result.errors[0]
+                        : '원인 불명';
+                    failSites.push(`<span class="text-red-600">${site}: ✗ — ${errMsg}</span>`);
+                }
+            });
+            const siteResultsHtml = successSites.concat(failSites).join(' | ');
 
             return `
                 <div class="card">

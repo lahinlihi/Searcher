@@ -57,6 +57,14 @@ class GenericCrawler(BaseCrawler):
         self.detail_deadline = site_config.get('detail_deadline', None)  # {label: "공고마감일자"} — dt/dd 구조
         self.default_agency = site_config.get('default_agency', '')  # 고정 수요기관명
         self.result_notice_pattern = site_config.get('result_notice_pattern', '')  # 결과공고 태깅 패턴 (수집은 하되 status='결과공고'로 마킹)
+        # api_json 타입 전용 설정
+        self.api_params = site_config.get('api_params', {})       # POST 파라미터 기본값
+        self.api_items_key = site_config.get('api_items_key', '')  # 응답 JSON에서 목록 키
+        self.api_total_key = site_config.get('api_total_key', '')  # 전체 건수 키
+        self.api_page_param = site_config.get('api_page_param', 'pageIndex')   # 페이지 번호 파라미터명
+        self.api_size_param = site_config.get('api_size_param', 'pageUnit')    # 페이지 크기 파라미터명
+        self.api_page_size = site_config.get('api_page_size', 20)              # 페이지당 건수
+        self.api_field_map = site_config.get('api_field_map', {})  # {응답필드: tender필드}
         # 다행 구조 지원: item이 특정 td일 때 이전/다음 tr에서 agency, date 추출
         _sel = self.selectors
         self.agency_prev_row_selector = _sel.get('agency_prev_row', '')   # 이전 tr에서 agency 추출
@@ -74,6 +82,9 @@ class GenericCrawler(BaseCrawler):
             if self.crawl_type == 'list':
                 # 실제 웹페이지 크롤링
                 self._crawl_list_page()
+            elif self.crawl_type == 'api_json':
+                # JSON POST API 크롤링
+                self._crawl_api_json()
             elif self.crawl_type == 'sample':
                 # 샘플 데이터 생성 (테스트 목적으로만 사용)
                 print(f"[{self.site_name}] 샘플 모드는 비활성화되었습니다 - 크롤링 건너뜀")
@@ -87,6 +98,132 @@ class GenericCrawler(BaseCrawler):
             print(f"[{self.site_name}] 오류: {str(e)}")
 
         return self.get_results()
+
+    def _crawl_api_json(self):
+        """
+        JSON POST API 크롤링 (fanfandaero 등 REST API 기반 사이트)
+
+        settings.json 예시:
+        {
+            "crawl_type": "api_json",
+            "crawl_url": "https://example.kr/api/list.do",
+            "api_params": {"searchOrder": 1, ...},  # 고정 POST 파라미터
+            "api_items_key": "sprtBizApplList",      # 응답에서 목록 키
+            "api_total_key": "cntTot",               # 전체 건수 키
+            "api_page_param": "pageIndex",           # 페이지 번호 파라미터명
+            "api_size_param": "pageUnit",            # 페이지 크기 파라미터명
+            "api_page_size": 20,                     # 페이지당 건수
+            "api_field_map": {                       # 응답 필드 → tender 필드 매핑
+                "title": "sprtBizNm",
+                "tender_number": "sprtBizCd",
+                "agency": "operInstNm",
+                "announced_date": "rcritBgngYmd",
+                "deadline_date": "rcritEndYmd",
+                "url": "url"
+            }
+        }
+        """
+        if not self.api_items_key:
+            self.errors.append("api_items_key가 설정되지 않았습니다")
+            return
+        if not self.api_field_map:
+            self.errors.append("api_field_map이 설정되지 않았습니다")
+            return
+
+        import requests as _req
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': self.base_url,
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+        }
+
+        max_items = self.site_config.get('max_items', 200)
+        page = 1
+
+        while len(self.results) < max_items:
+            params = dict(self.api_params)
+            params[self.api_page_param] = page
+            params[self.api_size_param] = self.api_page_size
+
+            try:
+                resp = _req.post(self.crawl_url, headers=headers, data=params, timeout=20)
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception as e:
+                self.errors.append(f"API 요청 실패 (페이지 {page}): {e}")
+                break
+
+            items = data.get(self.api_items_key, [])
+            if not items:
+                break
+
+            for item in items:
+                if len(self.results) >= max_items:
+                    break
+                try:
+                    tender = self._convert_api_item(item)
+                    if tender:
+                        self.results.append(tender)
+                except Exception as e:
+                    print(f"[{self.site_name}] 아이템 변환 오류: {e}")
+
+            total = data.get(self.api_total_key, 0) if self.api_total_key else 0
+            print(f"[{self.site_name}] 페이지 {page}: {len(items)}건 (누적 {len(self.results)}건 / 전체 {total}건)")
+
+            if total and len(self.results) >= total:
+                break
+            if len(items) < self.api_page_size:
+                break
+            page += 1
+
+    def _convert_api_item(self, item):
+        """api_json 타입의 응답 아이템을 tender 형식으로 변환"""
+        fm = self.api_field_map
+        title_key = fm.get('title', '')
+        title = self._sanitize_text(str(item.get(title_key, ''))) if title_key else ''
+        if not title:
+            return None
+
+        agency_key = fm.get('agency', '')
+        _agency_raw = item.get(agency_key) if agency_key else None
+        agency = self._sanitize_text(str(_agency_raw)) if _agency_raw and _agency_raw != 'None' else ''
+        if not agency:
+            agency = self.default_agency or self.site_name
+
+        num_key = fm.get('tender_number', '')
+        tender_number = str(item.get(num_key, '')) if num_key else self._generate_tender_number(title)
+
+        ann_key = fm.get('announced_date', '')
+        announced_date = self._parse_date(str(item.get(ann_key, ''))) if ann_key else None
+
+        dl_key = fm.get('deadline_date', '')
+        deadline_date = self._parse_date(str(item.get(dl_key, ''))) if dl_key else None
+
+        url_key = fm.get('url', '')
+        raw_url = item.get(url_key) if url_key else None
+        url_val = str(raw_url) if raw_url and raw_url != 'None' else ''
+        if url_val and url_val.startswith('/'):
+            url_val = self.base_url.rstrip('/') + url_val
+        if not url_val and self.url_template:
+            url_val = self.url_template.format(tender_number=tender_number)
+        url_val = url_val or self.base_url
+
+        return {
+            'title': title[:200],
+            'agency': agency[:100],
+            'tender_number': tender_number,
+            'announced_date': announced_date,
+            'deadline_date': deadline_date,
+            'opening_date': None,
+            'estimated_price': None,
+            'bid_method': '일반경쟁입찰',
+            'status': '결과공고' if (self.result_notice_pattern and re.search(self.result_notice_pattern, title)) else '일반',
+            'is_sme_only': False,
+            'source_site': self.site_name,
+            'url': url_val,
+        }
 
     def _build_page_url(self, url, param, page):
         """페이지 번호를 URL 쿼리 파라미터에 추가/변경"""
@@ -313,7 +450,7 @@ class GenericCrawler(BaseCrawler):
                         break
 
         if link_elem:
-            if not link and href and href != '#' and not href.startswith('javascript:'):
+            if not link and href and not href.startswith('#') and not href.startswith('javascript:'):
                 # jsessionid 제거 (예: path;jsessionid=xxx?params)
                 if ';jsessionid=' in href:
                     href = href.split(';jsessionid=')[
@@ -438,7 +575,7 @@ class GenericCrawler(BaseCrawler):
             'status': '결과공고' if (self.result_notice_pattern and re.search(self.result_notice_pattern, title)) else '일반',
             'is_sme_only': False,
             'source_site': self.site_name,
-            'url': link if link else f"{self.base_url}/detail?id={tender_number}"
+            'url': link if link else (self.crawl_url or self.base_url)
         }
 
         self.results.append(tender)

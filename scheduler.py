@@ -268,7 +268,8 @@ class CrawlScheduler:
 
                         site_results[site_name] = {
                             'success': result['success'],
-                            'count': result['count']
+                            'count': result['count'],
+                            'errors': result.get('errors', [])[:3],
                         }
 
                         # 데이터가 있으면 오류가 있어도 저장 (부분 수집 허용)
@@ -282,7 +283,7 @@ class CrawlScheduler:
                         site_results[site_name] = {
                             'success': False,
                             'count': 0,
-                            'error': str(e)
+                            'errors': [str(e)],
                         }
 
                 # 중복 제거
@@ -438,7 +439,8 @@ class CrawlScheduler:
 
                         site_results[site_name] = {
                             'success': result['success'],
-                            'count': result['count']
+                            'count': result['count'],
+                            'errors': result.get('errors', [])[:3],
                         }
 
                         # 데이터가 있으면 오류가 있어도 저장 (부분 수집 허용)
@@ -452,7 +454,7 @@ class CrawlScheduler:
                         site_results[site_name] = {
                             'success': False,
                             'count': 0,
-                            'error': str(e)
+                            'errors': [str(e)],
                         }
 
                 # 중복 제거
