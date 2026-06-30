@@ -105,58 +105,58 @@ class BaseCrawler(ABC):
             list: 크롤링된 공고 데이터 리스트
         """
 
-    def fetch_page(self, url, timeout=30, wait_time=3):
+    def fetch_page(self, url, timeout=30, wait_time=3, retries=1, retry_wait=5):
         """
-        페이지 HTML 가져오기
+        페이지 HTML 가져오기. 일시적 오류(4xx/5xx) 발생 시 retry_wait초 후 retries회 재시도.
 
         Args:
             url (str): 페이지 URL
             timeout (int): 타임아웃 (초)
             wait_time (int): Selenium 사용 시 페이지 로드 대기 시간 (초)
+            retries (int): 실패 시 재시도 횟수 (기본 1회)
+            retry_wait (int): 재시도 전 대기 시간 (초)
 
         Returns:
             BeautifulSoup: 파싱된 HTML 또는 None
         """
-        try:
-            if self.use_selenium:
-                # Selenium으로 페이지 가져오기 (JavaScript 실행)
-                if not self.driver:
-                    self._init_selenium_driver()
+        last_error = None
+        for attempt in range(retries + 1):
+            try:
+                if self.use_selenium:
+                    if not self.driver:
+                        self._init_selenium_driver()
+                    self.driver.get(url)
+                    time.sleep(wait_time)
+                    html = self.driver.page_source
+                    return BeautifulSoup(html, 'html.parser')
+                else:
+                    response = self.session.get(
+                        url, timeout=timeout, verify=self.verify_ssl)
+                    response.raise_for_status()
 
-                self.driver.get(url)
-                time.sleep(wait_time)  # JavaScript 로딩 대기
+                    if self.encoding:
+                        response.encoding = self.encoding
+                    elif response.encoding is None or response.encoding == 'ISO-8859-1':
+                        response.encoding = response.apparent_encoding
 
-                html = self.driver.page_source
-                return BeautifulSoup(html, 'html.parser')
-            else:
-                # 기존 requests 방식
-                response = self.session.get(
-                    url, timeout=timeout, verify=self.verify_ssl)
-                response.raise_for_status()
+                    if response.encoding and 'euc' not in response.encoding.lower(
+                    ) and 'ut' not in response.encoding.lower():
+                        try:
+                            response.encoding = 'utf-8'
+                            response.text
+                        except BaseException:
+                            response.encoding = 'euc-kr'
 
-                # 인코딩 설정
-                if self.encoding:
-                    # 사이트별로 지정된 인코딩 사용
-                    response.encoding = self.encoding
-                elif response.encoding is None or response.encoding == 'ISO-8859-1':
-                    # 인코딩 자동 감지
-                    response.encoding = response.apparent_encoding
+                    return BeautifulSoup(response.text, 'html.parser')
 
-                # 한국 사이트의 경우 UTF-8이 아니면 EUC-KR 시도
-                if response.encoding and 'euc' not in response.encoding.lower(
-                ) and 'ut' not in response.encoding.lower():
-                    # 일반적인 한국 사이트 인코딩 시도
-                    try:
-                        response.encoding = 'utf-8'
-                        response.text
-                        # UTF-8로 디코딩이 실패하면 EUC-KR 시도
-                    except BaseException:
-                        response.encoding = 'euc-kr'
+            except Exception as e:
+                last_error = e
+                if attempt < retries:
+                    print(f"[{self.site_name}] 재시도 {attempt + 1}/{retries} ({retry_wait}초 후): {e}")
+                    time.sleep(retry_wait)
 
-                return BeautifulSoup(response.text, 'html.parser')
-        except Exception as e:
-            self.errors.append(f"페이지 로드 실패 ({url}): {str(e)}")
-            return None
+        self.errors.append(f"페이지 로드 실패 ({url}): {str(last_error)}")
+        return None
 
     def post_request(self, url, data, timeout=30):
         """
