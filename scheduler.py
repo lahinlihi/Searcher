@@ -7,6 +7,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
 import json
+import concurrent.futures
 
 from crawlers.sungdonggu_crawler import SungDongGuCrawler
 from crawlers.generic_crawler import GenericCrawler
@@ -253,6 +254,13 @@ class CrawlScheduler:
                 sites_config = settings_manager.get('crawl.sites_config', {})
                 if not sites_config:
                     sites_config = settings_manager.get('crawl.sites', {})
+
+                # Selenium 드라이버를 매 크롤 실행 전 초기화
+                # — 이전 실행에서 열어둔 드라이버가 오래 유지되면(16시간 등) stale 상태가 되어
+                #   driver.get()에서 무한대기가 발생함. 실행마다 새 드라이버를 사용해 방지.
+                for crawler in self.crawlers.values():
+                    if hasattr(crawler, '_close_selenium_driver'):
+                        crawler._close_selenium_driver()
 
                 # 각 사이트 크롤링
                 for site_name, crawler in self.crawlers.items():

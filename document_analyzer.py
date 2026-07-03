@@ -691,6 +691,17 @@ def download_file(url, dest_dir):
     """URL에서 파일 다운로드 → 로컬 경로 반환, 실패 시 None"""
     try:
         resp = requests.get(url, headers=_HEADERS, timeout=30, stream=True)
+        if not resp.ok:
+            ct = resp.headers.get('content-type', '')
+            if 'json' in ct:
+                try:
+                    body = resp.json()
+                    logger.warning(f"다운로드 실패 ({resp.status_code}): {body.get('ErrorMsg', body)}")
+                except Exception:
+                    pass
+            else:
+                logger.warning(f"다운로드 실패 ({resp.status_code}): {url}")
+            return None
         resp.raise_for_status()
 
         # 1순위: Content-Disposition 헤더에서 파일명 추출
@@ -1435,16 +1446,20 @@ def analyze_tender(tender_url, tender_title='', api_key=None, groq_api_key=None,
 
     texts = []
     files_read = []  # 실제로 텍스트가 성공적으로 추출된 파일 목록
+    download_failed = []   # 다운로드 자체가 실패한 파일
+    extract_failed  = []   # 다운로드는 됐지만 텍스트 추출 실패한 파일
     with tempfile.TemporaryDirectory() as tmpdir:
         # 최대 5개 파일을 처리 (같은 내용의 HWP·PDF 중복 등 고려)
         for link in ordered_links[:5]:
             filepath = download_file(link['url'], tmpdir)
             if not filepath:
                 logger.info(f"다운로드 실패: {link.get('name', '')}")
+                download_failed.append(link.get('name', ''))
                 continue  # 다운로드 실패 시 건너뜀
             text = extract_text(filepath)
             if not text or len(text) < 50:
                 logger.info(f"텍스트 추출 실패/너무 짧음: {link.get('name', '')} ({len(text) if text else 0}자)")
+                extract_failed.append(link.get('name', ''))
                 continue  # 텍스트 추출 실패 시 건너뜀
             fname = link.get('name', '')
             # 양식 파일(999)은 앞에서 중요 파일을 이미 읽었으면 스킵
@@ -1465,10 +1480,21 @@ def analyze_tender(tender_url, tender_title='', api_key=None, groq_api_key=None,
     combined_text = '\n\n'.join(texts)
 
     if not combined_text or len(combined_text) < 50:
-        result['error'] = (
-            '파일을 다운로드했으나 텍스트를 추출할 수 없었습니다.\n'
-            'HWP 바이너리 파일은 추가 라이브러리(gethwp 또는 olefile)가 필요합니다.'
-        )
+        if download_failed and not extract_failed and not files_read:
+            # 모든 파일이 다운로드 단계에서 실패 (파일 없음·만료·접근 거부 등)
+            result['error'] = (
+                '분석할 파일이 없습니다.\n'
+                '공고가 마감됐거나 첨부파일이 삭제된 것 같습니다. '
+                '공고 원문 페이지에서 직접 파일을 확인해 주세요.'
+            )
+        elif extract_failed and not files_read:
+            # 다운로드는 됐지만 텍스트 추출 실패 (HWP 바이너리 등)
+            result['error'] = (
+                '파일을 다운로드했으나 텍스트를 추출할 수 없었습니다.\n'
+                'HWP 바이너리 파일은 추가 라이브러리(gethwp 또는 olefile)가 필요합니다.'
+            )
+        else:
+            result['error'] = '첨부파일에서 분석 가능한 텍스트를 찾을 수 없습니다.'
         return result
 
     result['text_length'] = len(combined_text)

@@ -40,7 +40,7 @@ def _run_analysis_background(tender_id, tender_url, tender_title, source_site, a
                 def _on_rpm_wait(model_name, wait_sec):
                     try:
                         status_msg = (
-                            f'분당 요청 한도 도달 ({model_name}) — '
+                            f'[RPM] 분당 요청 한도 도달 ({model_name}) — '
                             f'{wait_sec}초 후 자동 재시도 중...'
                         )
                         _dbg(f'RPM 대기: {status_msg}')

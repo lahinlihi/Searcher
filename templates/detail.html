@@ -2736,24 +2736,25 @@ function _startRpmCountdown(tenderId) {
 }
 
 function _showError(errMsg, tenderId) {
-    // 이전 상태 완전 초기화: 두 에러 박스 모두 먼저 숨김 후 필요한 것만 표시
+    // 반드시 타이머 중단 후 두 박스 모두 숨긴 뒤 필요한 것 하나만 표시
     _clearRpmTimer();
     document.getElementById('analysis-loading').classList.add('hidden');
     document.getElementById('analysis-result').classList.add('hidden');
     document.getElementById('rpm-error-box').classList.add('hidden');
     document.getElementById('general-error-box').classList.add('hidden');
-    // rpm-countdown 표시 초기화 (이전 타이머 값 잔류 방지)
-    const timerEl = document.getElementById('rpm-countdown');
-    if (timerEl) { timerEl.textContent = '2:00'; timerEl.classList.remove('ai-rpm-expiring'); }
-    const fillEl = document.getElementById('rpm-progress-fill');
-    if (fillEl) fillEl.style.width = '100%';
 
     document.getElementById('analysis-error').classList.remove('hidden');
     const isRpm = errMsg.startsWith('[RPM]');
     if (isRpm) {
+        // RPM 박스: 타이머 초기화 후 표시
+        const timerEl = document.getElementById('rpm-countdown');
+        if (timerEl) { timerEl.textContent = '2:00'; timerEl.classList.remove('ai-rpm-expiring'); }
+        const fillEl = document.getElementById('rpm-progress-fill');
+        if (fillEl) fillEl.style.width = '100%';
         document.getElementById('rpm-error-box').classList.remove('hidden');
         _startRpmCountdown(tenderId);
     } else {
+        // 일반 오류 박스만 표시 — 타이머 박스는 건드리지 않음
         document.getElementById('general-error-box').classList.remove('hidden');
         document.getElementById('analysis-error-msg').textContent = errMsg;
     }
