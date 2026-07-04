@@ -110,11 +110,7 @@ class RSSCrawler(BaseCrawler):
         # 공고번호 생성 (URL에서 nttId 추출 시도)
         tender_number = self._extract_tender_number(url)
 
-        # 마감일은 공고일로부터 랜덤으로 설정 (실제 데이터가 없으므로)
         deadline_date = None
-        if announced_date:
-            days_offset = random.randint(7, 30)
-            deadline_date = announced_date + timedelta(days=days_offset)
 
         return {
             'title': title[:200],

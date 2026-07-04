@@ -22,7 +22,7 @@ from crawlers.mois_predece_crawler import MOISPredeceCrawler
 from crawlers.kist_bid_crawler import KISTBidCrawler
 from crawlers.kist_notice_crawler import KISTNoticeCrawler
 from crawlers.koica_api_crawler import KOICAApiCrawler
-from deduplication import mark_duplicates_in_db
+from deduplication import mark_duplicates_in_db, mark_nia_procurement_duplicates
 from database import db, Tender, CrawlLog
 from settings_manager import settings_manager
 
@@ -384,6 +384,11 @@ class CrawlScheduler:
                 # 크롤링 후 smb24 기관명 보정 (agency 없는 건 bizinfo 스크래핑)
                 self._fix_smb24_agencies()
 
+                # NIA [조달입찰공고] 중 나라장터 동명 공고가 있으면 중복 처리
+                nia_dup_count = mark_nia_procurement_duplicates(self.app)
+                if nia_dup_count:
+                    print(f"  - NIA 조달입찰공고 중복처리: {nia_dup_count}건")
+
                 # 크롤링 후 코드 변경사항 자동 push (data/는 .gitignore 제외)
                 self._git_push()
 
@@ -554,6 +559,11 @@ class CrawlScheduler:
 
                 # 크롤링 후 smb24 기관명 보정
                 self._fix_smb24_agencies()
+
+                # NIA [조달입찰공고] 중 나라장터 동명 공고가 있으면 중복 처리
+                nia_dup_count = mark_nia_procurement_duplicates(self.app)
+                if nia_dup_count:
+                    print(f"  - NIA 조달입찰공고 중복처리: {nia_dup_count}건")
 
                 return {
                     'success': True,

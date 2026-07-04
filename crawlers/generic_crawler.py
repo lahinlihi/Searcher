@@ -506,7 +506,7 @@ class GenericCrawler(BaseCrawler):
                 # detail_deadline이 설정된 경우 상세 페이지에서 날짜를 가져오므로 초기값은 None
                 deadline_date = None
             else:
-                deadline_date = datetime.now() + timedelta(days=random.randint(7, 30))
+                deadline_date = None
         else:
             announced_date = _next_row_announced or start_date
             deadline_date = _next_row_deadline or end_date
@@ -544,21 +544,35 @@ class GenericCrawler(BaseCrawler):
                 pass
 
         # 상세 페이지에서 마감일 추출 (detail_deadline 설정된 경우)
-        # 설정 형식: {"label": "공고마감일자"} — <dt>라벨</dt><dd>날짜</dd> 구조 대응
+        # 설정 형식:
+        #   {"label": "공고마감일자"}       — <dt>라벨</dt><dd>날짜</dd> 구조
+        #   {"td_label": "마감일시:"}      — <td>라벨</td><td>날짜</td> 구조 (NIA 등)
         if self.detail_deadline and _detail_soup:
             try:
                 _label = self.detail_deadline.get('label', '')
+                _td_label = self.detail_deadline.get('td_label', '')
                 if _label:
                     for _dt in _detail_soup.find_all('dt'):
                         if _label in _dt.get_text(strip=True):
                             _dd = _dt.find_next_sibling('dd')
                             if _dd:
                                 _dd_text = _dd.get_text(strip=True)
-                                if _dd_text:  # 빈 dd는 건너뜀 (빈 텍스트 → _parse_date 랜덤 폴백 방지)
+                                if _dd_text:
                                     _parsed = self._parse_date(_dd_text)
                                     if _parsed:
                                         deadline_date = _parsed
-                                break
+                            break
+                elif _td_label:
+                    for _td in _detail_soup.find_all('td'):
+                        if _td_label in _td.get_text(strip=True):
+                            _next_td = _td.find_next_sibling('td')
+                            if _next_td:
+                                _val = _next_td.get_text(strip=True)
+                                if _val:
+                                    _parsed = self._parse_date(_val)
+                                    if _parsed:
+                                        deadline_date = _parsed
+                            break
             except Exception:
                 pass
 
@@ -569,7 +583,7 @@ class GenericCrawler(BaseCrawler):
             'tender_number': tender_number,
             'announced_date': announced_date,
             'deadline_date': deadline_date,
-            'opening_date': deadline_date + timedelta(days=random.randint(1, 15)) if deadline_date else None,
+            'opening_date': None,
             'estimated_price': estimated_price,
             'bid_method': '일반경쟁입찰',
             'status': '결과공고' if (self.result_notice_pattern and re.search(self.result_notice_pattern, title)) else '일반',
@@ -636,9 +650,9 @@ class GenericCrawler(BaseCrawler):
         return text
 
     def _parse_date(self, date_text):
-        """날짜 문자열을 datetime으로 파싱"""
+        """날짜 문자열을 datetime으로 파싱. 파싱 실패 시 None 반환."""
         if not date_text:
-            return datetime.now() - timedelta(days=random.randint(1, 10))
+            return None
 
         # 4자리 연도 패턴 우선 (YYYY-MM-DD, YYYY.MM.DD 등)
         date_patterns_4y = [
@@ -670,8 +684,7 @@ class GenericCrawler(BaseCrawler):
                 except BaseException:
                     pass
 
-        # 파싱 실패시 기본값
-        return datetime.now() - timedelta(days=random.randint(1, 10))
+        return None
 
     def _parse_date_range(self, text):
         """
