@@ -4,9 +4,8 @@ RSS 2.0 형식의 공고 피드를 크롤링
 """
 
 from .base_crawler import BaseCrawler
-from datetime import datetime, timedelta
+from datetime import datetime
 import xml.etree.ElementTree as ET
-import random
 
 
 class RSSCrawler(BaseCrawler):
@@ -130,7 +129,7 @@ class RSSCrawler(BaseCrawler):
     def _parse_date(self, date_str):
         """날짜 문자열을 datetime으로 변환"""
         if not date_str:
-            return datetime.now()
+            return None
 
         # RSS 날짜 형식들
         date_formats = [
@@ -146,19 +145,16 @@ class RSSCrawler(BaseCrawler):
             except ValueError:
                 continue
 
-        # 파싱 실패 시 현재 시간
-        return datetime.now()
+        return None
 
     def _extract_tender_number(self, url):
         """URL에서 공고번호 추출"""
-        if not url:
-            return f"{self.site_name.upper()}-{random.randint(10000, 99999)}"
-
-        # nttId 파라미터 추출 시도
         import re
-        match = re.search(r'nttId=(\d+)', url)
-        if match:
-            return f"{self.site_name}-{match.group(1)}"
-
-        # 추출 실패 시 랜덤 번호
-        return f"{self.site_name.upper()}-{random.randint(10000, 99999)}"
+        import hashlib
+        if url:
+            match = re.search(r'nttId=(\d+)', url)
+            if match:
+                return f"{self.site_name}-{match.group(1)}"
+            # URL 해시로 안정적인 고유번호 생성
+            return f"{self.site_name}-{hashlib.md5(url.encode()).hexdigest()[:10]}"
+        return None

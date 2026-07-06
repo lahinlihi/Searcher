@@ -1,4 +1,11 @@
 import os
+import sys
+# Windows cp949 환경에서 한글·특수문자 출력 시 UnicodeEncodeError 방지
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 from dotenv import load_dotenv
 load_dotenv()   # .env 파일 로드 (없으면 조용히 무시)
 
