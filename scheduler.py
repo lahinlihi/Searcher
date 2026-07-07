@@ -701,6 +701,11 @@ class CrawlScheduler:
                 print(f"[SMB24 기관명 보정] 보정 대상: {len(targets)}건 — 병렬 스크래핑 시작")
 
                 _crawler = SMB24ApiCrawler({'service_key': ''})
+                # 15개 동시 요청에 맞게 커넥션 풀 확장 (기본값 10 → 15)
+                from requests.adapters import HTTPAdapter
+                _adapter = HTTPAdapter(pool_connections=1, pool_maxsize=15)
+                _crawler.session.mount('http://', _adapter)
+                _crawler.session.mount('https://', _adapter)
 
                 def _scrape(tender_id, url):
                     try:
