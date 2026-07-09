@@ -439,9 +439,7 @@ def api_tenders():
                 announced_date_from or announced_date_to or deadline_date_from or deadline_date_to):
             if not include_expired:
                 today = datetime.now()
-                one_month_later = today + timedelta(days=30)
                 query = query.filter(Tender.deadline_date >= today)
-                query = query.filter(Tender.deadline_date <= one_month_later)
 
         # 날짜 필터 적용
         if announced_date_from:
