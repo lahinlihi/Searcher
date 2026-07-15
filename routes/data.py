@@ -116,8 +116,8 @@ def api_export_csv():
         # 응답 생성
         response = make_response(csv_content)
         response.headers['Content-Type'] = 'text/csv; charset=utf-8-sig'
-        response.headers['Content-Disposition'] = f'attachment; filename=tenders_{
-            datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+        _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        response.headers['Content-Disposition'] = f'attachment; filename=tenders_{_ts}.csv'
 
         return response
 
@@ -155,8 +155,8 @@ def api_export_excel():
 
         response = make_response(html_content)
         response.headers['Content-Type'] = 'application/vnd.ms-excel; charset=utf-8'
-        response.headers['Content-Disposition'] = f'attachment; filename=tenders_{
-            datetime.now().strftime("%Y%m%d_%H%M%S")}.xls'
+        _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        response.headers['Content-Disposition'] = f'attachment; filename=tenders_{_ts}.xls'
 
         return response
 

@@ -15,61 +15,114 @@ document.addEventListener('DOMContentLoaded', function() {
 // ── 수동 크롤링 ──────────────────────────────────────────────────────────────
 let crawlPollInterval = null;
 
+function _setCrawlRunningUI(progress) {
+    const btn = document.getElementById('crawl-btn');
+    const box = document.getElementById('crawl-status-box');
+    const title = document.getElementById('crawl-status-title');
+    const detail = document.getElementById('crawl-status-detail');
+    const spinner = document.getElementById('crawl-spinner');
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = '강제 중지';
+        btn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+        btn.classList.add('bg-red-600', 'hover:bg-red-700');
+    }
+    if (box) box.classList.remove('hidden');
+    if (title) { title.textContent = '크롤링 진행 중...'; title.className = 'font-medium text-blue-700'; }
+    if (spinner) spinner.classList.remove('hidden');
+
+    if (detail) {
+        if (progress && progress.sites_total) {
+            const mins = Math.floor(progress.current_site_elapsed_sec / 60);
+            const secs = progress.current_site_elapsed_sec % 60;
+            const elapsedStr = mins > 0 ? `${mins}분 ${secs}초` : `${secs}초`;
+            detail.textContent =
+                `[${progress.sites_done}/${progress.sites_total}] (${progress.percent}%) ` +
+                `현재: ${progress.current_site} — ${elapsedStr} 경과 · 버튼을 누르면 즉시 중지`;
+        } else {
+            detail.textContent = '백그라운드에서 실행 중입니다. 버튼을 누르면 즉시 중지합니다.';
+        }
+    }
+}
+
+function _setCrawlIdleUI() {
+    const btn = document.getElementById('crawl-btn');
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = '실시간 크롤링 시작';
+        btn.classList.remove('bg-red-600', 'hover:bg-red-700');
+        btn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+    }
+}
+
 // 페이지 진입 시 크롤링이 이미 진행 중이면 폴링 자동 재개
 async function resumeCrawlIfRunning() {
     try {
         const res = await fetch('/api/crawl/status');
         if (!res.ok) return;
         const data = await res.json();
-        if (data.status === 'running') {
-            const btn = document.getElementById('crawl-btn');
-            const box = document.getElementById('crawl-status-box');
-            const title = document.getElementById('crawl-status-title');
-            const detail = document.getElementById('crawl-status-detail');
-            const spinner = document.getElementById('crawl-spinner');
-            if (btn) { btn.disabled = true; btn.textContent = '크롤링 중...'; }
-            if (box) box.classList.remove('hidden');
-            if (title) { title.textContent = '크롤링 진행 중...'; title.className = 'font-medium text-blue-700'; }
-            if (detail) detail.textContent = '백그라운드에서 실행 중입니다.';
-            if (spinner) spinner.classList.remove('hidden');
+        if (data.is_running || data.status === 'running') {
+            _setCrawlRunningUI(data.progress);
             if (crawlPollInterval) clearInterval(crawlPollInterval);
-            crawlPollInterval = setInterval(pollCrawlStatus, 3000);
+            crawlPollInterval = setInterval(pollCrawlStatus, 1500);
         }
     } catch (_) {}
 }
 
 async function startCrawling() {
     const btn = document.getElementById('crawl-btn');
+
+    // 버튼이 "강제 중지" 상태(빨간색)이면 즉시 중지 요청
+    if (btn && btn.textContent.trim() === '강제 중지') {
+        btn.disabled = true;
+        btn.textContent = '중지 중...';
+        try {
+            // 내부 엔드포인트 우선, 실패 시 admin 엔드포인트
+            const stopRes = await fetch('/api/internal/crawl/stop', { method: 'POST' });
+            if (!stopRes.ok) await fetch('/api/crawl/stop', { method: 'POST' });
+            const detail = document.getElementById('crawl-status-detail');
+            if (detail) detail.textContent = '즉시 중지 처리 중 — 1~2초 내 반영됩니다.';
+        } catch (_) {}
+        btn.disabled = false;
+        btn.textContent = '강제 중지';
+        return;
+    }
+
+    // 크롤링 시작
     const box = document.getElementById('crawl-status-box');
     const title = document.getElementById('crawl-status-title');
     const detail = document.getElementById('crawl-status-detail');
     const spinner = document.getElementById('crawl-spinner');
     const statusText = document.getElementById('crawl-status-text');
 
-    btn.disabled = true;
-    btn.textContent = '크롤링 중...';
-    box.classList.remove('hidden');
-    title.textContent = '크롤링 진행 중...';
-    title.className = 'font-medium text-blue-700';
-    detail.textContent = '잠시만 기다려주세요.';
-    spinner.classList.remove('hidden');
-    statusText.textContent = '';
+    _setCrawlRunningUI();
+    if (detail) detail.textContent = '잠시만 기다려주세요.';
+    if (statusText) statusText.textContent = '';
     document.getElementById('crawl-last-result').classList.add('hidden');
 
     try {
-        const res = await fetch('/api/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
-        });
+        // 내부 엔드포인트(로그인 불필요) 우선, 실패 시 admin 엔드포인트로 폴백
+        let res = await fetch('/api/internal/crawl/start', { method: 'POST' });
+        if (res.status === 403 || res.status === 404) {
+            res = await fetch('/api/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+        }
         const data = await res.json();
         if (!res.ok) {
-            showCrawlError(data.error || '크롤링 시작 실패');
-            return;
+            if (res.status === 409) {
+                // 이미 실행 중 — UI만 동기화하고 폴링 시작
+                if (detail) detail.textContent = '이미 크롤링이 진행 중입니다.';
+            } else {
+                showCrawlError(data.error || '크롤링 시작 실패');
+                return;
+            }
         }
-        // 상태 폴링 시작
+        // 상태 폴링 시작 (즉시 중지 반영을 빠르게 체감하도록 1.5초 간격)
         if (crawlPollInterval) clearInterval(crawlPollInterval);
-        crawlPollInterval = setInterval(pollCrawlStatus, 3000);
+        crawlPollInterval = setInterval(pollCrawlStatus, 1500);
     } catch (e) {
         showCrawlError('서버 연결 오류');
     }
@@ -84,8 +137,13 @@ async function pollCrawlStatus() {
         const title = document.getElementById('crawl-status-title');
         const detail = document.getElementById('crawl-status-detail');
         const spinner = document.getElementById('crawl-spinner');
-        const btn = document.getElementById('crawl-btn');
         const statusText = document.getElementById('crawl-status-text');
+
+        // 서버가 실제로 실행 중이면 UI 동기화
+        if (data.is_running) {
+            _setCrawlRunningUI(data.progress);
+            return;
+        }
 
         if (data.status === 'completed') {
             clearInterval(crawlPollInterval);
@@ -96,13 +154,22 @@ async function pollCrawlStatus() {
             detail.textContent = `총 ${data.total_found}건 수집 / 신규 ${data.new_tenders}건`;
             document.getElementById('crawl-status-box').querySelector('div').className = 'flex items-center gap-2 mb-2';
             document.getElementById('crawl-status-box').className = 'p-4 bg-green-50 border border-green-200 rounded-lg';
-            btn.disabled = false;
-            btn.textContent = '실시간 크롤링 시작';
+            _setCrawlIdleUI();
             const elapsed = data.completed_at
                 ? Math.round((new Date(data.completed_at) - new Date(data.started_at)) / 1000) + '초'
                 : '';
             statusText.textContent = `마지막: ${data.total_found}건 수집 (${elapsed})`;
             showLastCrawlResult(data);
+        } else if (data.status === 'stopped') {
+            clearInterval(crawlPollInterval);
+            crawlPollInterval = null;
+            spinner.classList.add('hidden');
+            title.textContent = '크롤링 중지됨';
+            title.className = 'font-medium text-yellow-700';
+            detail.textContent = `강제 중지 — ${data.total_found || 0}건 수집 / 신규 ${data.new_tenders || 0}건`;
+            document.getElementById('crawl-status-box').className = 'p-4 bg-yellow-50 border border-yellow-200 rounded-lg';
+            _setCrawlIdleUI();
+            statusText.textContent = `중지됨: ${data.total_found || 0}건 수집`;
         } else if (data.status === 'failed') {
             clearInterval(crawlPollInterval);
             crawlPollInterval = null;

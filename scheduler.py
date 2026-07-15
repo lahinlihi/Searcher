@@ -56,6 +56,17 @@ class CrawlScheduler:
         self.app = app
         self.scheduler = BackgroundScheduler(timezone='Asia/Seoul')
 
+        # 크롤링 중지 제어
+        import threading
+        self._stop_event = threading.Event()   # set() 하면 크롤러 루프 중단
+        self._crawl_thread = None              # 현재 실행 중인 크롤 스레드
+
+        # 진행 상황 추적 (진행률/현재 사이트/경과 시간 표시용)
+        self._current_site = None
+        self._current_site_started_at = None
+        self._sites_done = 0
+        self._sites_total = 0
+
         # 원격 sync 모드 여부 (팀원 인스턴스)
         self._remote_sync = None
         sync_cfg = settings_manager.get('sync', {})
@@ -124,6 +135,41 @@ class CrawlScheduler:
         """스케줄러 중지"""
         self.scheduler.shutdown()
         print("[스케줄러] 스케줄러가 중지되었습니다.")
+
+    @property
+    def is_crawling(self):
+        """현재 크롤링이 진행 중인지 여부"""
+        return self._crawl_thread is not None and self._crawl_thread.is_alive()
+
+    @property
+    def crawl_progress(self):
+        """현재 크롤링 진행 상황 (진행 중이 아니면 None)"""
+        if not self.is_crawling:
+            return None
+        elapsed = 0
+        if self._current_site_started_at:
+            elapsed = int((datetime.now() - self._current_site_started_at).total_seconds())
+        percent = round(self._sites_done / self._sites_total * 100, 1) if self._sites_total else 0
+        return {
+            'current_site': self._current_site,
+            'current_site_elapsed_sec': elapsed,
+            'sites_done': self._sites_done,
+            'sites_total': self._sites_total,
+            'percent': percent,
+        }
+
+    def stop_crawl(self):
+        """
+        실행 중인 크롤링을 즉시 중지.
+        현재 처리 중인 크롤러의 완료를 기다리지 않고 바로 반환한다.
+        Selenium 크롤러는 driver.quit()으로 대기 중인 페이지 로드를 강제 종료하며,
+        그 외 크롤러는 백그라운드 스레드가 자체 타임아웃(약 30초) 내에 조용히 소멸한다.
+        """
+        if not self.is_crawling:
+            return False
+        self._stop_event.set()
+        print("[수동 크롤링] 강제 중지 요청됨 — 즉시 중단합니다.")
+        return True
 
     def run_remote_sync_job(self):
         """
@@ -227,11 +273,100 @@ class CrawlScheduler:
         except Exception as e:
             print(f"[스케줄러] git push 오류 (무시하고 계속): {e}")
 
+    def _run_crawler_with_timeout(self, site_name, crawler, timeout_sec=120):
+        """
+        크롤러를 타임아웃과 함께 실행.
+        타임아웃은 '문제 감지 도구'이며, 발생 시 원인 힌트와 함께 로그를 남기고
+        해당 크롤러를 건너뛴다. 정상 실행이 목표이며 타임아웃은 최후의 안전망.
+
+        강제 중지(_stop_event)가 설정되면 현재 크롤러의 완료를 기다리지 않고
+        즉시 제어를 반환한다. 백그라운드 스레드는 자체 타임아웃(페이지 로드 30초,
+        HTTP 요청 30초) 내에 스스로 종료되며, 결과는 이미 버려지므로 무해하다.
+        Selenium 크롤러는 driver.quit()을 즉시 호출해 대기 중인 페이지 로드를 강제 종료한다.
+
+        Returns:
+            (result_dict, status): status는 'ok' | 'timeout' | 'stopped'
+        """
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+        import time
+
+        start_time = time.time()
+        crawler_type = type(crawler).__name__
+        poll_interval = 0.5
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(crawler.crawl)
+
+        while True:
+            if self._stop_event.is_set():
+                elapsed = int(time.time() - start_time)
+                print(f'[{site_name}] ■ 강제 중지 요청 수신 ({elapsed}초 진행 중) — 대기하지 않고 즉시 중단합니다.')
+
+                # Selenium 드라이버가 있으면 즉시 종료 시도 (대기 중인 driver.get() 강제 해제)
+                if getattr(crawler, 'use_selenium', False):
+                    try:
+                        crawler._close_selenium_driver()
+                    except Exception:
+                        pass
+
+                # 스레드 종료를 기다리지 않고 반환 (wait=False) — 백그라운드에서 자체 타임아웃 시 조용히 소멸
+                executor.shutdown(wait=False, cancel_futures=False)
+
+                return {
+                    'success': False,
+                    'count': 0,
+                    'data': [],
+                    'errors': ['사용자 강제 중지'],
+                }, 'stopped'
+
+            try:
+                result = future.result(timeout=poll_interval)
+                executor.shutdown(wait=False)
+                return result, 'ok'
+            except FuturesTimeout:
+                elapsed = time.time() - start_time
+                if elapsed < timeout_sec:
+                    continue  # 짧은 폴링 간격으로 재시도, stop_event 재확인
+
+                elapsed = int(elapsed)
+                # 타임아웃 원인 힌트 추론
+                use_selenium = getattr(crawler, 'use_selenium', False)
+                if use_selenium:
+                    hint = 'Selenium(Chrome) 드라이버가 응답하지 않음 — Chrome/ChromeDriver 버전 확인 또는 headless 환경 문제'
+                else:
+                    hint = '네트워크 응답 없음 — 대상 사이트 점검 또는 방화벽·IP 차단 여부 확인'
+
+                msg = (
+                    f'[{site_name}] ⚠ 크롤러 타임아웃 ({elapsed}초 경과 / 한도 {timeout_sec}초)\n'
+                    f'  크롤러 유형: {crawler_type}\n'
+                    f'  원인 힌트: {hint}\n'
+                    f'  조치: 해당 크롤러를 건너뛰고 다음 크롤러 계속 실행. 유지보수 필요.'
+                )
+                print(msg)
+
+                if use_selenium:
+                    try:
+                        crawler._close_selenium_driver()
+                    except Exception:
+                        pass
+                executor.shutdown(wait=False)
+
+                return {
+                    'success': False,
+                    'count': 0,
+                    'data': [],
+                    'errors': [f'타임아웃 {elapsed}초 — {hint}'],
+                }, 'timeout'
+
     def run_crawl_job(self):
         """
         크롤링 작업 실행
         모든 사이트를 크롤링하고 결과를 DB에 저장
         """
+        import threading as _threading
+        self._stop_event.clear()
+        self._crawl_thread = _threading.current_thread()
+
         print(f"\n[스케줄러] 자동 크롤링 시작: {datetime.now()}")
 
         # 크롤링 전 최신 코드 반영
@@ -262,23 +397,46 @@ class CrawlScheduler:
                     if hasattr(crawler, '_close_selenium_driver'):
                         crawler._close_selenium_driver()
 
-                # 각 사이트 크롤링
+                # 진행률 초기화 (비활성화 사이트 제외한 실제 실행 대상 수 기준)
+                self._sites_done = 0
+                self._sites_total = sum(
+                    1 for s in self.crawlers
+                    if sites_config.get(s, {}).get('enabled', True)
+                )
+
+                # 각 사이트 크롤링 (사이트당 최대 120초 — 진단용 타임아웃)
                 for site_name, crawler in self.crawlers.items():
+                    # 강제 중지 신호 확인
+                    if self._stop_event.is_set():
+                        print("[스케줄러] 중지 신호 수신 — 나머지 크롤러를 건너뜁니다.")
+                        break
+
                     # 설정에서 비활성화된 사이트는 건너뛰기
                     site_info = sites_config.get(site_name, {})
                     if not site_info.get('enabled', True):
                         print(f"[{site_name}] 설정에서 비활성화됨 - 건너뜀")
                         continue
 
+                    self._current_site = site_name
+                    self._current_site_started_at = datetime.now()
+
                     try:
                         print(f"[{site_name}] 크롤링 시작...")
-                        result = crawler.crawl()
+                        result, status = self._run_crawler_with_timeout(site_name, crawler)
+                        site_elapsed = int((datetime.now() - self._current_site_started_at).total_seconds())
 
                         site_results[site_name] = {
                             'success': result['success'],
                             'count': result['count'],
                             'errors': result.get('errors', [])[:3],
+                            'elapsed_sec': site_elapsed,
                         }
+                        self._sites_done += 1
+
+                        if status == 'stopped':
+                            break
+                        if status == 'timeout':
+                            continue
 
                         # 데이터가 있으면 오류가 있어도 저장 (부분 수집 허용)
                         if result['data']:
@@ -372,10 +530,13 @@ class CrawlScheduler:
                 crawl_log.new_tenders = new_count
                 crawl_log.site_results = json.dumps(
                     site_results, ensure_ascii=False)
-                crawl_log.status = 'completed'
+                crawl_log.status = 'stopped' if self._stop_event.is_set() else 'completed'
                 db.session.commit()
 
-                print("[스케줄러] 크롤링 완료")
+                if self._stop_event.is_set():
+                    print("[스케줄러] 크롤링 강제 중지됨")
+                else:
+                    print("[스케줄러] 크롤링 완료")
                 print(f"  - 총 수집: {len(all_tenders)}건")
                 print(f"  - 새 공고: {new_count}건")
                 print(f"  - 업데이트: {update_count}건")
@@ -411,6 +572,10 @@ class CrawlScheduler:
         Returns:
             dict: 크롤링 결과
         """
+        import threading as _threading
+        self._stop_event.clear()
+        self._crawl_thread = _threading.current_thread()
+
         print(f"[수동 크롤링] 시작: {datetime.now()}")
 
         with self.app.app_context():
@@ -444,17 +609,37 @@ class CrawlScheduler:
                         if site_info.get('enabled', True):
                             crawlers_to_run[site_name] = crawler
 
-                # 각 사이트 크롤링
+                # 진행률 초기화
+                self._sites_done = 0
+                self._sites_total = len(crawlers_to_run)
+
+                # 각 사이트 크롤링 (사이트당 최대 120초 — 진단용 타임아웃)
                 for site_name, crawler in crawlers_to_run.items():
+                    # 강제 중지 신호 확인
+                    if self._stop_event.is_set():
+                        print("[수동 크롤링] 중지 신호 수신 — 나머지 크롤러를 건너뜁니다.")
+                        break
+
+                    self._current_site = site_name
+                    self._current_site_started_at = datetime.now()
+
                     try:
                         print(f"[{site_name}] 크롤링 시작...")
-                        result = crawler.crawl()
+                        result, status = self._run_crawler_with_timeout(site_name, crawler)
+                        site_elapsed = int((datetime.now() - self._current_site_started_at).total_seconds())
 
                         site_results[site_name] = {
                             'success': result['success'],
                             'count': result['count'],
                             'errors': result.get('errors', [])[:3],
+                            'elapsed_sec': site_elapsed,
                         }
+                        self._sites_done += 1
+
+                        if status == 'stopped':
+                            break
+                        if status == 'timeout':
+                            continue
 
                         # 데이터가 있으면 오류가 있어도 저장 (부분 수집 허용)
                         if result['data']:
@@ -548,10 +733,13 @@ class CrawlScheduler:
                 crawl_log.new_tenders = new_count
                 crawl_log.site_results = json.dumps(
                     site_results, ensure_ascii=False)
-                crawl_log.status = 'completed'
+                crawl_log.status = 'stopped' if self._stop_event.is_set() else 'completed'
                 db.session.commit()
 
-                print("[수동 크롤링] 완료")
+                if self._stop_event.is_set():
+                    print("[수동 크롤링] 강제 중지됨")
+                else:
+                    print("[수동 크롤링] 완료")
                 print(f"  - 총 수집: {len(all_tenders)}건")
                 print(f"  - 새 공고: {new_count}건")
                 print(f"  - 업데이트: {update_count}건")

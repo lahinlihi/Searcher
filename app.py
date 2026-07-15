@@ -70,8 +70,9 @@ def _fix_https_scheme():
     # API 엔드포인트, 정적 파일은 제외 (서버 내부 통신 영향 방지)
     host = request.host  # 예: "localhost:5002"
     if host.startswith('localhost') or host.startswith('127.0.0.1'):
-        path = request.full_path.rstrip('?')
-        return redirect(f'https://{_PUBLIC_HOST}{path}', code=301)
+        if not (request.path.startswith('/api/') or request.path.startswith('/static/')):
+            path = request.full_path.rstrip('?')
+            return redirect(f'https://{_PUBLIC_HOST}{path}', code=301)
 
 
 @app.before_request

@@ -1404,6 +1404,12 @@ def api_search():
         return jsonify({'error': '스케줄러가 초기화되지 않았습니다.'}), 500
 
     try:
+        if scheduler.is_crawling:
+            return jsonify({
+                'message': '이미 크롤링이 진행 중입니다.',
+                'status': 'already_running'
+            }), 409
+
         # 백그라운드에서 크롤링 실행
         def run_crawl():
             result = scheduler.run_manual_crawl()
@@ -1422,16 +1428,144 @@ def api_search():
         return jsonify({'error': str(e)}), 500
 
 
+def _localhost_only():
+    """127.0.0.1에서 온 요청인지 확인. 아니면 403 반환."""
+    from flask import request as _req
+    remote = _req.remote_addr
+    if remote not in ('127.0.0.1', '::1', 'localhost'):
+        from flask import abort
+        abort(403)
+
+
+@bp.route('/api/internal/crawl/start', methods=['POST'])
+def api_internal_crawl_start():
+    """로컬 전용 — 인증 없이 크롤링 시작 (CLI/스크립트용)"""
+    _localhost_only()
+    scheduler = getattr(current_app, 'crawler_scheduler', None)
+    if not scheduler:
+        return jsonify({'error': '스케줄러가 초기화되지 않았습니다.'}), 500
+    if scheduler.is_crawling:
+        return jsonify({'message': '이미 크롤링이 진행 중입니다.', 'status': 'already_running'}), 409
+
+    def run_crawl():
+        result = scheduler.run_manual_crawl()
+        print(f"[수동 크롤링] 결과: {result}")
+
+    t = threading.Thread(target=run_crawl, daemon=True)
+    t.start()
+    return jsonify({'message': '크롤링이 시작되었습니다.', 'status': 'started'}), 200
+
+
+@bp.route('/api/internal/crawl/stop', methods=['POST'])
+def api_internal_crawl_stop():
+    """로컬 전용 — 인증 없이 크롤링 강제 중지 (CLI/스크립트용)"""
+    _localhost_only()
+    scheduler = getattr(current_app, 'crawler_scheduler', None)
+    if not scheduler:
+        return jsonify({'error': '스케줄러가 초기화되지 않았습니다.'}), 500
+    if scheduler.stop_crawl():
+        return jsonify({'message': '크롤링 중지 요청이 전송되었습니다.', 'status': 'stopping'}), 200
+    else:
+        return jsonify({'message': '진행 중인 크롤링이 없습니다.', 'status': 'not_running'}), 200
+
+
+@bp.route('/api/internal/crawl/status')
+def api_internal_crawl_status():
+    """로컬 전용 — 인증 없이 상태 조회 (CLI/스크립트 검증용)"""
+    _localhost_only()
+    scheduler = getattr(current_app, 'crawler_scheduler', None)
+    is_running = scheduler.is_crawling if scheduler else False
+    progress = scheduler.crawl_progress if scheduler else None
+    latest_log = CrawlLog.query.order_by(CrawlLog.started_at.desc()).first()
+    data = latest_log.to_dict() if latest_log else {}
+    data['is_running'] = is_running
+    data['progress'] = progress
+    return jsonify(data)
+
+
+@bp.route('/api/crawl/stop', methods=['POST'])
+@admin_required
+def api_crawl_stop():
+    """실행 중인 크롤링 강제 중지"""
+    scheduler = getattr(current_app, 'crawler_scheduler', None)
+    if not scheduler:
+        return jsonify({'error': '스케줄러가 초기화되지 않았습니다.'}), 500
+    if scheduler.stop_crawl():
+        return jsonify({'message': '크롤링 중지 요청이 전송되었습니다.', 'status': 'stopping'}), 200
+    else:
+        return jsonify({'message': '진행 중인 크롤링이 없습니다.', 'status': 'not_running'}), 200
+
+
 @bp.route('/api/crawl/status')
 @admin_required
 def api_crawl_status():
     """최근 크롤링 상태 조회"""
     try:
+        scheduler = getattr(current_app, 'crawler_scheduler', None)
+        is_running = scheduler.is_crawling if scheduler else False
+        progress = scheduler.crawl_progress if scheduler else None
+
         latest_log = CrawlLog.query.order_by(
             CrawlLog.started_at.desc()).first()
         if latest_log:
-            return jsonify(latest_log.to_dict())
+            data = latest_log.to_dict()
+            data['is_running'] = is_running
+            data['progress'] = progress
+            return jsonify(data)
         else:
-            return jsonify({'message': '크롤링 기록이 없습니다.'}), 404
+            return jsonify({'message': '크롤링 기록이 없습니다.', 'is_running': is_running, 'progress': progress}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/crawl/site-stats')
+@admin_required
+def api_crawl_site_stats():
+    """
+    사이트별 평균 소요 시간 및 성공률 통계.
+    최근 N개 크롤링 로그의 site_results(elapsed_sec 포함)를 집계한다.
+    오래된 로그는 elapsed_sec가 없을 수 있으며 해당 기록은 시간 집계에서 제외된다.
+    """
+    try:
+        limit = int(request.args.get('limit', 20))
+        logs = CrawlLog.query.filter(
+            CrawlLog.site_results.isnot(None)
+        ).order_by(CrawlLog.started_at.desc()).limit(limit).all()
+
+        stats = {}  # site_name -> {durations: [], success: 0, fail: 0, timeout: 0}
+        for log in logs:
+            try:
+                site_results = json.loads(log.site_results)
+            except Exception:
+                continue
+            for site_name, r in site_results.items():
+                s = stats.setdefault(site_name, {'durations': [], 'success': 0, 'fail': 0})
+                if 'elapsed_sec' in r:
+                    s['durations'].append(r['elapsed_sec'])
+                if r.get('success'):
+                    s['success'] += 1
+                else:
+                    s['fail'] += 1
+
+        result = []
+        for site_name, s in stats.items():
+            durations = s['durations']
+            avg_sec = round(sum(durations) / len(durations), 1) if durations else None
+            max_sec = max(durations) if durations else None
+            total = s['success'] + s['fail']
+            result.append({
+                'site': site_name,
+                'avg_elapsed_sec': avg_sec,
+                'max_elapsed_sec': max_sec,
+                'runs_counted': len(durations),
+                'success_count': s['success'],
+                'fail_count': s['fail'],
+                'success_rate': round(s['success'] / total * 100, 1) if total else None,
+            })
+
+        # 평균 소요 시간이 긴 순서로 정렬 (느린 사이트를 먼저 보여줌)
+        result.sort(key=lambda x: (x['avg_elapsed_sec'] is None, -(x['avg_elapsed_sec'] or 0)))
+
+        return jsonify({'sites': result, 'logs_analyzed': len(logs)})
     except Exception as e:
         return jsonify({'error': str(e)}), 500

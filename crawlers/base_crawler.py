@@ -78,7 +78,8 @@ class BaseCrawler(ABC):
 
             # Selenium Manager (selenium 4.6+ 내장)가 Chrome 버전에 맞는
             # ChromeDriver를 자동으로 찾아 ~/.cache/selenium 에 캐싱한다.
-            # webdriver-manager의 수동 캐시 로직 불필요.
+            # webdriver-manager의 수동 설치는 매 호출마다 네트워크 확인/다운로드를 시도해
+            # 여러 크롤러가 순차 실행되는 동안 불안정하게 실패하는 문제가 있어 원복함.
             self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.set_page_load_timeout(30)
             print(f"[Selenium] 드라이버 초기화 성공")

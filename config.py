@@ -18,11 +18,8 @@ class Config:
     PORT = 5002
 
     # Database
-    SQLALCHEMY_DATABASE_URI = f'sqlite:///{
-        os.path.join(
-            BASE_DIR,
-            "data",
-            "tenders.db")}'
+    _DB_PATH = os.path.join(BASE_DIR, "data", "tenders.db")
+    SQLALCHEMY_DATABASE_URI = f'sqlite:///{_DB_PATH}'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # Scheduler
