@@ -290,7 +290,12 @@ class CrawlScheduler:
         강제 중지(_stop_event)가 설정되면 현재 크롤러의 완료를 기다리지 않고
         즉시 제어를 반환한다. 백그라운드 스레드는 자체 타임아웃(페이지 로드 30초,
         HTTP 요청 30초) 내에 스스로 종료되며, 결과는 이미 버려지므로 무해하다.
-        Selenium 크롤러는 driver.quit()을 즉시 호출해 대기 중인 페이지 로드를 강제 종료한다.
+
+        주의: 여기서 crawler._close_selenium_driver()를 크로스스레드로 호출하면 안 된다.
+        아직 작업 스레드가 같은 driver 객체로 driver.get() 등을 실행 중일 수 있어,
+        동시에 quit()이 끼어들면 chromedriver/chrome 프로세스가 정상 종료되지 못하고
+        좀비로 남는 문제가 실제로 발생했다(수십~백여 개 누적 확인). 반드시 작업 스레드
+        자신이 크롤러 종료 시점에 정리하도록 두고, 여기서는 손대지 않는다.
 
         Returns:
             (result_dict, status): status는 'ok' | 'timeout' | 'stopped'
@@ -310,14 +315,9 @@ class CrawlScheduler:
                 elapsed = int(time.time() - start_time)
                 print(f'[{site_name}] ■ 강제 중지 요청 수신 ({elapsed}초 진행 중) — 대기하지 않고 즉시 중단합니다.')
 
-                # Selenium 드라이버가 있으면 즉시 종료 시도 (대기 중인 driver.get() 강제 해제)
-                if getattr(crawler, 'use_selenium', False):
-                    try:
-                        crawler._close_selenium_driver()
-                    except Exception:
-                        pass
-
                 # 스레드 종료를 기다리지 않고 반환 (wait=False) — 백그라운드에서 자체 타임아웃 시 조용히 소멸
+                # (driver.quit()을 여기서 호출하지 않음 — 작업 스레드와의 경합으로 크롬 프로세스가
+                #  좀비로 남는 문제가 있었음. 작업 스레드 자신이 나중에 정리하도록 둔다)
                 executor.shutdown(wait=False, cancel_futures=False)
 
                 return {
@@ -352,11 +352,8 @@ class CrawlScheduler:
                 )
                 print(msg)
 
-                if use_selenium:
-                    try:
-                        crawler._close_selenium_driver()
-                    except Exception:
-                        pass
+                # driver.quit()을 여기서 호출하지 않음 — 위 stop 분기와 동일한 이유
+                # (작업 스레드와의 경합으로 크롬 프로세스가 좀비로 남는 문제가 있었음)
                 executor.shutdown(wait=False)
 
                 return {
