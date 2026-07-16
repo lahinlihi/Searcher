@@ -206,6 +206,8 @@ class CrawlScheduler:
                 cwd=repo_dir,
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=30
             )
             if result.returncode == 0:
@@ -233,7 +235,8 @@ class CrawlScheduler:
             # 변경된 추적 파일 확인 (data/ 제외는 .gitignore 가 보장)
             status = subprocess.run(
                 ['git', 'status', '--porcelain'],
-                cwd=repo_dir, capture_output=True, text=True, timeout=15
+                cwd=repo_dir, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', timeout=15
             )
             changed = status.stdout.strip()
             if not changed:
@@ -247,7 +250,10 @@ class CrawlScheduler:
                 print(f"  {line}")
 
             # add → commit → push
-            subprocess.run(['git', 'add', '-A'], cwd=repo_dir, timeout=15)
+            subprocess.run(
+                ['git', 'add', '-A'], cwd=repo_dir, timeout=15,
+                capture_output=True, text=True, encoding='utf-8', errors='replace'
+            )
 
             commit_msg = (
                 f"auto: Claude Code 수정 반영 "
@@ -255,7 +261,8 @@ class CrawlScheduler:
             )
             commit_result = subprocess.run(
                 ['git', 'commit', '-m', commit_msg],
-                cwd=repo_dir, capture_output=True, text=True, timeout=15
+                cwd=repo_dir, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', timeout=15
             )
             if commit_result.returncode != 0:
                 print(f"[스케줄러] git commit 실패: {commit_result.stderr.strip()}")
@@ -263,7 +270,8 @@ class CrawlScheduler:
 
             push_result = subprocess.run(
                 ['git', 'push'],
-                cwd=repo_dir, capture_output=True, text=True, timeout=60
+                cwd=repo_dir, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', timeout=60
             )
             if push_result.returncode == 0:
                 print("[스케줄러] git push: GitHub 업로드 완료")
@@ -273,7 +281,7 @@ class CrawlScheduler:
         except Exception as e:
             print(f"[스케줄러] git push 오류 (무시하고 계속): {e}")
 
-    def _run_crawler_with_timeout(self, site_name, crawler, timeout_sec=120):
+    def _run_crawler_with_timeout(self, site_name, crawler, timeout_sec=200):
         """
         크롤러를 타임아웃과 함께 실행.
         타임아웃은 '문제 감지 도구'이며, 발생 시 원인 힌트와 함께 로그를 남기고
