@@ -59,7 +59,14 @@ class CrawlScheduler:
         # 크롤링 중지 제어
         import threading
         self._stop_event = threading.Event()   # set() 하면 크롤러 루프 중단
-        self._crawl_thread = None              # 현재 실행 중인 크롤 스레드
+        self._crawl_thread = None              # 현재 실행 중인 크롤 스레드 (참고용, 진행 여부 판단에는 미사용)
+        self._is_crawling = False              # 명시적 진행 상태 플래그.
+        # 주의: is_crawling 판정에 스레드의 is_alive()를 쓰지 않는다.
+        # APScheduler(BlockingScheduler)는 내부적으로 스레드 풀을 재사용해 잡을 실행하므로,
+        # run_crawl_job()이 이미 끝나도 그 잡을 실행했던 풀 스레드 자체는 계속 살아있어
+        # is_alive()가 계속 True를 반환하는 버그가 있었다(실제 확인됨: 크롤링은 9분 만에
+        # 끝났는데 UI에는 55분 넘게 "진행 중"으로 표시됨). 그래서 시작/종료 시점에
+        # 직접 True/False로 설정하는 플래그로 판단한다.
 
         # 진행 상황 추적 (진행률/현재 사이트/경과 시간 표시용)
         self._current_site = None
@@ -139,7 +146,7 @@ class CrawlScheduler:
     @property
     def is_crawling(self):
         """현재 크롤링이 진행 중인지 여부"""
-        return self._crawl_thread is not None and self._crawl_thread.is_alive()
+        return self._is_crawling
 
     @property
     def crawl_progress(self):
@@ -371,6 +378,7 @@ class CrawlScheduler:
         import threading as _threading
         self._stop_event.clear()
         self._crawl_thread = _threading.current_thread()
+        self._is_crawling = True
 
         print(f"\n[스케줄러] 자동 크롤링 시작: {datetime.now()}")
 
@@ -567,6 +575,10 @@ class CrawlScheduler:
 
                 print(f"[스케줄러] 크롤링 실패: {str(e)}")
 
+            finally:
+                self._is_crawling = False
+                self._current_site = None
+
     def run_manual_crawl(self, sites=None):
         """
         수동 크롤링 실행
@@ -580,6 +592,7 @@ class CrawlScheduler:
         import threading as _threading
         self._stop_event.clear()
         self._crawl_thread = _threading.current_thread()
+        self._is_crawling = True
 
         print(f"[수동 크롤링] 시작: {datetime.now()}")
 
@@ -779,6 +792,10 @@ class CrawlScheduler:
                     'success': False,
                     'error': str(e)
                 }
+
+            finally:
+                self._is_crawling = False
+                self._current_site = None
 
     def _load_crawlers(self):
         """설정에서 크롤러 동적 로드"""
