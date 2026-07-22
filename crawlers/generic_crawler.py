@@ -70,6 +70,10 @@ class GenericCrawler(BaseCrawler):
         self.agency_prev_row_selector = _sel.get('agency_prev_row', '')   # 이전 tr에서 agency 추출
         self.date_next_row_selector = _sel.get('date_next_row', '')       # 다음 tr에서 announced_date 추출
         self.deadline_next_row_selector = _sel.get('deadline_next_row', '')  # 다음 tr에서 deadline_date 추출
+        # 같은 행(item) 안에 시작일/마감일이 별개 엘리먼트로 분리된 구조 지원
+        # (예: SBA — 같은 td 안에 <span>시작일</span><span>종료일</span>이 텍스트 구분자 없이 붙어있어
+        #  date 셀렉터 하나로는 범위 파싱이 안 되는 경우)
+        self.deadline_same_row_selector = _sel.get('deadline_same_row', '')
         self.text_after_split = site_config.get('text_after_split', '')   # 텍스트에서 '|' 등 구분자 뒤 부분만 사용
 
     def crawl(self, **kwargs):
@@ -263,6 +267,33 @@ class GenericCrawler(BaseCrawler):
             print(f"[{self.site_name}] Selenium 페이지 클릭 실패 (page={page}): {e}")
         return None
 
+    def _selenium_click_next(self):
+        """
+        Selenium으로 '다음 페이지' 화살표를 클릭 (숫자 링크 방식과 달리 페이지 수 제한 없음).
+        일부 페이저는 숫자 링크를 한 번에 N개만 보여주는 슬라이딩 창 방식이라
+        (예: 1~10만 보이고 11은 '다음 묶음' 이동 전엔 DOM에 없음) 숫자 클릭으로는
+        창 밖의 페이지에 도달할 수 없다. '다음' 화살표는 항상 현재 창 안에 있으므로
+        페이지 수가 많은 전체 이력 수집 등에 사용한다.
+        """
+        import time
+        try:
+            from selenium.webdriver.common.by import By
+            candidates = self.driver.find_elements(
+                By.CSS_SELECTOR,
+                "a.next, button.next, input.next, "
+                "a[class*='next'], input[class*='next']"
+            )
+            for btn in candidates:
+                if not btn.is_displayed():
+                    continue
+                self.driver.execute_script("arguments[0].click();", btn)
+                time.sleep(2)
+                from bs4 import BeautifulSoup
+                return BeautifulSoup(self.driver.page_source, 'html.parser')
+        except Exception as e:
+            print(f"[{self.site_name}] Selenium '다음' 클릭 실패: {e}")
+        return None
+
     def _crawl_list_page(self):
         """
         실제 웹페이지 크롤링 (페이지네이션 지원)
@@ -297,12 +328,18 @@ class GenericCrawler(BaseCrawler):
         # pagination.click: true 일 때만 Selenium DOM 클릭 방식 사용
         # (URL 파라미터가 서버에서 무시되는 JS 전용 사이트용)
         use_selenium_click = (self.use_selenium and pagination.get('click', False))
+        # pagination.click_next: true — 숫자 링크가 아니라 '다음' 화살표를 계속 클릭
+        # (숫자 링크가 슬라이딩 창(예: 1~10)만 보여줘 창 밖 페이지에 못 가는 사이트용.
+        #  전체 이력처럼 페이지 수가 매우 많은 경우에 적합)
+        use_selenium_click_next = (self.use_selenium and pagination.get('click_next', False))
 
         while len(self.results) < max_items:
             # 현재 페이지 소스 가져오기
             if page == start_page:
                 # 첫 페이지: 항상 원래 URL로 로드
                 soup = self.fetch_page(self.crawl_url)
+            elif use_selenium_click_next:
+                soup = self._selenium_click_next()
             elif use_selenium_click:
                 # pagination.click=true 사이트 2페이지~: 번호 클릭
                 soup = self._selenium_click_page(page)
@@ -326,8 +363,8 @@ class GenericCrawler(BaseCrawler):
                     print(f"[{self.site_name}] 공고를 찾을 수 없습니다 - 크롤링 건너뜀")
                 break
 
-            # 중복 페이지 감지 (잘못된 페이지 파라미터 또는 마지막 페이지 이후)
-            if param_name and page > start_page:
+            # 중복 페이지 감지 (잘못된 페이지 파라미터/클릭 실패 또는 마지막 페이지 이후)
+            if (param_name or use_selenium_click or use_selenium_click_next) and page > start_page:
                 title_sel = self.selectors.get('title', '')
                 page_titles = set()
                 for item in items:
@@ -341,7 +378,7 @@ class GenericCrawler(BaseCrawler):
                     print(f"[{self.site_name}] 페이지 {page}: 중복 감지, 수집 종료")
                     break
                 seen_titles |= page_titles
-            elif param_name:
+            elif param_name or use_selenium_click or use_selenium_click_next:
                 # 첫 페이지 타이틀 초기화
                 title_sel = self.selectors.get('title', '')
                 for item in items:
@@ -368,7 +405,8 @@ class GenericCrawler(BaseCrawler):
                 print(f"[{self.site_name}] 페이지 {page}: {added}건 추가 (누적 {len(self.results)}건)")
 
             # 단일 페이지 모드 또는 아이템 없으면 종료
-            if not param_name:
+            # (param_name 방식과 click 방식 둘 다 페이지네이션이 설정된 경우로 인정)
+            if not param_name and not use_selenium_click and not use_selenium_click_next:
                 break
             if len(self.results) == count_before:
                 break
@@ -510,6 +548,14 @@ class GenericCrawler(BaseCrawler):
         else:
             announced_date = _next_row_announced or start_date
             deadline_date = _next_row_deadline or end_date
+
+        # 같은 행 안의 별도 엘리먼트에서 마감일 추출 (deadline_same_row 설정 시 최우선 적용)
+        if self.deadline_same_row_selector:
+            _dsr = item.select_one(self.deadline_same_row_selector)
+            if _dsr:
+                _parsed_same_row = self._parse_date(_dsr.get_text(strip=True))
+                if _parsed_same_row:
+                    deadline_date = _parsed_same_row
 
         # 공고번호 생성 — title 기반 결정론적 해시
         tender_number = self._generate_tender_number(title)
