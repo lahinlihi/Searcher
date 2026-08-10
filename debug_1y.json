@@ -1,0 +1,6 @@
+{"nkoneps.com.response.ResponseError": {
+  "header": {
+    "resultCode": "07",
+    "resultMsg": "입력범위값 초과 에러"
+  }
+}}

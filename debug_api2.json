@@ -1,0 +1,103 @@
+{"response": {
+  "header": {
+    "resultCode": "00",
+    "resultMsg": "정상"
+  },
+  "body": {
+    "items": [
+      {
+        "bidNtceNo": "20191241445",
+        "bidNtceOrd": "001",
+        "bidClsfcNo": "0",
+        "rbidNo": "000",
+        "bidNtceNm": "2020학년도 주약초등학교 영어방과후 프로프로그램 운영용역 2단계[규격,가격동시]입찰",
+        "opengDt": "2020-01-13 11:00:00",
+        "prtcptCnum": "2",
+        "opengCorpInfo": "사단법인행복한교육인^6138215834^정창현^47500^95.636",
+        "progrsDivCdNm": "개찰완료",
+        "inptDt": "2020-01-21 13:16:48",
+        "rsrvtnPrceFileExistnceYn": "Y",
+        "ntceInsttCd": "9050098",
+        "ntceInsttNm": "경상남도진주교육청 주약초등학교",
+        "dminsttCd": "9050098",
+        "dminsttNm": "경상남도진주교육청 주약초등학교",
+        "opengRsltNtcCntnts": ""
+      },
+      {
+        "bidNtceNo": "20191243423",
+        "bidNtceOrd": "000",
+        "bidClsfcNo": "0",
+        "rbidNo": "000",
+        "bidNtceNm": "2020년 속초시청 직원 단체보험 가입용역",
+        "opengDt": "2020-01-08 11:00:00",
+        "prtcptCnum": "0",
+        "opengCorpInfo": "",
+        "progrsDivCdNm": "유찰",
+        "inptDt": "2020-01-08 11:20:20",
+        "rsrvtnPrceFileExistnceYn": "N",
+        "ntceInsttCd": "4230000",
+        "ntceInsttNm": "강원도 속초시",
+        "dminsttCd": "4230000",
+        "dminsttNm": "강원도 속초시",
+        "opengRsltNtcCntnts": ""
+      },
+      {
+        "bidNtceNo": "20200100001",
+        "bidNtceOrd": "000",
+        "bidClsfcNo": "0",
+        "rbidNo": "000",
+        "bidNtceNm": "2020학년도 동덕초등학교 방과후학교 프로그램 운영 용역 공고",
+        "opengDt": "2020-01-30 15:00:00",
+        "prtcptCnum": "4",
+        "opengCorpInfo": "사단법인 한국유소년교육지도자협회^3128216833^김준표^119800000^95.609",
+        "progrsDivCdNm": "개찰완료",
+        "inptDt": "2020-01-30 15:18:25",
+        "rsrvtnPrceFileExistnceYn": "Y",
+        "ntceInsttCd": "8181024",
+        "ntceInsttNm": "충청남도교육청 충청남도아산교육지원청 동덕초등학교",
+        "dminsttCd": "8181024",
+        "dminsttNm": "충청남도교육청 충청남도아산교육지원청 동덕초등학교",
+        "opengRsltNtcCntnts": ""
+      },
+      {
+        "bidNtceNo": "20200100015",
+        "bidNtceOrd": "000",
+        "bidClsfcNo": "0",
+        "rbidNo": "000",
+        "bidNtceNm": "2020년 진천군립도서관 RFID 시스템 유지보수 용역",
+        "opengDt": "2020-01-08 11:00:00",
+        "prtcptCnum": "2",
+        "opengCorpInfo": "희성정보통신^3150189656^강필중^24012000^90.078",
+        "progrsDivCdNm": "개찰완료",
+        "inptDt": "2020-01-08 13:16:54",
+        "rsrvtnPrceFileExistnceYn": "Y",
+        "ntceInsttCd": "4450066",
+        "ntceInsttNm": "충청북도 진천군 평생학습센터",
+        "dminsttCd": "4450066",
+        "dminsttNm": "충청북도 진천군 평생학습센터",
+        "opengRsltNtcCntnts": ""
+      },
+      {
+        "bidNtceNo": "20200100025",
+        "bidNtceOrd": "000",
+        "bidClsfcNo": "0",
+        "rbidNo": "000",
+        "bidNtceNm": "2020학년도 신입생 오리엔테이션 위탁 용역",
+        "opengDt": "2020-01-15 10:00:00",
+        "prtcptCnum": "3",
+        "opengCorpInfo": "(주)조이맥스^1358193589^이상민^51605000^95.922",
+        "progrsDivCdNm": "개찰완료",
+        "inptDt": "2020-01-15 10:52:01",
+        "rsrvtnPrceFileExistnceYn": "Y",
+        "ntceInsttCd": "7010266",
+        "ntceInsttNm": "서울특별시교육청 환일고등학교",
+        "dminsttCd": "7010266",
+        "dminsttNm": "서울특별시교육청 환일고등학교",
+        "opengRsltNtcCntnts": ""
+      }
+    ],
+    "numOfRows": 5,
+    "pageNo": 1,
+    "totalCount": 14672
+  }
+}}
