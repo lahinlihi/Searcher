@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify, g, current_app
 from database import db, UserPreference, UserPreferenceHistory
 from decorators import login_required, admin_required
 from settings_manager import settings_manager
@@ -38,6 +38,13 @@ def api_settings():
             success = settings_manager.save_settings(new_settings)
 
             if success:
+                # 크롤링 시간(crawl.times)이 바뀌었으면 서버 재시작 없이 즉시 스케줄 반영
+                scheduler = getattr(current_app, 'crawler_scheduler', None)
+                if scheduler:
+                    try:
+                        scheduler.reload_schedule()
+                    except Exception as e:
+                        print(f"[설정] 스케줄 재적용 실패 (무시): {e}")
                 return jsonify({'message': '설정이 저장되었습니다.'})
             else:
                 return jsonify({'error': '설정 저장 실패'}), 500

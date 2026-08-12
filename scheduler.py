@@ -111,32 +111,54 @@ class CrawlScheduler:
             print(f"[스케줄러] 원격 Sync 스케줄러 시작 (매 {interval}분)")
             return
 
-        # 크롤러 모드: 매일 09:00, 17:00
+        # 크롤러 모드: settings.json의 crawl.times (기본 09:00, 17:00)에 맞춰 등록
         # misfire_grace_time: APScheduler 기본값(1초)이 너무 짧아 스케줄러 스레드가
         # 트리거 시점에 잠깐만 지연돼도(다른 작업 충돌, GC 등) 그날 실행이 조용히 스킵되는
         # 문제가 반복됐음. 여유 있게 잡아 트리거 시점이 지나도 그날 안에는 늦게라도 실행되게 함.
-        self.scheduler.add_job(
-            func=self.run_crawl_job,
-            trigger=CronTrigger(hour=9, minute=0),
-            id='crawl_morning',
-            name='오전 크롤링',
-            replace_existing=True,
-            misfire_grace_time=3600
-        )
-
-        self.scheduler.add_job(
-            func=self.run_crawl_job,
-            trigger=CronTrigger(hour=17, minute=0),
-            id='crawl_evening',
-            name='오후 크롤링',
-            replace_existing=True,
-            misfire_grace_time=3600
-        )
+        self._add_crawl_jobs()
 
         self.scheduler.start()
         print("[스케줄러] 자동 크롤링 스케줄러가 시작되었습니다.")
-        print("[스케줄러] - 오전 09:00")
-        print("[스케줄러] - 오후 17:00")
+        for t in self._get_crawl_times():
+            print(f"[스케줄러] - {t}")
+
+    def _get_crawl_times(self):
+        """settings.json의 crawl.times를 읽어 ['HH:MM', ...] 반환 (없으면 기본값)"""
+        times = settings_manager.get('crawl.times', ['09:00', '17:00'])
+        if not times:
+            times = ['09:00', '17:00']
+        return times
+
+    def _add_crawl_jobs(self):
+        """현재 설정된 crawl.times에 맞춰 크롤링 잡을 등록 (job id: crawl_0, crawl_1, ...)"""
+        for idx, t in enumerate(self._get_crawl_times()):
+            try:
+                hour, minute = t.split(':')
+                hour, minute = int(hour), int(minute)
+            except (ValueError, AttributeError):
+                print(f"[스케줄러] 잘못된 시간 형식 무시: {t}")
+                continue
+            self.scheduler.add_job(
+                func=self.run_crawl_job,
+                trigger=CronTrigger(hour=hour, minute=minute),
+                id=f'crawl_{idx}',
+                name=f'크롤링 {idx + 1} ({t})',
+                replace_existing=True,
+                misfire_grace_time=3600
+            )
+
+    def reload_schedule(self):
+        """
+        settings.json의 crawl.times가 바뀐 뒤 호출 — 기존 크롤링 잡을 전부 지우고
+        새 시간으로 재등록한다. 서버 재시작 없이 스케줄 변경을 즉시 반영하기 위함.
+        """
+        if self._remote_sync:
+            return  # 원격 sync 모드는 이 스케줄과 무관
+        for job in list(self.scheduler.get_jobs()):
+            if job.id.startswith('crawl_'):
+                self.scheduler.remove_job(job.id)
+        self._add_crawl_jobs()
+        print("[스케줄러] 크롤링 시간 재설정 완료:", ', '.join(self._get_crawl_times()))
 
     def stop(self):
         """스케줄러 중지"""

@@ -260,6 +260,13 @@ function populateSettings(settings) {
         autoCrawlCheckbox.checked = settings.crawl?.auto_enabled || false;
     }
 
+    // 크롤링 실행 시간
+    const times = settings.crawl?.times || ['09:00', '17:00'];
+    const timeInput1 = document.getElementById('crawl-time-1');
+    const timeInput2 = document.getElementById('crawl-time-2');
+    if (timeInput1) timeInput1.value = times[0] || '09:00';
+    if (timeInput2) timeInput2.value = times[1] || '17:00';
+
     // 사이트 목록 렌더링 (loadSettings에서 sites_config가 정규화됨)
     renderSitesList(settings.crawl?.sites_config || {});
 
@@ -299,7 +306,10 @@ async function saveSettings() {
         const settings = {
             crawl: {
                 auto_enabled: document.getElementById('auto-crawl-enabled')?.checked || false,
-                times: currentSettings.crawl?.times || ['09:00', '17:00'],
+                times: [
+                    document.getElementById('crawl-time-1')?.value || '09:00',
+                    document.getElementById('crawl-time-2')?.value || '17:00',
+                ],
                 sites: sitesConfig, // 하위 호환성을 위해 유지
                 sites_config: sitesConfig
             },
