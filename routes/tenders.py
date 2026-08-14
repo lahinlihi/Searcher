@@ -826,6 +826,7 @@ def api_tender_history(tender_id):
     title = tender.title or ''
     clean = title
     clean = _re.sub(r'\[[^\]]+\]', '', clean)
+    clean = _re.sub(r'「[^」]*」', '', clean)  # 홑낫표(「」) 부제 제거 (예: 「메타버스...」)
     clean = _re.sub(
         r'\(\s*(?:입찰재공고|입찰공고|입찰|재공고|재입찰|긴급|사전규격공개|사전규격'
         r'|일반용역|추가공고|정정공고|공고|변경)\s*\)',
@@ -846,40 +847,59 @@ def api_tender_history(tender_id):
     clean = _re.sub(r'\s+', ' ', clean).strip()
 
     # ── API 검색어 빌딩 ───────────────────────────────────────────────────────
-    # G2B API는 exact substring 검색 → 쿼리에 연도간 변동 단어가 들어가면 매칭 실패
+    # 나라장터 bidNtceNm 파라미터는 "완전한 연속 부분문자열"만 매칭한다
+    # (여러 단어를 AND로 찾아주는 게 아니라, 제출한 문자열이 실제 공고명 안에
+    #  그 순서·간격 그대로 붙어 있어야만 매칭됨 — 실측으로 확인).
+    # 그래서 서로 떨어져 있는 단어(예: "인천"...."SW미래채움")를 이어붙여 검색하면
+    # 원문과 글자가 안 맞아 항상 0건이 된다. → 여러 단어 조합 대신 단일 토큰만 사용.
     #
-    # Case 1 — 일반어(stopword)가 중간에 낀 경우
-    #   "AI바우처 사업 사업화 역량" → "사업" 제거 → "AI바우처 사업화 역량"
-    #   (같은 연도의 공고명이 "AI바우처 사업화 역량..."로 되어 있어야 매칭)
-    #
-    # Case 2 — "·" 복합어로 새 단어가 추가된 경우
-    #   "AI·디지털 실생활 역량" → split → "AI 디지털 실생활"
-    #   2025년 공고는 "AI 실생활 역량..."이라 매칭 안 됨
-    #   → "·" 두 번째 토큰(디지털)을 제외한 보조 쿼리 "AI 실생활 역량"도 병행 실행
+    # 문제는 프로그램명 앞에 붙는 수식어가 해마다 바뀐다는 것:
+    #   "SW미래채움" / "AI·SW미래채움" / "소프트웨어(SW)미래채움" / "인천SW미래채움"
+    # → 앞에 붙은 영문·괄호 수식어(SW/AI/소프트웨어 등)만 다르고, 핵심 한글 어근
+    #   ("미래채움")은 항상 그대로 붙어서 등장한다.
+    # → 가장 긴 단어(주 쿼리)뿐 아니라, 그 단어의 "끝부분 연속 한글" 만 추출한
+    #   보조 쿼리도 함께 검색해서 수식어가 바뀌어도 걸리도록 한다.
     _QUERY_STOPWORDS = {'사업', '용역', '운영', '관리', '지원', '추진', '수행'}
-    # "·" 복합어 두 번째 파트 수집 (ex: "AI·디지털" → {'디지털'})
-    _dot_extras = set(_re.findall(r'[가-힣A-Za-z0-9]+·([가-힣A-Za-z0-9]+)', clean))
 
     _search_clean = _re.sub(r'[·/~\-+·]', ' ', clean)
     _search_clean = _re.sub(r'\s+', ' ', _search_clean).strip()
     _clean_words = _search_clean.split()
 
-    def _pick_query(word_list, extra_exclude=None):
-        """stopword + optional extra_exclude 제거 후 앞 3단어 조합"""
-        exclude = _QUERY_STOPWORDS | (extra_exclude or set())
-        mw = [w for w in word_list if w not in exclude]
-        if len(mw) >= 3:
-            return ' '.join(mw[:3])
-        if len(mw) >= 2:
-            return ' '.join(mw[:2])
-        # 의미어가 부족하면 원본으로 폴백
-        return ' '.join(word_list[:3]) if len(word_list) >= 3 else ' '.join(word_list)
+    def _trailing_hangul(word):
+        """단어 끝부분의 연속 한글 어근만 추출 (영문/괄호 수식어 접두 제거)
+        예: "SW미래채움" → "미래채움" / "(SW)미래채움" → "미래채움"
+        """
+        m = _re.search(r'[가-힣]+$', word)
+        return m.group(0) if m else ''
 
-    query_nm     = _pick_query(_clean_words)[:60]               # 주 쿼리
-    query_nm_alt = _pick_query(_clean_words, _dot_extras)[:60]  # 보조 쿼리 ("·" 추가어 제외)
+    _meaningful = [w for w in _clean_words if w not in _QUERY_STOPWORDS] or _clean_words
+    _sorted_by_len = sorted(set(_meaningful), key=len, reverse=True)
 
-    # 두 쿼리가 같으면 보조 쿼리 불필요
-    _queries = [query_nm] if query_nm_alt == query_nm else [query_nm, query_nm_alt]
+    query_nm = (_sorted_by_len[0] if _sorted_by_len else '')[:60]   # 주 쿼리: 가장 긴 단어(그대로)
+
+    # 병행 쿼리(1차안): 상위 후보 단어들 각각에서 "수식어 뗀 한글 어근"을 뽑아
+    # 최대 2개까지 추가 검색어로 병행 실행. 주 쿼리로 뽑힌 단어가 아니어도 상관없음
+    # (예: 주 쿼리가 "교육페스티벌"이어도, "SW미래채움"에서 뽑은 "미래채움"을 별도로 병행)
+    _core_candidates = sorted(
+        {
+            core
+            for w in _sorted_by_len
+            for core in [_trailing_hangul(w)]
+            if core and core != w and len(core) >= 2
+        },
+        key=len, reverse=True,
+    )
+
+    # 어근 후보가 부족하면(수식어-핵심어 패턴이 없는 제목) 기존 방식대로
+    # 두 번째·세 번째로 긴 단어를 보조 쿼리로 채워 넣는다
+    _fallback_words = [w[:60] for w in _sorted_by_len[1:3]]
+
+    _queries = []
+    for q in [query_nm, *_core_candidates, *_fallback_words]:
+        if q and q not in _queries:
+            _queries.append(q)
+        if len(_queries) >= 3:   # API 호출량 관리를 위해 최대 3개 쿼리로 제한
+            break
 
     # ── 유사도·기관 매칭 유틸 ─────────────────────────────────────────────────
     import difflib as _difflib
@@ -887,6 +907,7 @@ def api_tender_history(tender_id):
     def _norm_title(s):
         """공고명 정규화: 연도·괄호접두어·차수 등 제거"""
         s = _re.sub(r'\[[^\]]+\]', '', s)
+        s = _re.sub(r'「[^」]*」', '', s)  # 홑낫표(「」) 부제 제거
         s = _re.sub(
             r'\(\s*(?:입찰재공고|입찰공고|입찰|재공고|재입찰|긴급|사전규격공개|사전규격'
             r'|일반용역|추가공고|정정공고|공고|변경)\s*\)',
@@ -1051,13 +1072,14 @@ def api_tender_history(tender_id):
                         award_by_no.setdefault(bid_no, []).append(item)
         return _quota_hit
 
-    # 주 쿼리 실행
-    _quota_exceeded = _run_query(query_nm)
-
-    # 보조 쿼리: 주 쿼리 결과 없고, 할당량 초과 아닐 때만 실행
-    if not _quota_exceeded and not (openg_by_no or award_by_no) and len(_queries) > 1:
-        errors.clear()
-        _run_query(query_nm_alt)
+    # 병행 검색: _queries의 모든 후보 검색어를 각각 실행하고 결과를 병합한다
+    # (openg_by_no/award_by_no는 bidNtceNo 기준 dict라 자동으로 중복 제거됨).
+    # 한 쿼리에서 429(할당량 초과)를 만나면 이후 쿼리는 실행하지 않고 중단.
+    _quota_exceeded = False
+    for _qnm in _queries:
+        _quota_exceeded = _run_query(_qnm)
+        if _quota_exceeded:
+            break
 
     # 모든 공고번호 통합
     all_bid_nos = set(openg_by_no) | set(award_by_no)
