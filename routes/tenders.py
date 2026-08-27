@@ -1045,41 +1045,37 @@ def api_tender_history(tender_id):
     award_by_no: dict = {}
     errors = []
 
-    def _run_query(qnm):
-        """월별 병렬 조회 (workers=10, 429 즉시 중단)"""
-        _quota_hit = False
-        with ThreadPoolExecutor(max_workers=20) as ex:
-            futures = [
-                ex.submit(fetch_period, kind, base, ep, bdt, edt, qnm)
-                for kind, base, ep in ops
-                for bdt, edt in periods
-            ]
-            for fut in as_completed(futures):
-                kind, items, err = fut.result()
-                if err:
-                    if '429' in str(err) or '할당량' in str(err):
-                        _quota_hit = True
-                    errors.append(f'{kind}: {err}')
-                    continue
-                for item in items:
-                    bid_no = item.get('bidNtceNo', '')
-                    if not bid_no:
-                        continue
-                    _dedup_key = (bid_no, item.get('bidNtceOrd', '000'))
-                    if kind == 'openg':
-                        openg_by_no.setdefault(bid_no, []).append(item)
-                    elif kind == 'award':
-                        award_by_no.setdefault(bid_no, []).append(item)
-        return _quota_hit
-
-    # 병행 검색: _queries의 모든 후보 검색어를 각각 실행하고 결과를 병합한다
-    # (openg_by_no/award_by_no는 bidNtceNo 기준 dict라 자동으로 중복 제거됨).
-    # 한 쿼리에서 429(할당량 초과)를 만나면 이후 쿼리는 실행하지 않고 중단.
+    # 병행 검색: _queries(최대 3개)를 쿼리마다 따로 72콜씩 "순차" 실행하면
+    # 프록시(Cloudflare 등)의 요청 타임아웃(보통 100초 안팎)을 넘기기 쉽다
+    # (실측: 순차 실행 시 8분 이상 소요 → 타임아웃으로 HTML 에러 페이지 반환 →
+    #  프론트엔드가 이를 JSON으로 파싱하려다 실패하는 문제로 이어짐).
+    # 그래서 쿼리×기간×API 조합을 전부 "하나의" 스레드풀에 한꺼번에 제출해
+    # 병행 처리하고, 전체 소요 시간이 쿼리 1개일 때와 비슷한 수준을 유지하게 한다.
     _quota_exceeded = False
-    for _qnm in _queries:
-        _quota_exceeded = _run_query(_qnm)
-        if _quota_exceeded:
-            break
+    with ThreadPoolExecutor(max_workers=30) as ex:
+        futures = [
+            ex.submit(fetch_period, kind, base, ep, bdt, edt, qnm)
+            for qnm in _queries
+            for kind, base, ep in ops
+            for bdt, edt in periods
+        ]
+        for fut in as_completed(futures):
+            kind, items, err = fut.result()
+            if err:
+                if '429' in str(err) or '할당량' in str(err):
+                    _quota_exceeded = True
+                errors.append(f'{kind}: {err}')
+                continue
+            for item in items:
+                bid_no = item.get('bidNtceNo', '')
+                if not bid_no:
+                    continue
+                if kind == 'openg':
+                    openg_by_no.setdefault(bid_no, []).append(item)
+                elif kind == 'award':
+                    award_by_no.setdefault(bid_no, []).append(item)
+            if _quota_exceeded:
+                break
 
     # 모든 공고번호 통합
     all_bid_nos = set(openg_by_no) | set(award_by_no)
@@ -1249,6 +1245,23 @@ def api_tender_history(tender_id):
                 }
         return item, None
 
+    # ── 후처리 필터: 수요기관 일치 + 사업명 유사도 70% 이상 ─────────────────────
+    # G2B API는 공고명 키워드 검색이라 관련 없는 결과가 섞일 수 있음
+    # → 발주처(수요기관)가 같고, 정규화 공고명 유사도 ≥ 70% 인 것만 유지
+    #
+    # 중요: 이 필터를 "계약현황 확인(3단계)" 전에 먼저 적용해서 needs_contract_check를
+    # 좁혀야 한다. 넓은 검색어(예: 병행검색으로 추가된 "미래채움" 같은 일반적인 어근)는
+    # 전국의 관련 없는 후보를 많이 끌어오는데, 계약현황 API는 동시 3개로만 처리되는
+    # 무거운 호출이라 필터링 전 후보 전체에 대해 돌리면 (필터로 어차피 버려질 것까지
+    # 포함해서) 조회 시간이 크게 늘어난다. 실측: 이 순서 문제로 특정 공고에서
+    # 3분 이상 소요됨을 확인.
+    SIMILARITY_THRESHOLD = 0.70
+    needs_contract_check = [
+        it for it in needs_contract_check
+        if _name_similarity(_title_norm, it.get('bidNtceNm', '')) >= SIMILARITY_THRESHOLD
+        and _agency_match(_tender_agency, _tender_demand_agency, it)
+    ]
+
     if needs_contract_check:
         with ThreadPoolExecutor(max_workers=3) as ex2:
             for fut in as_completed([ex2.submit(fetch_contract, it) for it in needs_contract_check]):
@@ -1256,11 +1269,6 @@ def api_tender_history(tender_id):
                 if contract:
                     item['_status']            = '계약'
                     item['_followup_contract'] = contract
-
-    # ── 후처리 필터: 수요기관 일치 + 사업명 유사도 70% 이상 ─────────────────────
-    # G2B API는 공고명 키워드 검색이라 관련 없는 결과가 섞일 수 있음
-    # → 발주처(수요기관)가 같고, 정규화 공고명 유사도 ≥ 70% 인 것만 유지
-    SIMILARITY_THRESHOLD = 0.70
     filtered_items = []
     for _it in final_items:
         _item_nm = _it.get('bidNtceNm', '')

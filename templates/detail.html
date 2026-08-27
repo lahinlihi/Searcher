@@ -1106,6 +1106,13 @@
     .ai-general-error-title { font-weight: 700; color: #b91c1c; font-size: 1rem; margin-bottom: 0.35rem; }
     .ai-general-error-msg { font-size: 0.85rem; color: #dc2626; white-space: pre-line; line-height: 1.6; }
 
+    /* Tailwind .hidden(display:none)과 .ai-rpm-error/.ai-general-error(display:flex)의
+       선택자 우선순위가 동일(클래스 1개)해서, CSS 작성 순서상 아래에 있는 이 규칙들이
+       이겨버려 JS가 hidden 클래스를 붙여도 박스가 안 사라지는 문제가 있었다.
+       (RPM 타이머 박스와 일반 오류 박스가 동시에 화면에 남아있던 원인)
+       클래스 2개짜리 선택자로 우선순위를 높여 .hidden이 항상 이기도록 강제한다. */
+    .ai-rpm-error.hidden, .ai-general-error.hidden { display: none; }
+
     /* ─── KPI 카드 그리드 ────────────────────────────────────── */
     .ai-kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.7rem; margin: 0.75rem 0 1rem 0; }
     /* KPI 카드 — kpi 탭 에메랄드 계열로 통일 */
@@ -1739,7 +1746,17 @@ async function loadHistory(allTypes = false, force = false) {
         if (force)    params.set('force', '1');
         const url = `/api/tenders/${TENDER_ID}/history` + (params.toString() ? '?' + params.toString() : '');
         const res = await fetch(url);
-        const data = await res.json();
+        let data;
+        try {
+            data = await res.json();
+        } catch (parseErr) {
+            // 요청이 오래 걸려 프록시(Cloudflare 등)가 중간에 끊고 HTML 오류 페이지를
+            // 돌려준 경우 res.json()이 "Unexpected token '<'"로 실패한다.
+            // 원인을 알 수 있는 메시지로 바꿔서 보여주고 재시도 버튼 제공.
+            body.innerHTML = `<p class="text-red-500 text-sm">이력 조회가 너무 오래 걸려 중간에 끊겼습니다 (HTTP ${res.status}).</p>` +
+                `<p class="text-center mt-3"><button onclick="loadHistory(${allTypes}, true)" class="text-xs text-blue-500 hover:text-blue-700 underline">다시 조회</button></p>`;
+            return;
+        }
         _historyLoaded = true;
 
         if (data.error) { body.innerHTML = `<p class="text-red-500 text-sm">${data.error}</p>`; return; }
