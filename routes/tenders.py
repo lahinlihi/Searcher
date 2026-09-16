@@ -11,6 +11,26 @@ import threading
 
 bp = Blueprint('tenders', __name__)
 
+# 제목 키워드 매칭 시 무시할 구두점/공백 문자
+# "AI·빅데이터"(가운뎃점) vs "AI 빅데이터"(공백) vs "AI빅데이터"(붙여쓰기)처럼
+# 표기만 다르고 의미는 같은 경우가 실제 공고 제목에 흔한데, 기존에는 완전
+# 문자열 부분일치(LIKE)만 써서 표기가 조금만 달라도 검색이 실패했다.
+# (실제 사례: "2026년도 AI·빅데이터 기반 소상공인 매출 증대 프로젝트 운영 용역"을
+#  "AI 빅데이터"나 "매출증대"로 검색하면 안 나오던 문제)
+_TITLE_SEARCH_STRIP_CHARS = [' ', '·', '/', '-', '~', '(', ')', '[', ']']
+
+
+def _title_contains(keyword):
+    """제목과 검색어 양쪽에서 공백·가운뎃점 등 구두점을 제거한 뒤 부분일치 비교하는
+    SQLAlchemy 필터 조건을 반환한다."""
+    from sqlalchemy import func as _sql_func
+    norm_title = Tender.title
+    norm_kw = keyword
+    for ch in _TITLE_SEARCH_STRIP_CHARS:
+        norm_title = _sql_func.replace(norm_title, ch, '')
+        norm_kw = norm_kw.replace(ch, '')
+    return norm_title.contains(norm_kw)
+
 
 @bp.route('/api/tender/<int:tender_id>/related')
 @login_required
@@ -68,7 +88,7 @@ def api_tender_related(tender_id):
         if agency_filter is not None:
             filters.append(agency_filter)
         if title_key:
-            filters.append(Tender.title.contains(title_key))
+            filters.append(_title_contains(title_key))
 
         title_results = Tender.query.filter(*filters).order_by(
             db.case((Tender.status != tender.status, 0), else_=1),
@@ -129,7 +149,7 @@ def api_dashboard():
             user_agency_weights = {}
 
         # 공통 필터 준비
-        kw_filter = db.or_(*[Tender.title.contains(kw) for kw in include_keywords]) if include_keywords else None
+        kw_filter = db.or_(*[_title_contains(kw) for kw in include_keywords]) if include_keywords else None
         br_min = budget_range.get('min')
         br_max = budget_range.get('max')
 
@@ -167,7 +187,7 @@ def api_dashboard():
         )
         # 제외 키워드 + 관심 키워드 + 금액 범위 필터
         for keyword in exclude_keywords:
-            pre_new_query = pre_new_query.filter(~Tender.title.contains(keyword))
+            pre_new_query = pre_new_query.filter(~_title_contains(keyword))
         if kw_filter is not None:
             pre_new_query = pre_new_query.filter(kw_filter)
         if br_min:
@@ -196,7 +216,7 @@ def api_dashboard():
         )
         # 제외 키워드 + 관심 키워드 + 금액 범위 필터
         for keyword in exclude_keywords:
-            new_query = new_query.filter(~Tender.title.contains(keyword))
+            new_query = new_query.filter(~_title_contains(keyword))
         if kw_filter is not None:
             new_query = new_query.filter(kw_filter)
         if br_min:
@@ -226,7 +246,7 @@ def api_dashboard():
             )
         )
         for keyword in exclude_keywords:
-            urgent_query = urgent_query.filter(~Tender.title.contains(keyword))
+            urgent_query = urgent_query.filter(~_title_contains(keyword))
         if kw_filter is not None:
             urgent_query = urgent_query.filter(kw_filter)
         if br_min:
@@ -370,10 +390,10 @@ def api_tenders():
                     filter_preset.exclude_keywords) if filter_preset.exclude_keywords else []
 
                 for keyword in include_kw:
-                    query = query.filter(Tender.title.contains(keyword))
+                    query = query.filter(_title_contains(keyword))
 
                 for keyword in exclude_kw:
-                    query = query.filter(~Tender.title.contains(keyword))
+                    query = query.filter(~_title_contains(keyword))
 
                 # 가격 필터
                 if filter_preset.min_price:
@@ -406,12 +426,11 @@ def api_tenders():
                     if len(and_keywords) == 1:
                         # 단일 키워드: 그냥 포함 조건
                         or_conditions.append(
-                            Tender.title.contains(
-                                and_keywords[0]))
+                            _title_contains(and_keywords[0]))
                     else:
                         # 여러 키워드: 모두 포함해야 함 (AND)
                         and_conditions = [
-                            Tender.title.contains(k) for k in and_keywords]
+                            _title_contains(k) for k in and_keywords]
                         or_conditions.append(db.and_(*and_conditions))
 
                 # 모든 OR 조건들을 OR로 묶음
@@ -424,9 +443,7 @@ def api_tenders():
             # 제외 키워드는 각각 제외 (하나라도 포함되면 제외)
             for keyword in exclude_keywords.split(','):
                 if keyword.strip():
-                    query = query.filter(
-                        ~Tender.title.contains(
-                            keyword.strip()))
+                    query = query.filter(~_title_contains(keyword.strip()))
 
         # 상태 필터
         if status:

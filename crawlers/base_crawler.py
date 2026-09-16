@@ -51,42 +51,62 @@ class BaseCrawler(ABC):
         self.results = []
         self.errors = []
 
-    def _init_selenium_driver(self):
-        """Selenium 드라이버 초기화 (Selenium Manager로 버전 자동 관리)"""
+    def _init_selenium_driver(self, _retries=2, _retry_wait=5):
+        """
+        Selenium 드라이버 초기화 (Selenium Manager로 버전 자동 관리)
+
+        실측 확인된 문제: Chrome이 백그라운드에서 자동 업데이트되는 순간과
+        크롤러의 드라이버 초기화 시점이 겹치면, chromedriver가 새로 교체되는
+        중인 chrome.exe 실행 파일을 붙잡으려다 "unexpectedly exited
+        (status 3221225794)"로 즉시 죽는 현상이 있다. 이 PC는 관리자 권한이
+        없어 Chrome 자동 업데이트 서비스(gupdate)를 직접 끌 수 없으므로,
+        코드 쪽에서 짧게 대기 후 재시도해 이 순간적 충돌을 넘기게 한다.
+        """
         if self.driver:
             return
 
-        try:
-            from selenium import webdriver
-            from selenium.webdriver.chrome.options import Options
+        from selenium import webdriver
+        from selenium.webdriver.chrome.options import Options
+        import time as _time
 
-            chrome_options = Options()
-            chrome_options.add_argument('--headless')
-            chrome_options.add_argument('--no-sandbox')
-            chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.add_argument('--disable-gpu')
-            chrome_options.add_argument('--window-size=1920,1080')
-            chrome_options.add_argument(
-                '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-            chrome_options.add_experimental_option(
-                'excludeSwitches', ['enable-logging'])
-            chrome_options.add_argument('--log-level=3')
+        last_err = None
+        for attempt in range(_retries + 1):
+            try:
+                chrome_options = Options()
+                chrome_options.add_argument('--headless')
+                chrome_options.add_argument('--no-sandbox')
+                chrome_options.add_argument('--disable-dev-shm-usage')
+                chrome_options.add_argument('--disable-gpu')
+                chrome_options.add_argument('--window-size=1920,1080')
+                chrome_options.add_argument(
+                    '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+                chrome_options.add_experimental_option(
+                    'excludeSwitches', ['enable-logging'])
+                chrome_options.add_argument('--log-level=3')
 
-            if not self.verify_ssl:
-                chrome_options.add_argument('--ignore-certificate-errors')
+                if not self.verify_ssl:
+                    chrome_options.add_argument('--ignore-certificate-errors')
 
-            # Selenium Manager (selenium 4.6+ 내장)가 Chrome 버전에 맞는
-            # ChromeDriver를 자동으로 찾아 ~/.cache/selenium 에 캐싱한다.
-            # webdriver-manager의 수동 설치는 매 호출마다 네트워크 확인/다운로드를 시도해
-            # 여러 크롤러가 순차 실행되는 동안 불안정하게 실패하는 문제가 있어 원복함.
-            self.driver = webdriver.Chrome(options=chrome_options)
-            self.driver.set_page_load_timeout(30)
-            print(f"[Selenium] 드라이버 초기화 성공")
+                # Selenium Manager (selenium 4.6+ 내장)가 Chrome 버전에 맞는
+                # ChromeDriver를 자동으로 찾아 ~/.cache/selenium 에 캐싱한다.
+                # webdriver-manager의 수동 설치는 매 호출마다 네트워크 확인/다운로드를 시도해
+                # 여러 크롤러가 순차 실행되는 동안 불안정하게 실패하는 문제가 있어 원복함.
+                self.driver = webdriver.Chrome(options=chrome_options)
+                self.driver.set_page_load_timeout(30)
+                print(f"[Selenium] 드라이버 초기화 성공" + (f" ({attempt+1}번째 시도)" if attempt else ""))
+                return
 
-        except Exception as e:
-            self.errors.append(f"Selenium 드라이버 초기화 실패: {str(e)}")
-            raise
+            except Exception as e:
+                last_err = e
+                self.driver = None
+                if attempt < _retries:
+                    print(f"[Selenium] 드라이버 초기화 실패 ({attempt+1}/{_retries+1}차 시도) — "
+                          f"{_retry_wait}초 후 재시도: {e}")
+                    _time.sleep(_retry_wait)
+
+        self.errors.append(f"Selenium 드라이버 초기화 실패 ({_retries+1}회 시도 모두 실패): {str(last_err)}")
+        raise last_err
 
     def _close_selenium_driver(self):
         """Selenium 드라이버 종료"""
