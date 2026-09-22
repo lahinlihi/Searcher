@@ -10,6 +10,8 @@ import requests
 from bs4 import BeautifulSoup
 import urllib3
 
+from .ca_bundle import get_ca_bundle
+
 
 class BaseCrawler(ABC):
     """크롤러 기본 클래스"""
@@ -23,7 +25,10 @@ class BaseCrawler(ABC):
             encoding=None):
         self.site_name = site_name
         self.base_url = base_url
-        self.verify_ssl = verify_ssl
+        # 검증을 켤 경우 certifi + certs/ 의 추가 중간 CA 를 합친 번들 경로를 쓴다.
+        # (일부 기관 사이트가 중간 CA 를 전송하지 않아 체인이 끊기는 문제 대응 —
+        #  crawlers/ca_bundle.py 참고. 경로 문자열도 truthy 하므로 기존 분기 동작은 그대로다)
+        self.verify_ssl = get_ca_bundle() if verify_ssl else False
         self.use_selenium = use_selenium
         self.encoding = encoding
         self.driver = None
