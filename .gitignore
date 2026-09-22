@@ -84,6 +84,9 @@ geckodriver.exe
 .env
 .env.local
 .env.production
+.env.bak*
+.env.*.bak
+.env.backup*
 
 # ============================================================
 # 임시 파일 / 테스트 출력

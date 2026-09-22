@@ -116,6 +116,7 @@ class CrawlScheduler:
         # 트리거 시점에 잠깐만 지연돼도(다른 작업 충돌, GC 등) 그날 실행이 조용히 스킵되는
         # 문제가 반복됐음. 여유 있게 잡아 트리거 시점이 지나도 그날 안에는 늦게라도 실행되게 함.
         self._add_crawl_jobs()
+        self._add_hr_news_job()
 
         self.scheduler.start()
         print("[스케줄러] 자동 크롤링 스케줄러가 시작되었습니다.")
@@ -146,6 +147,72 @@ class CrawlScheduler:
                 replace_existing=True,
                 misfire_grace_time=3600
             )
+
+    # ── HR뉴스 수집 ────────────────────────────────────────────────────────
+    #
+    # hr_news 모듈은 tenders 크롤러와 무관한 독립 파이프라인이다(NAVER API HUB).
+    # 임포트를 잡 실행 시점으로 늦추고 예외를 삼켜, 이 기능의 문제가
+    # 서버 기동이나 기존 크롤링 스케줄을 깨뜨리지 않게 한다.
+
+    def _get_hr_news_time(self):
+        """settings.json의 hr_news.time (기본 07:30 — 당일 발행에 맞추려면 아침)"""
+        return settings_manager.get('hr_news.time', '07:30') or '07:30'
+
+    def run_hr_news_job(self):
+        """HR뉴스 수집 → 토픽 선정 → 상위 토픽 다각도 심화"""
+        try:
+            import hr_news
+        except Exception as e:
+            print(f"[HR뉴스] 모듈 임포트 실패 — 건너뜁니다: {type(e).__name__}: {e}")
+            return
+
+        try:
+            deep_n = int(settings_manager.get('hr_news.deep_topics', 3) or 3)
+            days = int(settings_manager.get('hr_news.days', 3) or 3)
+
+            merged, calls = hr_news.collect(days=days, quiet=True)
+            conn = hr_news.connect()
+            try:
+                new, upd = hr_news.upsert(conn, list(merged.values()))
+                print(f"[HR뉴스] 수집 {len(merged)}건 (신규 {new} 갱신 {upd}), API {calls}회")
+
+                topics, _ = hr_news.rank_topics(conn, days=days, top_n=10)
+                targets = [t for t in topics
+                           if not t['metrics']['excluded']][:deep_n]
+                for t in targets:
+                    dm, dc, _ = hr_news.deepen(t['query'], days=days + 3, quiet=True)
+                    n, u = hr_news.upsert(conn, list(dm.values()))
+                    calls += dc
+                    print(f"[HR뉴스] 심화 '{t['query']}' → {len(dm)}건 "
+                          f"(신규 {n} 갱신 {u})")
+            finally:
+                conn.close()
+            print(f"[HR뉴스] 완료 — 총 API {calls}회")
+        except Exception as e:
+            import traceback
+            print(f"[HR뉴스] 작업 실패: {type(e).__name__}: {e}")
+            traceback.print_exc()
+
+    def _add_hr_news_job(self):
+        """HR뉴스 수집 잡 등록 (job id: hr_news)"""
+        if not settings_manager.get('hr_news.enabled', True):
+            print("[스케줄러] HR뉴스 수집 비활성 (hr_news.enabled=false)")
+            return
+        t = self._get_hr_news_time()
+        try:
+            hour, minute = (int(x) for x in t.split(':'))
+        except (ValueError, AttributeError):
+            print(f"[스케줄러] 잘못된 HR뉴스 시간 형식 무시: {t}")
+            return
+        self.scheduler.add_job(
+            func=self.run_hr_news_job,
+            trigger=CronTrigger(hour=hour, minute=minute),
+            id='hr_news',
+            name=f'HR뉴스 수집 ({t})',
+            replace_existing=True,
+            misfire_grace_time=3600
+        )
+        print(f"[스케줄러] HR뉴스 수집 등록 ({t})")
 
     def reload_schedule(self):
         """
