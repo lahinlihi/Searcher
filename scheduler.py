@@ -185,6 +185,27 @@ class CrawlScheduler:
                     calls += dc
                     print(f"[HR뉴스] 심화 '{t['query']}' → {len(dm)}건 "
                           f"(신규 {n} 갱신 {u})")
+                # 시사점 생성 — 수집·심화가 끝난 뒤 같은 커넥션으로 이어간다.
+                # 실패해도 수집 결과는 이미 저장됐으므로 여기서만 예외를 삼킨다.
+                try:
+                    import insight
+                    n_top = int(settings_manager.get('hr_news.insight_topics',
+                                                     deep_n) or deep_n)
+                    results, _ = insight.generate_daily(
+                        conn, days=days, top_n=n_top, quiet=True)
+                    saved, run_date = insight.save_daily(conn, results)
+                    ok = sum(1 for r in results if r['ok'])
+                    print(f"[HR뉴스] 시사점 {saved}건 저장 "
+                          f"(검사 통과 {ok}, run_date={run_date}, 검수 대기)")
+                    for r in results:
+                        if not r['ok']:
+                            labels = ', '.join(b['label']
+                                               for b in r['lint']['blocking'][:3])
+                            print(f"[HR뉴스]   ⚠ '{r['topic']}' 차단 — {labels}")
+                except Exception as e:
+                    import traceback
+                    print(f"[HR뉴스] 시사점 생성 실패: {type(e).__name__}: {e}")
+                    traceback.print_exc()
             finally:
                 conn.close()
             print(f"[HR뉴스] 완료 — 총 API {calls}회")

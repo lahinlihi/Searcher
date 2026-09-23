@@ -262,6 +262,9 @@ def upsert(conn, rows):
 
 _ELLIPSIS = re.compile(r'\s*(?:\.\.\.+|…+|\.\.)\s*')
 
+# 합성 시 조각 경계를 드러내는 구분자 (원문의 연속 문장이 아님을 표시)
+FRAGMENT_SEP = ' ⁄ '
+
 
 def fragments(passage, min_len=12):
     """패시지를 '...' 기준 조각으로 분해 (설계 근거 3)"""
@@ -361,7 +364,13 @@ def analysis_material(row, topic=None, max_chars=1800, filter_topic=True):
     for f in cands:
         if not any(_near_duplicate(f, u) for u in uniq):
             uniq.append(f)
-    return ' '.join(uniq)[:max_chars]
+    # 조각 사이를 공백으로 이으면 원문에 없던 인접성이 생긴다.
+    # 실측 사고: 기사 리드의 "중대재해 사망사고 발생 시" 와 본문의
+    # "중대산업재해치상 기본 징역 1년~2년 6개월" 이 한 문장처럼 붙어,
+    # 생성기가 치상의 형량을 치사(사망)에 잘못 귀속시켰다.
+    # → 비연속 구간임을 드러내는 구분자로 잇는다. FRAGMENT_SEP 은
+    #   프롬프트에서도 같은 의미로 설명한다.
+    return FRAGMENT_SEP.join(uniq)[:max_chars]
 
 
 def render_for_newsletter(row):
