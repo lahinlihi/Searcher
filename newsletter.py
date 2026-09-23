@@ -202,7 +202,18 @@ def build(conn, run_date=None):
             'articles': articles,
         })
 
-    return {'run_date': run_date, 'sections': sections}
+    # 입찰동향 — 조건 설정기(tender_brief)의 활성 프리셋을 그대로 쓴다.
+    # 실패해도 HR뉴스는 나가야 하므로 예외를 삼킨다.
+    tenders = None
+    try:
+        import tender_brief
+        tb = tender_brief.build_section(conn)
+        if tb['items']:
+            tenders = tb
+    except Exception as e:
+        print(f'[뉴스레터] 입찰동향 섹션 생략: {type(e).__name__}: {e}')
+
+    return {'run_date': run_date, 'sections': sections, 'tenders': tenders}
 
 
 def _articles_for(conn, topic, hr_news, limit=4):
@@ -297,6 +308,40 @@ def _section_html(i, s):
 </td></tr>'''
 
 
+def _tenders_html(tb):
+    """입찰동향 — 공고 제목·기관·금액·마감. 공공 공고이므로 저작권 제약이 없다."""
+    if not tb or not tb.get('items'):
+        return ''
+    rows = ''.join(
+        f'<tr><td valign="top" width="16" style="padding:5px 6px 5px 0;'
+        f'color:{_SUB};font-size:12px;">{i}</td>'
+        f'<td style="padding:5px 0;">'
+        f'<div style="color:{_INK};font-size:13px;line-height:1.55;">'
+        + (f'<a href="{esc(it["url"])}" style="color:{_INK};text-decoration:none;">'
+           f'{esc(it["title"])}</a>' if it.get('url') else esc(it['title']))
+        + f'</div>'
+        f'<div style="color:#8C99A5;font-size:11.5px;padding-top:2px;">'
+        f'{esc(it["agency"])}'
+        + (f' &middot; {it["price"]}억' if it.get('price') else ' &middot; 금액 미공개')
+        + (f' &middot; 마감 {esc(it["deadline"])}' if it.get('deadline') else '')
+        + f'</div></td></tr>'
+        for i, it in enumerate(tb['items'], 1))
+    more = ''
+    if tb['count'] > len(tb['items']):
+        more = (f'<tr><td colspan="2" style="padding:8px 0 0;color:{_SUB};'
+                f'font-size:11.5px;">외 {tb["count"] - len(tb["items"])}건</td></tr>')
+    return f"""
+<tr><td style="padding:20px 24px;border-top:1px solid {_LINE};">
+  <div style="color:{_BRAND};font-size:11.5px;font-weight:bold;
+    letter-spacing:0.08em;padding-bottom:3px;">오늘의 입찰동향</div>
+  <div style="color:{_SUB};font-size:11.5px;padding-bottom:10px;">
+    기업이 직접 신청할 수 있는 지원사업 {tb['count']}건</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    {rows}{more}
+  </table>
+</td></tr>"""
+
+
 def render_html(data, unsubscribe_url=None, is_test=False, consent_at=None):
     """메일 HTML 생성 — 표 기반, 인라인 스타일 (Outlook 호환)"""
     d = datetime.strptime(data['run_date'], '%Y-%m-%d')
@@ -305,6 +350,7 @@ def render_html(data, unsubscribe_url=None, is_test=False, consent_at=None):
 
     sections = ''.join(_section_html(i, s)
                        for i, s in enumerate(data['sections'], 1))
+    tenders_block = _tenders_html(data.get('tenders'))
 
     test_banner = ''
     if is_test:
@@ -326,7 +372,7 @@ def render_html(data, unsubscribe_url=None, is_test=False, consent_at=None):
 <html lang="ko"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>오늘의 HR뉴스 {esc(data['run_date'])}</title>
+<title>오늘의 입찰동향 · HR뉴스 {esc(data['run_date'])}</title>
 </head>
 <body style="margin:0;padding:0;background:#EEF1F3;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
@@ -344,12 +390,13 @@ def render_html(data, unsubscribe_url=None, is_test=False, consent_at=None):
     <div style="color:{_BRAND};font-size:11.5px;font-weight:bold;
       letter-spacing:0.08em;">{esc(date_label)}</div>
     <div style="color:{_INK};font-size:19px;font-weight:bold;padding-top:5px;">
-      오늘의 HR뉴스</div>
+      오늘의 입찰동향 &middot; HR뉴스</div>
     <div style="color:{_SUB};font-size:12.5px;padding-top:3px;">
       기업 인사담당자를 위한 일일 브리핑</div>
   </td></tr>
 
   {sections}
+  {tenders_block}
 
   <tr><td style="background:#F7F9FA;padding:16px 24px;border-top:1px solid {_LINE};">
     <div style="color:{_SUB};font-size:11.5px;line-height:1.75;">
@@ -370,7 +417,7 @@ def subject_for(data):
     first = data['sections'][0]['headline'] if n else ''
     d = datetime.strptime(data['run_date'], '%Y-%m-%d')
     head = first[:28] + ('…' if len(first) > 28 else '')
-    return f'[오늘의 HR뉴스] {d.month}/{d.day} {head}'
+    return f'[오늘의 브리핑] {d.month}/{d.day} {head}'
 
 
 # ════════════════════════════════════════════════════════════ 발송

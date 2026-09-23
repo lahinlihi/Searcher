@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}입찰동향 조건 - HIGH-SEARCH{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+
+    <!-- 깔때기 -->
+    <div class="card">
+        <div class="card-body">
+            <div class="flex items-center justify-between gap-2 mb-3">
+                <span class="text-sm font-semibold text-gray-800">조건 적정성</span>
+                <div class="flex items-center gap-2">
+                    <label class="text-xs text-gray-500">수집 기간</label>
+                    <select id="days" class="form-input text-sm w-24" onchange="runPreview()">
+                        <option value="1">1일</option>
+                        <option value="3" selected>3일</option>
+                        <option value="7">7일</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="funnel" class="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm">
+                <span class="text-gray-400">불러오는 중...</span>
+            </div>
+
+            <div id="class-bar" class="mt-3"></div>
+
+            <div id="unclassified-warn"
+                 class="hidden mt-3 text-xs rounded border border-amber-200 bg-amber-50 px-3 py-2">
+                <span id="unclassified-msg" class="text-amber-800"></span>
+                <button type="button" onclick="classifyNow()" id="btn-classify"
+                        class="ml-2 text-amber-900 underline font-semibold">지금 분류</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 조건 -->
+    <div class="card">
+        <div class="card-body space-y-5">
+
+            <div class="flex items-center justify-between">
+                <span class="text-sm font-semibold text-gray-800">발송 조건</span>
+                <span id="saved-info" class="text-xs text-gray-400"></span>
+            </div>
+
+            <!-- 관심 키워드 -->
+            <div>
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500"></span>
+                    <label class="font-semibold text-sm text-gray-800">관심 키워드</label>
+                    <span class="text-xs text-gray-500">— 하나라도 포함된 공고만 후보</span>
+                </div>
+                <div id="tags-in" class="flex flex-wrap gap-1.5 min-h-8 p-2 bg-gray-50 border border-gray-200 rounded mb-2"></div>
+                <div class="flex gap-2">
+                    <input type="text" id="in-input" class="form-input text-sm"
+                           placeholder="키워드 입력 후 Enter">
+                    <button type="button" onclick="addTag('in')" class="btn-secondary text-sm whitespace-nowrap">+ 추가</button>
+                </div>
+            </div>
+
+            <!-- 제외 키워드 -->
+            <div>
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500"></span>
+                    <label class="font-semibold text-sm text-gray-800">제외 키워드</label>
+                    <span class="text-xs text-gray-500">— 포함되면 후보에서 제외</span>
+                </div>
+                <div id="tags-ex" class="flex flex-wrap gap-1.5 min-h-8 p-2 bg-gray-50 border border-gray-200 rounded mb-2"></div>
+                <div class="flex gap-2">
+                    <input type="text" id="ex-input" class="form-input text-sm"
+                           placeholder="제외할 키워드 입력 후 Enter">
+                    <button type="button" onclick="addTag('ex')" class="btn-secondary text-sm whitespace-nowrap">+ 추가</button>
+                </div>
+            </div>
+
+            <!-- 분류 -->
+            <div>
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                    <label class="font-semibold text-sm text-gray-800">공고 분류</label>
+                    <span class="text-xs text-gray-500">— 키워드만으로는 구분되지 않는 부분</span>
+                </div>
+                <div class="space-y-1.5" id="class-opts"></div>
+            </div>
+
+            <!-- 그 외 -->
+            <div class="grid sm:grid-cols-3 gap-3">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">마감 이내(일)</label>
+                    <input type="number" id="days-ahead" class="form-input text-sm w-full" min="1" max="365">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">최소 금액(억)</label>
+                    <input type="number" id="min-price" class="form-input text-sm w-full" step="0.1" min="0">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">메일 게재 건수</label>
+                    <input type="number" id="limit" class="form-input text-sm w-full" min="1" max="30">
+                </div>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2 pt-1">
+                <button type="button" onclick="runPreview()" class="btn-secondary text-sm">미리보기 갱신</button>
+                <button type="button" onclick="savePreset()" id="btn-save"
+                        class="text-sm px-4 py-2 rounded font-semibold bg-green-600 text-white hover:bg-green-700">조건 저장</button>
+                <span class="text-xs text-gray-500">저장하면 변경 이력이 남습니다.</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 결과 -->
+    <div class="card">
+        <div class="card-body">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-semibold text-gray-800">이 조건으로 나갈 공고</span>
+                <span id="result-count" class="text-xs text-gray-500"></span>
+            </div>
+            <div id="result-list" class="space-y-2"></div>
+        </div>
+    </div>
+
+    <!-- 변경 이력 -->
+    <div class="card">
+        <div class="card-body">
+            <div class="text-sm font-semibold text-gray-800 mb-2">변경 이력</div>
+            <div id="history" class="text-xs text-gray-500 space-y-1"></div>
+        </div>
+    </div>
+</div>
+
+<div id="toast" class="hidden fixed left-1/2 -translate-x-1/2 bottom-6 z-50
+     bg-gray-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg max-w-[90vw]"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/brief_settings.js') }}"></script>
+{% endblock %}

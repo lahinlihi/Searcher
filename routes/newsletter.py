@@ -262,3 +262,86 @@ def unsubscribe_page(token):
         f'border:1px solid #DDE3E8;border-radius:6px;padding:32px;text-align:center">'
         f'<div style="font-size:16px;color:#17212B;line-height:1.7">{msg}</div>'
         f'</div></body></html>', mimetype='text/html')
+
+
+# ════════════════════════════════════════════════════════════ 입찰동향 조건
+
+@bp.route('/newsletter/brief')
+@moderator_required
+def brief_page():
+    """입찰동향 발송 조건 설정 화면"""
+    return render_template('brief_settings.html')
+
+
+@bp.route('/api/brief/preset', methods=['GET', 'PUT'])
+@moderator_required
+def api_brief_preset():
+    """발송 조건 프리셋 조회·저장. 저장 시 변경 이력을 남긴다."""
+    import tender_brief as tb
+    from flask import g
+    conn = tb.connect()
+    try:
+        if request.method == 'GET':
+            return jsonify(tb.get_preset(conn))
+        data = request.get_json(silent=True) or {}
+        for key in ('include_keywords', 'exclude_keywords', 'classes'):
+            if key in data and not isinstance(data[key], list):
+                return jsonify({'error': f'{key} 는 배열이어야 합니다.'}), 400
+        p = tb.save_preset(conn, data,
+                           changed_by=g.user.username if g.user else None)
+        return jsonify(p)
+    finally:
+        conn.close()
+
+
+@bp.route('/api/brief/preview', methods=['POST'])
+@moderator_required
+def api_brief_preview():
+    """
+    즉시 미리보기 — 조건을 저장하지 않고 결과만 본다.
+
+    "조건을 바꾸면 지금 몇 건이 걸리는지" 가 이 화면의 핵심이므로
+    저장 전에도 확인할 수 있어야 한다.
+    """
+    import tender_brief as tb
+    data = request.get_json(silent=True) or {}
+    days = int(data.get('days') or 3)
+    conn = tb.connect()
+    try:
+        preset = {**tb.get_preset(conn), **{k: v for k, v in data.items()
+                                            if k in tb.DEFAULT_PRESET}}
+        return jsonify(tb.preview(conn, preset, days=days))
+    finally:
+        conn.close()
+
+
+@bp.route('/api/brief/classify', methods=['POST'])
+@moderator_required
+def api_brief_classify():
+    """미분류 후보를 분류한다. 건수에 따라 수십 초 걸릴 수 있다."""
+    import tender_brief as tb
+    data = request.get_json(silent=True) or {}
+    days = int(data.get('days') or 3)
+    conn = tb.connect()
+    try:
+        preset = {**tb.get_preset(conn), **{k: v for k, v in data.items()
+                                            if k in tb.DEFAULT_PRESET}}
+        rows = tb.candidates(conn, preset, days=days)
+        saved, calls = tb.classify(conn, rows, quiet=True)
+        pv = tb.preview(conn, preset, days=days)
+        return jsonify({'classified': saved, 'api_calls': calls, 'preview': pv})
+    except Exception as e:
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    finally:
+        conn.close()
+
+
+@bp.route('/api/brief/history')
+@moderator_required
+def api_brief_history():
+    import tender_brief as tb
+    conn = tb.connect()
+    try:
+        return jsonify(tb.preset_history(conn))
+    finally:
+        conn.close()
