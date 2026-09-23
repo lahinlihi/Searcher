@@ -589,3 +589,103 @@ def main():
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8')
     main()
+
+
+# ════════════════════════════════════════════════════════════ 계정 설정
+
+def _save_settings(patch):
+    """settings.json 의 newsletter 항목을 부분 갱신한다."""
+    try:
+        with open(SETTINGS_PATH, encoding='utf-8') as f:
+            d = json.load(f)
+    except Exception:
+        d = {}
+    nl = d.get('newsletter') or {}
+    smtp = nl.get('smtp') or {}
+    for k in ('from_name', 'base_url'):
+        if k in patch and patch[k] is not None:
+            nl[k] = patch[k]
+    for k in ('service', 'user', 'password', 'server', 'port', 'ssl'):
+        if k in patch and patch[k] is not None:
+            smtp[k] = patch[k]
+    nl['smtp'] = smtp
+    d['newsletter'] = nl
+    tmp = SETTINGS_PATH + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, SETTINGS_PATH)       # 쓰는 도중 깨지지 않도록 원자적 교체
+    return True
+
+
+def mail_settings(masked=True):
+    """
+    현재 메일 설정 조회.
+
+    비밀번호는 절대 평문으로 반환하지 않는다. 설정 여부와 길이만 알린다.
+    화면에 값을 되돌려 보내면 브라우저 캐시·확장·스크린샷으로 새어나간다.
+    """
+    cfg = smtp_config()
+    pw = cfg.get('password') or ''
+    return {
+        'service': cfg['service'],
+        'server': cfg['server'],
+        'port': cfg['port'],
+        'ssl': cfg['ssl'],
+        'user': cfg['user'] or '',
+        'password_set': bool(pw),
+        'password_hint': ('*' * min(len(pw), 12)) if (masked and pw) else '',
+        'from_name': cfg['from_name'],
+        'base_url': cfg['base_url'],
+        'presets': list(SMTP_PRESETS.keys()),
+    }
+
+
+def update_mail_settings(patch):
+    """
+    설정 저장. password 가 빈 문자열이면 기존 값을 유지한다.
+
+    (화면에서 비밀번호를 비워 두고 다른 항목만 고치는 경우를 위해)
+    """
+    p = dict(patch)
+    svc = p.get('service')
+    if svc in SMTP_PRESETS and not p.get('server'):
+        p['server'] = SMTP_PRESETS[svc]['server']
+        p['port'] = SMTP_PRESETS[svc]['port']
+        p['ssl'] = SMTP_PRESETS[svc]['ssl']
+    if not p.get('password'):
+        p.pop('password', None)
+    _save_settings(p)
+    return mail_settings()
+
+
+def test_connection(user=None, password=None, service=None):
+    """
+    SMTP 로그인만 시도하고 끊는다. 메일은 보내지 않는다.
+
+    저장 전에 계정이 맞는지 확인할 수 있어야 하므로, 전달받은 값으로도
+    시험할 수 있게 했다(저장된 값이 없어도 테스트 가능).
+    """
+    cfg = smtp_config()
+    svc = service or cfg['service']
+    preset = SMTP_PRESETS.get(svc, SMTP_PRESETS['gmail'])
+    user = user or cfg['user']
+    password = password or cfg['password']
+    if not (user and password):
+        return {'ok': False, 'error': '계정과 비밀번호가 필요합니다.'}
+    try:
+        if preset['ssl']:
+            with smtplib.SMTP_SSL(preset['server'], preset['port'], timeout=20) as s:
+                s.login(user, password)
+        else:
+            with smtplib.SMTP(preset['server'], preset['port'], timeout=20) as s:
+                s.starttls()
+                s.login(user, password)
+        return {'ok': True, 'server': preset['server'], 'port': preset['port'],
+                'user': user}
+    except smtplib.SMTPAuthenticationError as e:
+        hint = ''
+        if svc == 'gmail':
+            hint = ' Gmail 은 일반 비밀번호가 아니라 앱 비밀번호가 필요합니다.'
+        return {'ok': False, 'error': f'인증 실패: {e.smtp_code}.{hint}'}
+    except Exception as e:
+        return {'ok': False, 'error': f'{type(e).__name__}: {e}'}

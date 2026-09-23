@@ -345,3 +345,51 @@ def api_brief_history():
         return jsonify(tb.preset_history(conn))
     finally:
         conn.close()
+
+
+# ════════════════════════════════════════════════════════════ 메일 계정 설정
+
+@bp.route('/newsletter/settings')
+@moderator_required
+def mail_settings_page():
+    """발송 계정·구독자 관리 화면"""
+    return render_template('newsletter_settings.html')
+
+
+@bp.route('/api/newsletter/mail-settings', methods=['GET', 'PUT'])
+@moderator_required
+def api_mail_settings():
+    """
+    메일 설정 조회·저장.
+
+    비밀번호는 조회 시 반환하지 않는다(설정 여부만). 저장 시 빈 값이면
+    기존 비밀번호를 유지한다.
+    """
+    import newsletter as nl
+    if request.method == 'GET':
+        return jsonify(nl.mail_settings())
+    data = request.get_json(silent=True) or {}
+    allowed = {'service', 'user', 'password', 'from_name', 'base_url'}
+    patch = {k: v for k, v in data.items() if k in allowed}
+    if 'user' in patch and patch['user'] and '@' not in patch['user']:
+        return jsonify({'error': '올바른 이메일 주소가 아닙니다.'}), 400
+    try:
+        return jsonify(nl.update_mail_settings(patch))
+    except Exception as e:
+        return jsonify({'error': f'저장 실패: {type(e).__name__}: {e}'}), 500
+
+
+@bp.route('/api/newsletter/test-connection', methods=['POST'])
+@moderator_required
+def api_test_connection():
+    """
+    SMTP 연결 시험 — 로그인만 하고 끊는다. 메일은 보내지 않는다.
+
+    저장 전에 확인할 수 있도록 전달받은 값으로도 시험한다.
+    """
+    import newsletter as nl
+    data = request.get_json(silent=True) or {}
+    res = nl.test_connection(data.get('user') or None,
+                             data.get('password') or None,
+                             data.get('service') or None)
+    return (jsonify(res), 400) if not res['ok'] else jsonify(res)
