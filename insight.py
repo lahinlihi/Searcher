@@ -649,6 +649,107 @@ def save_daily(conn, results, run_date=None):
     return saved, run_date
 
 
+# ════════════════════════════════════════════════════════════ 검수 API 지원
+
+def _row_to_dict(r):
+    d = dict(r)
+    d['points'] = json.loads(d.get('points') or '[]')
+    try:
+        d['lint_detail'] = json.loads(d.get('lint_detail') or '{}')
+    except Exception:
+        d['lint_detail'] = {}
+    return d
+
+
+def list_runs(conn, limit=14):
+    """검수 대상 날짜 목록 (최근순)"""
+    ensure_schema(conn)
+    return [dict(r) for r in conn.execute(
+        """SELECT run_date,
+                  COUNT(*)                                   AS total,
+                  SUM(status='pending')                      AS pending,
+                  SUM(status='approved')                     AS approved,
+                  SUM(status='skipped')                      AS skipped,
+                  SUM(lint_ok=0)                             AS blocked
+           FROM daily_insights
+           GROUP BY run_date ORDER BY run_date DESC LIMIT ?""", (limit,))]
+
+
+def get_run(conn, run_date=None):
+    """특정 날짜의 시사점 전체. run_date 생략 시 최신 날짜."""
+    ensure_schema(conn)
+    if not run_date:
+        row = conn.execute(
+            'SELECT run_date FROM daily_insights ORDER BY run_date DESC LIMIT 1'
+        ).fetchone()
+        if not row:
+            return None, []
+        run_date = row['run_date']
+    rows = conn.execute(
+        'SELECT * FROM daily_insights WHERE run_date=? ORDER BY id', (run_date,)
+    ).fetchall()
+    return run_date, [_row_to_dict(r) for r in rows]
+
+
+def update_insight(conn, insight_id, headline=None, points=None,
+                   synthesis=None, closing=None):
+    """
+    관리자 편집 반영 + 즉시 재검사.
+
+    편집 결과를 다시 검사해야 규칙을 우회한 수정이 통과되지 않는다.
+    material_count 는 원본 근거 범위를 알 수 없으므로 생략하고
+    문체·지시·추론구조만 검사한다.
+    """
+    ensure_schema(conn)
+    cur = conn.execute('SELECT * FROM daily_insights WHERE id=?',
+                       (insight_id,)).fetchone()
+    if cur is None:
+        return None
+    d = _row_to_dict(cur)
+    new = {
+        'headline': headline if headline is not None else d['headline'],
+        'mode': d['mode'],
+        'points': points if points is not None else d['points'],
+        'synthesis': synthesis if synthesis is not None else d['synthesis'],
+        'closing_material': closing if closing is not None else d['closing'],
+    }
+    v = validate_insight(new)
+    conn.execute(
+        """UPDATE daily_insights
+           SET headline=?, points=?, synthesis=?, closing=?,
+               lint_ok=?, lint_detail=?
+           WHERE id=?""",
+        (new['headline'], json.dumps(new['points'], ensure_ascii=False),
+         new['synthesis'], new['closing_material'], int(v['ok']),
+         json.dumps({'blocking': v['blocking'], 'warning': v['warning']},
+                    ensure_ascii=False), insight_id))
+    conn.commit()
+    return {'id': insight_id, **new, 'lint': v}
+
+
+def set_status(conn, insight_id, status):
+    """
+    상태 전이. 검사에 걸린 항목은 승인할 수 없다.
+
+    '승인 없이 나가는 경로를 만들지 않는다' 는 요구사항의 짝으로,
+    '검사를 통과하지 않은 것이 승인되는 경로' 도 만들지 않는다.
+    """
+    if status not in ('pending', 'approved', 'skipped'):
+        raise ValueError(f'허용되지 않는 상태: {status}')
+    ensure_schema(conn)
+    cur = conn.execute('SELECT lint_ok FROM daily_insights WHERE id=?',
+                       (insight_id,)).fetchone()
+    if cur is None:
+        return None
+    if status == 'approved' and not cur['lint_ok']:
+        return {'error': '검사에 걸린 항목은 승인할 수 없습니다. 먼저 수정하세요.'}
+    conn.execute('UPDATE daily_insights SET status=? WHERE id=?',
+                 (status, insight_id))
+    conn.commit()
+    return {'id': insight_id, 'status': status}
+
+
+
 def _cmd_daily(days, top_n):
     import hr_news as _h
     conn = _h.connect()

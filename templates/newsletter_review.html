@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}뉴스레터 검수 - HIGH-SEARCH{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+
+    <!-- 상단 컨트롤 -->
+    <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+            <label class="text-sm font-semibold text-gray-700">발행일</label>
+            <select id="run-select" class="form-input text-sm w-44" onchange="loadRun()"></select>
+            <span id="run-summary" class="text-xs text-gray-500"></span>
+        </div>
+        <div class="flex items-center gap-2">
+            <button type="button" onclick="generateNow()" id="btn-gen"
+                    class="btn-secondary text-sm whitespace-nowrap">지금 생성</button>
+            <button type="button" onclick="approveAll()" id="btn-approve-all"
+                    class="btn-secondary text-sm whitespace-nowrap">통과분 일괄 승인</button>
+        </div>
+    </div>
+
+    <!-- 안내 -->
+    <div class="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded px-3 py-2">
+        승인한 항목만 발송 대상이 됩니다. 검사에 걸린 항목은 수정 후에만 승인할 수 있습니다.
+    </div>
+
+    <!-- 목록 -->
+    <div id="insight-list" class="space-y-4">
+        <p class="text-gray-400 text-sm text-center py-8">불러오는 중...</p>
+    </div>
+</div>
+
+<!-- 토스트 -->
+<div id="toast" class="hidden fixed left-1/2 -translate-x-1/2 bottom-6 z-50
+     bg-gray-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg max-w-[90vw]"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/newsletter_review.js') }}"></script>
+{% endblock %}
