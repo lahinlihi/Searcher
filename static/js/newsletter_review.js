@@ -168,6 +168,7 @@ function render() {
         return;
     }
     el.innerHTML = ITEMS.map(card).join('');
+    updateSendState();
 }
 
 /* ── 편집 ─────────────────────────────────────────────── */
@@ -308,6 +309,73 @@ async function generateNow() {
     }
 }
 
+/* ── 발송 ─────────────────────────────────────────────── */
+
+async function sendTest() {
+    const btn = document.getElementById('btn-test');
+    const to = document.getElementById('test-email').value.trim();
+    btn.disabled = true; btn.textContent = '발송 중...';
+    try {
+        const res = await api('/api/newsletter/send-test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ to, date: RUN_DATE }),
+        });
+        toast(`테스트 발송 완료 → ${res.to} (섹션 ${res.sections}개)`);
+        loadHistory();
+    } catch (e) {
+        toast(e.message, true);
+    } finally {
+        btn.disabled = false; btn.textContent = '테스트 발송';
+    }
+}
+
+async function sendReal() {
+    const approved = ITEMS.filter(i => i.status === 'approved').length;
+    if (!approved) { toast('승인된 항목이 없습니다.', true); return; }
+    const answer = prompt(
+        `승인된 ${approved}건을 구독자 전체에게 발송합니다.
+` +
+        `되돌릴 수 없습니다. 계속하려면 SEND 를 입력하세요.`);
+    if (answer !== 'SEND') { toast('발송을 취소했습니다.'); return; }
+
+    const btn = document.getElementById('btn-send');
+    btn.disabled = true; btn.textContent = '발송 중...';
+    try {
+        const res = await api('/api/newsletter/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ confirm: 'SEND', date: RUN_DATE }),
+        });
+        toast(`발송 완료 — 성공 ${res.success} / 실패 ${res.fail} (총 ${res.total})`,
+              res.fail > 0);
+        loadHistory();
+    } catch (e) {
+        toast(e.message, true);
+    } finally {
+        btn.disabled = false; btn.textContent = '구독자에게 발송';
+    }
+}
+
+async function loadHistory() {
+    try {
+        const rows = await api('/api/newsletter/history');
+        const el = document.getElementById('history');
+        if (!rows.length) { el.textContent = '발송 이력 없음'; return; }
+        el.innerHTML = rows.slice(0, 5).map(h =>
+            `<div>${esc(h.sent_at.slice(0, 16).replace('T', ' '))} ·
+             ${h.kind === 'test' ? '테스트' : '실발송'} ·
+             성공 ${h.success_count}${h.fail_count ? ` / 실패 ${h.fail_count}` : ''} ·
+             ${esc(h.subject)}</div>`).join('');
+    } catch (e) { /* 이력 실패는 무시 */ }
+}
+
+function updateSendState() {
+    const approved = ITEMS.filter(i => i.status === 'approved').length;
+    const el = document.getElementById('send-state');
+    if (el) el.textContent = `승인 ${approved}건이 메일에 실립니다`;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
-    loadRuns().catch(e => toast(e.message, true));
+    loadRuns().then(loadHistory).catch(e => toast(e.message, true));
 });

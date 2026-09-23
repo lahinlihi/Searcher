@@ -156,3 +156,4 @@ save_*.py
 update_site_*.py
 validate_*.py
 backfill_*.py
+newsletter_preview.html
