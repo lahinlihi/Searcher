@@ -72,7 +72,8 @@
                 <a href="/review-tenders" class="nav-link {% if request.path == '/review-tenders' %}active{% endif %}">검토공고<span id="memo-badge" class="hidden ml-1 text-xs font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full align-middle"></span></a>
                 {% if g.user %}
                 <a href="/filters" class="nav-link {% if request.path == '/filters' %}active{% endif %}">필터관리</a>
-                <a href="/newsletter/review" class="nav-link {% if request.path == '/newsletter/review' %}active{% endif %}">뉴스레터 검수<span id="nl-badge" class="hidden ml-1 text-xs font-bold bg-amber-500 text-white px-1.5 py-0.5 rounded-full align-middle"></span></a>
+                <a href="/newsletter/review" class="nav-link {% if request.path == '/newsletter/review' %}active{% endif %}">뉴스레터 편집실<span id="nl-badge" class="hidden ml-1 text-xs font-bold bg-amber-500 text-white px-1.5 py-0.5 rounded-full align-middle"></span></a>
+                <a href="/newsletter/send" class="nav-link {% if request.path == '/newsletter/send' %}active{% endif %}">발송</a>
                 <a href="/newsletter/brief" class="nav-link {% if request.path == '/newsletter/brief' %}active{% endif %}">입찰동향 조건</a>
                 <a href="/newsletter/settings" class="nav-link {% if request.path == '/newsletter/settings' %}active{% endif %}">발송 설정</a>
                 {% endif %}
@@ -102,7 +103,8 @@
                         <a href="/review-tenders" class="nav-link {% if request.path == '/review-tenders' %}active{% endif %}">검토공고<span id="memo-badge" class="hidden ml-1 text-xs font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full align-middle"></span></a>
                         {% if g.user %}
                         <a href="/filters" class="nav-link {% if request.path == '/filters' %}active{% endif %}">필터관리</a>
-                <a href="/newsletter/review" class="nav-link {% if request.path == '/newsletter/review' %}active{% endif %}">뉴스레터 검수<span id="nl-badge" class="hidden ml-1 text-xs font-bold bg-amber-500 text-white px-1.5 py-0.5 rounded-full align-middle"></span></a>
+                <a href="/newsletter/review" class="nav-link {% if request.path == '/newsletter/review' %}active{% endif %}">뉴스레터 편집실<span id="nl-badge" class="hidden ml-1 text-xs font-bold bg-amber-500 text-white px-1.5 py-0.5 rounded-full align-middle"></span></a>
+                <a href="/newsletter/send" class="nav-link {% if request.path == '/newsletter/send' %}active{% endif %}">발송</a>
                 <a href="/newsletter/brief" class="nav-link {% if request.path == '/newsletter/brief' %}active{% endif %}">입찰동향 조건</a>
                 <a href="/newsletter/settings" class="nav-link {% if request.path == '/newsletter/settings' %}active{% endif %}">발송 설정</a>
                         {% endif %}

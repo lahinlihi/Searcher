@@ -598,6 +598,7 @@ CREATE TABLE IF NOT EXISTS daily_insights (
     points       TEXT NOT NULL DEFAULT '[]',
     synthesis    TEXT,
     closing      TEXT,
+    material     TEXT,       -- 생성에 쓴 재료 전문(JSON). 근거 대조의 원본.
     model        TEXT,
     attempts     INTEGER,
     lint_ok      INTEGER NOT NULL DEFAULT 0,
@@ -613,6 +614,11 @@ CREATE INDEX IF NOT EXISTS idx_insights_status ON daily_insights(status);
 
 def ensure_schema(conn):
     conn.executescript(INSIGHT_SCHEMA)
+    # 기존 테이블에는 material 이 없다. 재료를 저장하지 않으면 발송 전
+    # 근거 대조를 할 수 없으므로 뒤늦게라도 컬럼을 붙인다.
+    cols = {r[1] for r in conn.execute('PRAGMA table_info(daily_insights)')}
+    if 'material' not in cols:
+        conn.execute('ALTER TABLE daily_insights ADD COLUMN material TEXT')
     conn.commit()
 
 
@@ -629,17 +635,23 @@ def save_daily(conn, results, run_date=None):
         conn.execute(
             """INSERT INTO daily_insights
                (run_date, topic, category, headline, mode, points, synthesis,
-                closing, model, attempts, lint_ok, lint_detail, status, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                closing, material, model, attempts, lint_ok, lint_detail,
+                status, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(run_date, topic) DO UPDATE SET
                  headline=excluded.headline, mode=excluded.mode,
                  points=excluded.points, synthesis=excluded.synthesis,
-                 closing=excluded.closing, model=excluded.model,
+                 closing=excluded.closing, material=excluded.material,
+                 model=excluded.model,
                  attempts=excluded.attempts, lint_ok=excluded.lint_ok,
                  lint_detail=excluded.lint_detail""",
             (run_date, r['topic'], r.get('category'), o.get('headline'),
              o.get('mode'), json.dumps(o.get('points') or [], ensure_ascii=False),
-             o.get('synthesis'), o.get('closing_material'), r.get('model'),
+             o.get('synthesis'), o.get('closing_material'),
+             json.dumps([{'n': n, 'source': src, 'title': ti, 'body': bd}
+                         for n, src, ti, bd in (r.get('material') or [])],
+                        ensure_ascii=False),
+             r.get('model'),
              r.get('attempts'), int(v['ok']),
              json.dumps({'blocking': v['blocking'], 'warning': v['warning']},
                         ensure_ascii=False),

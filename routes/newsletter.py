@@ -139,7 +139,139 @@ def api_generate():
         conn.close()
 
 
+# ════════════════════════════════════════════════════════════ 검증·재작성
+
+@bp.route('/api/newsletter/insight/<int:insight_id>/verify')
+@moderator_required
+def api_verify(insight_id):
+    """
+    근거 대조. 기본은 코드 대조만(즉시·무료), ai=1 이면 위치 지목까지.
+
+    AI 호출은 항목 수만큼 일어나므로 화면을 열 때마다 자동으로 부르지 않는다.
+    편집자가 필요할 때 누른다.
+    """
+    import verify as V
+    use_ai = request.args.get('ai') == '1'
+    conn = _conn()
+    try:
+        row = conn.execute('SELECT * FROM daily_insights WHERE id=?',
+                           (insight_id,)).fetchone()
+        if row is None:
+            return jsonify({'error': '없는 항목입니다.'}), 404
+        return jsonify(V.verify(conn, row, use_ai=use_ai))
+    except Exception as e:
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    finally:
+        conn.close()
+
+
+@bp.route('/api/newsletter/insight/<int:insight_id>/rewrite', methods=['POST'])
+@moderator_required
+def api_rewrite(insight_id):
+    """
+    다시 쓰기 요청 — 대안을 가져오기만 한다. 저장하지 않는다.
+
+    채택은 편집자가 한다. 자동으로 갈아끼우면 편집자가 사후 확인자가 된다.
+    """
+    import json as _j
+    import verify as V
+    data = request.get_json(silent=True) or {}
+    idx = int(data.get('index') or 0)
+    note = (data.get('note') or '').strip()
+    conn = _conn()
+    try:
+        row = conn.execute('SELECT * FROM daily_insights WHERE id=?',
+                           (insight_id,)).fetchone()
+        if row is None:
+            return jsonify({'error': '없는 항목입니다.'}), 404
+        points = _j.loads(row['points'] or '[]')
+        if not (1 <= idx <= len(points)):
+            return jsonify({'error': '항목 번호가 범위를 벗어났습니다.'}), 400
+        material, rebuilt = V.load_material(conn, row)
+        if not material:
+            return jsonify({'error': '재료가 없어 다시 쓸 수 없습니다.'}), 400
+        res = V.rewrite(points[idx - 1], material, note)
+        res['material_rebuilt'] = rebuilt
+        res['index'] = idx
+        return (jsonify(res), 502) if res.get('error') else jsonify(res)
+    except Exception as e:
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    finally:
+        conn.close()
+
+
 # ════════════════════════════════════════════════════════════ 미리보기·발송
+
+@bp.route('/newsletter/send')
+@moderator_required
+def send_page():
+    """
+    발송 전 최종 화면 — 편집실(/newsletter/review)과 분리한다.
+
+    편집하다 실수로 발송 버튼을 누르는 경로를 없애기 위해서다.
+    이 화면은 고치는 곳이 아니라 '이대로 내보낼지' 만 정하는 곳이다.
+    """
+    return render_template('newsletter_send.html')
+
+
+@bp.route('/api/newsletter/send-status')
+@moderator_required
+def api_send_status():
+    """발송 전 점검 — 무엇이 실릴지, 보낼 수 있는 상태인지."""
+    import newsletter as nl
+    import insight
+    conn = _conn()
+    try:
+        run_date = request.args.get('date') or None
+        data = nl.build(conn, run_date)
+        run_date = (data or {}).get('run_date') or run_date
+        if not run_date:
+            r = conn.execute('SELECT run_date FROM daily_insights '
+                             'ORDER BY run_date DESC LIMIT 1').fetchone()
+            run_date = r['run_date'] if r else None
+
+        rows = conn.execute(
+            'SELECT status, COUNT(*) c FROM daily_insights WHERE run_date=? '
+            'GROUP BY status', (run_date,)).fetchall() if run_date else []
+        counts = {r['status']: r['c'] for r in rows}
+
+        nl.ensure_schema(conn)
+        subs = nl.active_subscribers(conn)
+        mail = nl.mail_settings()
+        sent = conn.execute(
+            "SELECT * FROM newsletter_sends WHERE run_date=? AND kind='real' "
+            'ORDER BY id DESC LIMIT 1', (run_date,)).fetchone() if run_date else None
+
+        blockers = []
+        if not data:
+            blockers.append('승인된 시사점이 없습니다. 편집실에서 먼저 승인하세요.')
+        if not subs:
+            blockers.append('활성 구독자가 없습니다.')
+        if not (mail.get('user') and mail.get('password_set')):
+            blockers.append('발송 계정이 설정되지 않았습니다.')
+
+        return jsonify({
+            'run_date': run_date,
+            'subject': nl.subject_for(data) if data else None,
+            'counts': counts,
+            'sections': [{'headline': s['headline'],
+                          'category': s['category'],
+                          'points': len(s['points']),
+                          'articles': len(s['articles'])}
+                         for s in (data or {}).get('sections', [])],
+            'tenders': len(((data or {}).get('tenders') or {}).get('items', [])),
+            'subscribers': [{'email': r['email'], 'name': r['name'],
+                             'company': r['company']} for r in subs],
+            'mail_user': mail.get('user'),
+            'mail_ready': bool(mail.get('user') and mail.get('password_set')),
+            'blockers': blockers,
+            'already_sent': dict(sent) if sent else None,
+        })
+    except Exception as e:
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    finally:
+        conn.close()
+
 
 @bp.route('/newsletter/preview')
 @moderator_required

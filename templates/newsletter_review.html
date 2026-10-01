@@ -1,6 +1,16 @@
 {% extends "base.html" %}
 
-{% block title %}뉴스레터 검수 - HIGH-SEARCH{% endblock %}
+{% block title %}뉴스레터 편집실 - HIGH-SEARCH{% endblock %}
+
+{#
+  편집실 — 고치는 곳. 발송 버튼은 여기 두지 않는다.
+
+  편집하다 실수로 발송하는 경로를 없애기 위해 발송은 /newsletter/send 로 뺐다.
+  근거 대조는 세 겹이다(verify.py):
+    1층 코드 대조    AI 없이 수치·기관을 문자열로 대조 — 즉시·무료
+    2층 AI 위치 지목 "재료 어디서 나왔는지 원문 그대로" 만 시키고 코드가 재대조
+    3층 전체 재료    접어 둔다. 1·2층이 표시한 것만 펼쳐 본다
+#}
 
 {% block content %}
 <div class="space-y-4">
@@ -17,38 +27,16 @@
                     class="btn-secondary text-sm whitespace-nowrap">지금 생성</button>
             <button type="button" onclick="approveAll()" id="btn-approve-all"
                     class="btn-secondary text-sm whitespace-nowrap">통과분 일괄 승인</button>
+            <a href="/newsletter/send" id="go-send"
+               class="text-sm px-4 py-2 rounded font-semibold bg-gray-800 text-white
+                      hover:bg-gray-900 whitespace-nowrap">발송 화면 →</a>
         </div>
     </div>
 
     <!-- 안내 -->
     <div class="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded px-3 py-2">
         승인한 항목만 발송 대상이 됩니다. 검사에 걸린 항목은 수정 후에만 승인할 수 있습니다.
-    </div>
-
-    <!-- 발송 -->
-    <div class="card">
-      <div class="card-body space-y-3">
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="text-sm font-semibold text-gray-800">발송</span>
-          <span id="send-state" class="text-xs text-gray-500"></span>
-          <a href="/newsletter/preview" target="_blank"
-             class="btn-secondary text-sm ml-auto">메일 미리보기</a>
-        </div>
-        <div class="flex flex-wrap items-center gap-2">
-          <input id="test-email" type="email" class="form-input text-sm w-64"
-                 placeholder="테스트 받을 이메일 (비우면 내 계정)">
-          <button type="button" onclick="sendTest()" id="btn-test"
-                  class="btn-secondary text-sm whitespace-nowrap">테스트 발송</button>
-          <button type="button" onclick="sendReal()" id="btn-send"
-                  class="text-sm px-4 py-2 rounded font-semibold bg-green-600 text-white
-                         hover:bg-green-700 whitespace-nowrap ml-auto">구독자에게 발송</button>
-        </div>
-        <p class="text-xs text-gray-500">
-          승인된 항목만 실립니다. 테스트 발송은 구독자에게 나가지 않습니다.
-          실제 발송은 확인 문구 입력이 필요합니다.
-        </p>
-        <div id="history" class="text-xs text-gray-500 border-t pt-2"></div>
-      </div>
+        <b>이 화면에서는 발송되지 않습니다.</b> 승인을 마치고 발송 화면으로 넘어가세요.
     </div>
 
     <!-- 목록 -->

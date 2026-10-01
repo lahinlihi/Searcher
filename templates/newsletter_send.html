@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}뉴스레터 발송 - HIGH-SEARCH{% endblock %}
+
+{#
+  발송 전 최종 화면 — 편집실과 분리한다.
+
+  편집하다 실수로 발송 버튼을 누르는 경로를 없애기 위해서다.
+  여기서는 고칠 수 없다. 고칠 것이 보이면 편집실로 돌아간다.
+#}
+
+{% block content %}
+<div class="space-y-4">
+
+  <!-- 머리 -->
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div class="flex items-center gap-2">
+      <label class="text-sm font-semibold text-gray-700">발행일</label>
+      <select id="run-select" class="form-input text-sm w-44" onchange="loadStatus()"></select>
+    </div>
+    <a href="/newsletter/review" class="btn-secondary text-sm">← 편집실로</a>
+  </div>
+
+  <div class="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded px-3 py-2">
+    이 화면에서는 내용을 고칠 수 없습니다. 아래 미리보기가 <b>실제로 나가는 메일 전문</b>입니다.
+    고칠 곳이 보이면 편집실로 돌아가세요.
+  </div>
+
+  <!-- 점검 -->
+  <div class="card">
+    <div class="card-body space-y-3">
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-semibold text-gray-800">발송 전 점검</span>
+        <span id="ready-badge" class="text-xs"></span>
+      </div>
+      <div id="blockers"></div>
+      <div id="checklist" class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs"></div>
+      <div id="subject-box" class="text-xs text-gray-600 border-t pt-2"></div>
+      <div id="sent-warn"></div>
+    </div>
+  </div>
+
+  <!-- 메일 전문 -->
+  <div class="card">
+    <div class="card-body space-y-2">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-sm font-semibold text-gray-800">나가는 메일 전문</span>
+        <span id="width-state" class="text-xs text-gray-400"></span>
+        <div class="ml-auto flex items-center gap-1.5">
+          <button type="button" class="btn-secondary text-xs" onclick="setWidth(680)">PC</button>
+          <button type="button" class="btn-secondary text-xs" onclick="setWidth(380)">모바일</button>
+          <a id="open-new" href="/newsletter/preview" target="_blank"
+             class="btn-secondary text-xs">새 탭</a>
+        </div>
+      </div>
+      <div class="bg-gray-100 border border-gray-200 rounded p-3 overflow-x-auto">
+        <iframe id="mail-frame" title="메일 미리보기"
+                class="bg-white border border-gray-300 mx-auto block"
+                style="width:680px;height:760px"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!-- 발송 -->
+  <div class="card">
+    <div class="card-body space-y-3">
+      <span class="text-sm font-semibold text-gray-800">발송</span>
+
+      <div class="flex flex-wrap items-center gap-2">
+        <input id="test-email" type="email" class="form-input text-sm w-64"
+               placeholder="테스트 받을 이메일 (비우면 내 계정)">
+        <button type="button" onclick="sendTest()" id="btn-test"
+                class="btn-secondary text-sm whitespace-nowrap">테스트 발송</button>
+        <span class="text-xs text-gray-400">구독자에게 나가지 않습니다</span>
+      </div>
+
+      <div class="border-t pt-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <span id="send-target" class="text-xs text-gray-600"></span>
+          <button type="button" onclick="sendReal()" id="btn-send" disabled
+                  class="text-sm px-4 py-2 rounded font-semibold ml-auto
+                         bg-gray-200 text-gray-400 cursor-not-allowed">구독자에게 발송</button>
+        </div>
+        <p class="text-xs text-gray-500 mt-1.5">
+          확인 문구 입력이 필요합니다. 발송은 되돌릴 수 없습니다.
+        </p>
+      </div>
+
+      <div id="history" class="text-xs text-gray-500 border-t pt-2"></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="hidden fixed left-1/2 -translate-x-1/2 bottom-6 z-50
+     bg-gray-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg max-w-[90vw]"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/newsletter_send.js') }}"></script>
+{% endblock %}
