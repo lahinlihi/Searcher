@@ -38,6 +38,40 @@ CLASS_LABEL = {
     'C': '행정공시·취소·기타',
 }
 
+# ── 구분 ─────────────────────────────────────────────────────────
+# tenders.status 로 나눈다. 실측 분포(최근 30일):
+#   사전규격 4,901(나라장터 사전규격) / 등록공고 7,550·일반 2,700·재공고 311
+#   변경공고 456 / 기술지원 159·창업지원 52(중소벤처24)
+# '지원사업' 은 status 만으로는 중소벤처24 밖을 놓친다. 서울시·테크노파크의
+# 'status=일반' 중에도 기업 신청형 지원사업이 섞여 있어, A/B/C 분류기가
+# A 로 판정한 것도 지원사업으로 올린다.
+SECTION_KEY = ('pre', 'normal', 'support')
+SECTION_LABEL = {
+    'pre':     '사전규격',
+    'normal':  '일반공고',
+    'support': '지원사업',
+}
+STATUS_PRE = {'사전규격'}
+STATUS_SUPPORT = {'기술지원', '창업지원'}
+STATUS_NORMAL = {'등록공고', '일반', '재공고', '변경공고', '접수중'}
+STATUS_DROP = {'취소공고', '결과공고', '마감'}   # 어느 구분에도 넣지 않는다
+
+
+def section_of(status, cls=None):
+    """공고 하나의 구분. 어디에도 속하지 않으면 None."""
+    st = (status or '').strip()
+    if st in STATUS_DROP:
+        return None
+    if st in STATUS_PRE:
+        return 'pre'
+    if st in STATUS_SUPPORT:
+        return 'support'
+    if st in STATUS_NORMAL:
+        # 분류기가 '기업이 직접 신청 가능한 지원사업' 으로 본 것은 지원사업으로
+        return 'support' if cls == 'A' else 'normal'
+    return None
+
+
 DEFAULT_PRESET = {
     'name': '기본',
     'include_keywords': ['일자리', '채용', '직무', '역량', '교육', '훈련',
@@ -45,11 +79,19 @@ DEFAULT_PRESET = {
     'exclude_keywords': ['건설', '감리', '폐기물', '안전점검', '철거',
                          '상수도', '하수', '도로', '토목', '조경', '측량',
                          '준공', '포장', '전기공사'],
-    'classes': ['A'],          # 포함할 분류. 빈 배열이면 분류 무시
+    'classes': [],             # 포함할 분류. 빈 배열이면 분류를 거르지 않는다
     'min_price': None,
     'max_price': None,
     'days_ahead': 30,          # 마감이 N일 이내인 것만
-    'limit': 8,                # 메일에 실을 최대 건수
+    'limit': 25,               # 전체 상한 (구분별 합계의 보호선)
+
+    # ── 적합도 점수 (공고검색기 scoring.py 를 그대로 쓴다) ──────────
+    'section_limits': {'pre': 10, 'normal': 10, 'support': 5},
+    'core_keywords': [],       # 2배 가중. 비우면 scoring 기본값(AI·인공지능)
+    'type_weights': {},        # 사업유형별 점수 45/35/25/15/0
+    'agency_weights': {},      # 기관명 → 점수(기본 5)
+    'use_embedding': True,     # 제목 임베딩 유사도 혼합 (규칙 60 : 임베딩 40)
+    'min_score': 0,            # 이 점수 미만은 싣지 않는다
 }
 
 
@@ -184,16 +226,101 @@ def _where(preset, days):
     return ' AND '.join(cond), params
 
 
-def candidates(conn, preset, days=3, limit=400):
-    """분류 이전의 키워드 통과 후보"""
+def candidates(conn, preset, days=3, limit=1500):
+    """분류 이전의 키워드 통과 후보.
+
+    금액 내림차순으로 자르지 않는다. 적합도 점수로 뽑을 것이므로 금액으로
+    먼저 자르면 점수 높은 소액 공고가 후보에 들지도 못한다.
+    status·announced_date 는 구분 판정과 점수 계산에 쓴다.
+    """
     where, params = _where(preset, days)
     return conn.execute(
-        f"""SELECT id, title, agency, demand_agency, source_site,
-                   estimated_price, deadline_date, url
+        f"""SELECT id, title, agency, demand_agency, source_site, status,
+                   estimated_price, announced_date, deadline_date, url
             FROM tenders
-            WHERE {where}
-            ORDER BY COALESCE(estimated_price, 0) DESC
+            WHERE {where} AND is_duplicate = 0
+            ORDER BY id DESC
             LIMIT ?""", params + [limit]).fetchall()
+
+
+# ════════════════════════════════════════════════════════════ 적합도 점수
+
+class _Row:
+    """scoring.py 는 SQLAlchemy Tender 객체를 받는다. sqlite3.Row 를 그 모양으로 감싼다.
+
+    별도 점수 로직을 새로 만들지 않는 이유는, 공고검색기에서 이미 쓰이며
+    튜닝된 규칙(키워드 밀도·경계 가중치·핵심어 2배·사업유형·기관 가중치·
+    임베딩 혼합)을 뉴스레터에서도 똑같이 적용해야 두 화면의 순위가
+    어긋나지 않기 때문이다.
+    """
+    __slots__ = ('id', 'title', 'agency', 'demand_agency', 'status',
+                 'estimated_price', 'announced_date')
+
+    def __init__(self, r):
+        self.id = r['id']
+        self.title = r['title']
+        self.agency = r['agency']
+        self.demand_agency = r['demand_agency']
+        self.status = r['status']
+        self.estimated_price = r['estimated_price']
+        self.announced_date = r['announced_date']
+
+
+def scoring_config(conn, preset):
+    """점수 계산 설정. 프리셋에 없으면 공고검색기 설정(user_id=1)을 상속한다.
+
+    뉴스레터는 전원 동일 1종이므로 수신자별 개인화는 없다. 대신 '대상 업체가
+    관심 있을 사업' 의 기준을 관리자가 공고검색기에서 이미 튜닝해 두었으므로
+    그것을 출발점으로 쓴다. 프리셋에 값이 있으면 그쪽이 이긴다.
+    """
+    base = {'core_keywords': [], 'type_weights': {}, 'agency_weights': {}}
+    try:
+        row = conn.execute(
+            'SELECT interest_keywords, type_weights, core_keywords '
+            'FROM user_preferences WHERE user_id=1').fetchone()
+        if row:
+            base['core_keywords'] = json.loads(row['core_keywords'] or '[]')
+            base['type_weights'] = json.loads(row['type_weights'] or '{}')
+        for a in conn.execute(
+                'SELECT agency_name, weight FROM agency_weights WHERE user_id=1'):
+            base['agency_weights'][a['agency_name']] = a['weight']
+    except Exception as e:
+        print(f'[입찰동향] 공고검색기 설정 상속 실패 — 기본값 사용: {e}')
+
+    return {
+        'include_keywords': preset.get('include_keywords') or [],
+        'core_keywords': preset.get('core_keywords') or base['core_keywords'],
+        'type_weights': preset.get('type_weights') or base['type_weights'],
+        'agency_weights': preset.get('agency_weights') or base['agency_weights'],
+    }
+
+
+def score_rows(rows, cfg, use_embedding=True):
+    """후보 전체에 적합도 점수를 매긴다. {id: (점수, 사업유형)} 반환.
+
+    임베딩은 요청당 1회 배치 인코딩이다(compute_embed_sims). 모델이 아직
+    로딩 중이면 빈 dict 가 돌아오고 규칙 점수만 쓴다 — 느려지지 않는다.
+    """
+    import scoring
+    objs = [_Row(r) for r in rows]
+    kws = cfg['include_keywords']
+    if not kws or not objs:
+        return {}
+
+    sims = {}
+    if use_embedding:
+        try:
+            sims = scoring.compute_embed_sims(objs, kws, cfg['core_keywords'])
+        except Exception as e:
+            print(f'[입찰동향] 임베딩 생략 — 규칙 점수만 사용: {e}')
+
+    out = {}
+    for o in objs:
+        total, type_name, *_ = scoring._score_and_type(
+            o, kws, cfg['type_weights'], cfg['agency_weights'],
+            cfg['core_keywords'], sims.get(o.id))
+        out[o.id] = (total, type_name)
+    return out
 
 
 # ════════════════════════════════════════════════════════════ A/B/C 분류
@@ -299,7 +426,13 @@ def classify(conn, rows, batch=40, api_key=None, quiet=False):
 
 def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
     """
-    조건 → 건수·목록.
+    조건 → 구분별 건수·목록.
+
+    선별 순서
+      1. 키워드·금액·마감 조건 (SQL)
+      2. 구분 판정 — 사전규격 / 일반공고 / 지원사업 (section_of)
+      3. 적합도 점수 (공고검색기와 동일한 scoring.py)
+      4. 구분별로 점수 내림차순 상위 N
 
     '지금 몇 건이 걸리는지' 를 바로 보여주는 것이 이 화면의 핵심이므로
     분류는 기본적으로 이미 저장된 것만 쓴다(빠른 응답).
@@ -321,15 +454,35 @@ def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
                 f'WHERE tender_id IN ({q})', ids):
             cls_map[c['tender_id']] = (c['class'], c['hr_related'])
 
+    cfg = scoring_config(conn, preset)
+    scores = score_rows(rows, cfg, preset.get('use_embedding', True))
+
     wanted = set(preset.get('classes') or [])
-    items, counts = [], {'A': 0, 'B': 0, 'C': 0, '미분류': 0}
+    min_score = float(preset.get('min_score') or 0)
+
+    buckets = {k: [] for k in SECTION_KEY}
+    counts = {'A': 0, 'B': 0, 'C': 0, '미분류': 0}
+    dropped = {'구분없음': 0, '분류제외': 0, '점수미달': 0}
+
     for r in rows:
         cls, hr = cls_map.get(r['id'], (None, 0))
         counts['미분류' if cls is None else cls] += 1
-        if wanted and cls not in wanted:
+
+        sec = section_of(r['status'], cls)
+        if sec is None:
+            dropped['구분없음'] += 1
             continue
+        if wanted and cls not in wanted:
+            dropped['분류제외'] += 1
+            continue
+
+        score, type_name = scores.get(r['id'], (0.0, '기타'))
+        if score < min_score:
+            dropped['점수미달'] += 1
+            continue
+
         p = r['estimated_price']
-        items.append({
+        buckets[sec].append({
             'id': r['id'],
             'title': r['title'],
             'agency': r['demand_agency'] or r['agency'] or r['source_site'],
@@ -338,6 +491,26 @@ def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
             'url': r['url'],
             'class': cls,
             'hr_related': bool(hr),
+            'status': r['status'],
+            'section': sec,
+            'score': score,
+            'type': type_name,
+        })
+
+    # 구분별 점수 내림차순 → 동점이면 금액 큰 순
+    limits = {**DEFAULT_PRESET['section_limits'],
+              **(preset.get('section_limits') or {})}
+    sections, selected = [], []
+    for k in SECTION_KEY:
+        buckets[k].sort(key=lambda x: (-x['score'], -(x['price'] or 0)))
+        take = buckets[k][:int(limits.get(k, 0))]
+        selected += take
+        sections.append({
+            'key': k,
+            'label': SECTION_LABEL[k],
+            'limit': int(limits.get(k, 0)),
+            'available': len(buckets[k]),
+            'items': take,
         })
 
     total_raw = conn.execute(
@@ -349,17 +522,25 @@ def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
         'total_collected': total_raw,
         'passed_keywords': len(rows),
         'class_counts': counts,
-        'selected': len(items),
-        'limit': preset.get('limit') or 8,
-        'items': items[:preset.get('limit') or 8],
-        'items_all': len(items),
+        'dropped': dropped,
+        'scored': len(scores),
+        'embedding_used': bool(scores) and preset.get('use_embedding', True),
+        'keywords_used': cfg['include_keywords'],
+        'core_keywords_used': cfg['core_keywords'],
+        'sections': sections,
+        'selected': len(selected),
+        'items': selected,                      # 구분 순서대로 평탄화
+        'items_all': sum(len(buckets[k]) for k in SECTION_KEY),
+        'limit': sum(int(limits.get(k, 0)) for k in SECTION_KEY),
     }
 
 
 def build_section(conn, preset=None, days=3):
     """뉴스레터용 데이터 — 미리보기와 같은 조건, 메일에 실을 형태로"""
     pv = preview(conn, preset, days=days)
-    return {'count': pv['items_all'], 'items': pv['items']}
+    return {'count': pv['items_all'],
+            'items': pv['items'],
+            'sections': pv['sections']}
 
 
 # ════════════════════════════════════════════════════════════ CLI
