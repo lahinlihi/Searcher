@@ -108,7 +108,15 @@ function config() {
         days_ahead: num('days-ahead'),
         min_price: minP === null ? null : Math.round(minP * 1e8),
         max_price: null,
-        limit: num('limit') || 8,
+        min_score: num('min-score') || 0,
+        section_limits: {
+            pre: num('lim-pre') ?? 10,
+            normal: num('lim-normal') ?? 10,
+            support: num('lim-support') ?? 5,
+        },
+        use_embedding: document.getElementById('use-embedding').checked,
+        limit: (num('lim-pre') ?? 10) + (num('lim-normal') ?? 10)
+             + (num('lim-support') ?? 5),
     };
 }
 
@@ -151,10 +159,13 @@ function renderFunnel(pv) {
         arrow,
         step('키워드 통과', pv.passed_keywords),
         arrow,
-        step('분류 부합', pv.items_all, pv.items_all >= 3 ? 'good' : 'warn'),
+        step('구분 부합', pv.items_all, pv.items_all >= 3 ? 'good' : 'warn'),
         arrow,
-        step('메일 게재', Math.min(pv.items_all, pv.limit)),
-    ].join(' ');
+        step('메일 게재', pv.selected),
+    ].join(' ')
+    + (pv.embedding_used
+        ? ' <span class="text-xs text-green-700 ml-1">임베딩 적용</span>'
+        : ' <span class="text-xs text-amber-700 ml-1">규칙 점수만</span>');
 
     // 분류 분포 막대
     const c = pv.class_counts || {};
@@ -190,19 +201,37 @@ function renderFunnel(pv) {
 
 function renderResult(pv) {
     document.getElementById('result-count').textContent =
-        `조건 부합 ${pv.items_all}건 중 상위 ${pv.items.length}건`;
+        `조건 부합 ${pv.items_all}건 중 ${pv.selected}건 게재`;
     const el = document.getElementById('result-list');
-    if (!pv.items.length) {
+    const secs = (pv.sections || []).filter(s => s.available > 0 || s.limit > 0);
+    if (!secs.length || !pv.selected) {
         el.innerHTML = '<p class="text-sm text-gray-400 py-4 text-center">' +
-            '조건에 맞는 공고가 없습니다. 키워드를 넓히거나 분류 조건을 풀어보세요.</p>';
+            '조건에 맞는 공고가 없습니다. 키워드를 넓히거나 기간을 늘려보세요.</p>';
         return;
     }
-    el.innerHTML = pv.items.map((it, i) => `
+    el.innerHTML = secs.map(sec => `
+        <div class="pt-2 first:pt-0">
+          <div class="flex items-baseline gap-2 pb-1 border-b border-gray-200 mb-1.5">
+            <span class="text-sm font-semibold text-gray-800">${esc(sec.label)}</span>
+            <span class="text-xs ${sec.items.length < sec.limit ? 'text-amber-700' : 'text-gray-500'}">
+              후보 ${sec.available}건 중 ${sec.items.length}/${sec.limit}건
+              ${sec.items.length < sec.limit ? '— 후보 부족' : ''}</span>
+          </div>
+          ${sec.items.length ? sec.items.map((it, i) => row(it, i)).join('')
+            : '<p class="text-xs text-gray-400 py-1.5">해당 공고 없음</p>'}
+        </div>`).join('');
+}
+
+function row(it, i) {
+    // 점수대를 색으로 — 60 이상이면 관심 분야에 분명히 걸린 것
+    const tone = it.score >= 60 ? 'bg-green-100 text-green-800'
+               : it.score >= 40 ? 'bg-blue-100 text-blue-800'
+                                : 'bg-gray-100 text-gray-600';
+    return `
         <div class="flex items-start gap-2 pb-2 border-b border-gray-100 last:border-0">
             <span class="text-xs text-gray-400 pt-0.5 w-5 text-right shrink-0">${i + 1}</span>
-            <span class="text-xs font-bold px-1.5 py-0.5 rounded shrink-0
-                  ${it.class === 'A' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}">
-                  ${it.class || '?'}</span>
+            <span class="text-xs font-bold px-1.5 py-0.5 rounded shrink-0 ${tone}"
+                  title="적합도 점수">${(it.score ?? 0).toFixed(0)}</span>
             <div class="min-w-0 flex-1">
                 <div class="text-sm text-gray-800 leading-snug">
                     ${it.url ? `<a href="${esc(it.url)}" target="_blank" class="hover:underline">${esc(it.title)}</a>`
@@ -211,10 +240,12 @@ function renderResult(pv) {
                 <div class="text-xs text-gray-500 mt-0.5">
                     ${esc(it.agency)} · ${it.price ? it.price + '억' : '금액 미공개'}
                     · 마감 ${esc(it.deadline || '미정')}
+                    ${it.type && it.type !== '기타' ? ` · ${esc(it.type)}` : ''}
+                    ${it.class ? ` · <span class="text-gray-400">${esc(it.class)}</span>` : ''}
                     ${it.hr_related ? '<span class="text-blue-600 ml-1">HR</span>' : ''}
                 </div>
             </div>
-        </div>`).join('');
+        </div>`;
 }
 
 /* ── 분류 실행 ────────────────────────────────────────── */
@@ -277,7 +308,9 @@ async function loadHistory() {
                 · 관심 ${(c.include_keywords || []).length}개
                 · 제외 ${(c.exclude_keywords || []).length}개
                 · 분류 [${(c.classes || []).join(',') || '전체'}]
-                · 게재 ${c.limit ?? '-'}건</div>`;
+                · 게재 ${(c.section_limits
+                    ? `${c.section_limits.pre}/${c.section_limits.normal}/${c.section_limits.support}`
+                    : (c.limit ?? '-'))}건</div>`;
         }).join('');
     } catch (e) { /* 이력 실패는 무시 */ }
 }
@@ -292,7 +325,12 @@ async function init() {
     document.getElementById('days-ahead').value = p.days_ahead ?? '';
     document.getElementById('min-price').value =
         p.min_price ? (p.min_price / 1e8) : '';
-    document.getElementById('limit').value = p.limit ?? 8;
+    const sl = p.section_limits || {};
+    document.getElementById('lim-pre').value = sl.pre ?? 10;
+    document.getElementById('lim-normal').value = sl.normal ?? 10;
+    document.getElementById('lim-support').value = sl.support ?? 5;
+    document.getElementById('min-score').value = p.min_score ?? 0;
+    document.getElementById('use-embedding').checked = p.use_embedding !== false;
     document.getElementById('saved-info').textContent =
         `최종 저장 ${p.updated_at?.slice(0, 16).replace('T', ' ') || ''}` +
         (p.updated_by ? ` · ${p.updated_by}` : '');
@@ -304,9 +342,11 @@ async function init() {
             if (e.key === 'Enter') { e.preventDefault(); addTag(k); }
         });
     }
-    for (const id of ['days-ahead', 'min-price', 'limit']) {
+    for (const id of ['days-ahead', 'min-price', 'min-score',
+                      'lim-pre', 'lim-normal', 'lim-support']) {
         document.getElementById(id).addEventListener('input', runPreview);
     }
+    document.getElementById('use-embedding').addEventListener('change', runPreview);
     await doPreview();
     loadHistory();
 }

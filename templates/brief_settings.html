@@ -95,9 +95,42 @@
                     <input type="number" id="min-price" class="form-input text-sm w-full" step="0.1" min="0">
                 </div>
                 <div>
-                    <label class="block text-xs font-semibold text-gray-600 mb-1">메일 게재 건수</label>
-                    <input type="number" id="limit" class="form-input text-sm w-full" min="1" max="30">
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">최소 적합도 점수</label>
+                    <input type="number" id="min-score" class="form-input text-sm w-full" min="0" max="100" step="1">
                 </div>
+            </div>
+
+            <!-- 구분별 게재 건수 -->
+            <div class="border border-gray-200 rounded p-3 bg-gray-50 space-y-2">
+                <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-xs font-semibold text-gray-700">구분별 게재 건수</span>
+                    <span class="text-xs text-gray-500">각 구분 안에서 적합도 점수가 높은 순으로 싣습니다</span>
+                </div>
+                <div class="grid sm:grid-cols-3 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">사전규격
+                            <span class="font-normal text-gray-400">발주 전</span></label>
+                        <input type="number" id="lim-pre" class="form-input text-sm w-full" min="0" max="30">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">일반공고
+                            <span class="font-normal text-gray-400">입찰</span></label>
+                        <input type="number" id="lim-normal" class="form-input text-sm w-full" min="0" max="30">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">지원사업
+                            <span class="font-normal text-gray-400">직접 신청</span></label>
+                        <input type="number" id="lim-support" class="form-input text-sm w-full" min="0" max="30">
+                    </div>
+                </div>
+                <label class="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                    <input type="checkbox" id="use-embedding" class="rounded">
+                    제목 의미 유사도(임베딩) 혼합 — 규칙 점수 60% + 임베딩 40%
+                </label>
+                <p class="text-xs text-gray-500">
+                    점수 기준은 공고검색기의 <b>관심 키워드 · 핵심 키워드 · 사업유형 가중치 · 기관 가중치</b>를
+                    그대로 씁니다. 바꾸려면 공고검색기 설정에서 조정하세요.
+                </p>
             </div>
 
             <div class="flex flex-wrap items-center gap-2 pt-1">

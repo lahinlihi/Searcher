@@ -443,7 +443,12 @@ def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
     rows = candidates(conn, preset, days=days)
 
     if classify_missing and rows:
-        classify(conn, rows, api_key=api_key, quiet=True)
+        # 사전규격·중소벤처24 는 status 만으로 구분이 끝난다. 분류가 필요한 것은
+        # '등록공고/일반/재공고/변경공고' 뿐이다 — 이 중 A(기업이 직접 신청) 를
+        # 지원사업으로 올려야 하므로. 전수를 돌리면 API 호출이 두 배가 된다.
+        need = [r for r in rows if (r['status'] or '').strip() in STATUS_NORMAL]
+        if need:
+            classify(conn, need, api_key=api_key, quiet=True)
 
     cls_map = {}
     if rows:

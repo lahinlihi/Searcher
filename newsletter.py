@@ -308,11 +308,9 @@ def _section_html(i, s):
 </td></tr>'''
 
 
-def _tenders_html(tb):
-    """입찰동향 — 공고 제목·기관·금액·마감. 공공 공고이므로 저작권 제약이 없다."""
-    if not tb or not tb.get('items'):
-        return ''
-    rows = ''.join(
+def _tender_rows(items):
+    """공고 목록 행. 번호는 구분 안에서 1부터 다시 센다."""
+    return ''.join(
         f'<tr><td valign="top" width="16" style="padding:5px 6px 5px 0;'
         f'color:{_SUB};font-size:12px;">{i}</td>'
         f'<td style="padding:5px 0;">'
@@ -325,20 +323,63 @@ def _tenders_html(tb):
         + (f' &middot; {it["price"]}억' if it.get('price') else ' &middot; 금액 미공개')
         + (f' &middot; 마감 {esc(it["deadline"])}' if it.get('deadline') else '')
         + f'</div></td></tr>'
-        for i, it in enumerate(tb['items'], 1))
-    more = ''
-    if tb['count'] > len(tb['items']):
-        more = (f'<tr><td colspan="2" style="padding:8px 0 0;color:{_SUB};'
-                f'font-size:11.5px;">외 {tb["count"] - len(tb["items"])}건</td></tr>')
+        for i, it in enumerate(items, 1))
+
+
+# 구분별 한 줄 설명 — 받는 쪽이 '이게 나한테 뭔가' 를 바로 알게 한다.
+_SECTION_NOTE = {
+    'pre':     '발주 전 단계. 규격에 의견을 낼 수 있는 기간임',
+    'normal':  '입찰이 열린 공고. 용역업체를 찾는 건임',
+    'support': '기업이 직접 신청해 수혜자가 되는 사업임',
+}
+
+
+def _tenders_html(tb):
+    """입찰동향 — 사전규격 / 일반공고 / 지원사업 세 구분.
+
+    구분을 나누는 이유는 받는 쪽의 행동이 다르기 때문이다. 사전규격은
+    의견 제출, 일반공고는 입찰 참여, 지원사업은 신청이다. 한 덩어리로
+    섞으면 어느 것이 어느 경우인지 제목만 보고는 알 수 없다.
+
+    각 구분 안에서는 적합도 점수(공고검색기와 동일한 scoring.py) 내림차순이다.
+    공공 공고이므로 제목·기관·금액·마감을 그대로 실어도 저작권 제약이 없다.
+    """
+    if not tb or not tb.get('items'):
+        return ''
+
+    # 구분 정보가 없는 구버전 데이터는 한 덩어리로 렌더한다
+    secs = [x for x in (tb.get('sections') or []) if x.get('items')]
+    if not secs:
+        secs = [{'label': '오늘의 입찰동향', 'key': None,
+                 'items': tb['items'], 'available': tb.get('count', 0)}]
+
+    blocks = []
+    for sec in secs:
+        note = _SECTION_NOTE.get(sec.get('key'), '')
+        more = ''
+        if sec.get('available', 0) > len(sec['items']):
+            more = (f'<tr><td colspan="2" style="padding:7px 0 0;color:{_SUB};'
+                    f'font-size:11.5px;">외 {sec["available"] - len(sec["items"])}건</td></tr>')
+        blocks.append(f"""
+  <div style="padding-top:14px;">
+    <div style="color:{_INK};font-size:13px;font-weight:bold;padding-bottom:2px;">
+      {esc(sec['label'])}
+      <span style="color:{_SUB};font-size:11.5px;font-weight:normal;">
+        {len(sec['items'])}건</span></div>
+    {f'<div style="color:{_SUB};font-size:11.5px;padding-bottom:6px;">{note}</div>' if note else ''}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      {_tender_rows(sec['items'])}{more}
+    </table>
+  </div>""")
+
+    total = sum(len(x['items']) for x in secs)
     return f"""
 <tr><td style="padding:20px 24px;border-top:1px solid {_LINE};">
   <div style="color:{_BRAND};font-size:11.5px;font-weight:bold;
     letter-spacing:0.08em;padding-bottom:3px;">오늘의 입찰동향</div>
-  <div style="color:{_SUB};font-size:11.5px;padding-bottom:10px;">
-    기업이 직접 신청할 수 있는 지원사업 {tb['count']}건</div>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-    {rows}{more}
-  </table>
+  <div style="color:{_SUB};font-size:11.5px;">
+    관심 분야 적합도가 높은 순으로 {total}건</div>
+  {''.join(blocks)}
 </td></tr>"""
 
 

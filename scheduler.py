@@ -206,6 +206,27 @@ class CrawlScheduler:
                     import traceback
                     print(f"[HR뉴스] 시사점 생성 실패: {type(e).__name__}: {e}")
                     traceback.print_exc()
+
+                # 입찰동향 A/B/C 분류 — 메일에 '지원사업' 구분을 채우려면
+                # 분류가 먼저 있어야 한다. 사전규격·중소벤처24 는 status 로
+                # 구분이 끝나므로 '등록공고/일반/재공고/변경공고' 만 분류한다.
+                # 실패해도 시사점은 이미 저장됐으므로 여기서만 예외를 삼킨다.
+                try:
+                    import tender_brief as tb
+                    tb.ensure_schema(conn)
+                    preset = tb.get_preset(conn)
+                    rows = tb.candidates(conn, preset, days=days)
+                    need = [r for r in rows
+                            if (r['status'] or '').strip() in tb.STATUS_NORMAL]
+                    if need:
+                        saved_c, api_c = tb.classify(conn, need, quiet=True)
+                        print(f"[HR뉴스] 입찰동향 분류 {saved_c}건 "
+                              f"(후보 {len(rows)} 중 분류대상 {len(need)}, "
+                              f"API {api_c}회)")
+                    else:
+                        print("[HR뉴스] 입찰동향 분류 대상 없음")
+                except Exception as e:
+                    print(f"[HR뉴스] 입찰동향 분류 실패: {type(e).__name__}: {e}")
             finally:
                 conn.close()
             print(f"[HR뉴스] 완료 — 총 API {calls}회")
