@@ -72,6 +72,15 @@ def section_of(status, cls=None):
     return None
 
 
+def _within(created_at, days):
+    """created_at 이 최근 days 일 안인가. 'YYYY-MM-DD HH:MM:SS.ffffff' 문자열이라
+    앞 10자 비교로 충분하다 — 파싱 비용 없이 후보 전체를 거른다."""
+    if not created_at:
+        return True
+    cutoff = (datetime.now(KST) - timedelta(days=int(days))).strftime('%Y-%m-%d')
+    return str(created_at)[:10] >= cutoff
+
+
 DEFAULT_PRESET = {
     'name': '기본',
     'include_keywords': ['일자리', '채용', '직무', '역량', '교육', '훈련',
@@ -87,6 +96,10 @@ DEFAULT_PRESET = {
 
     # ── 적합도 점수 (공고검색기 scoring.py 를 그대로 쓴다) ──────────
     'section_limits': {'pre': 10, 'normal': 10, 'support': 5},
+    # 구분별 조회 기간(일). 지원사업은 모집 기간이 길어 같은 건이 2주 가까이
+    # 열려 있는 반면, 입찰 공고는 짧게 뜨고 닫힌다. 한 기간으로 묶으면
+    # 지원사업 후보가 모자라거나(짧게 잡을 때) 공고가 식은 것까지 실린다(길게 잡을 때).
+    'section_days': {'pre': 7, 'normal': 7, 'support': 14},
     'core_keywords': [],       # 2배 가중. 비우면 scoring 기본값(AI·인공지능)
     'type_weights': {},        # 사업유형별 점수 45/35/25/15/0
     'agency_weights': {},      # 기관명 → 점수(기본 5)
@@ -236,7 +249,8 @@ def candidates(conn, preset, days=3, limit=1500):
     where, params = _where(preset, days)
     return conn.execute(
         f"""SELECT id, title, agency, demand_agency, source_site, status,
-                   estimated_price, announced_date, deadline_date, url
+                   estimated_price, announced_date, deadline_date, url,
+                   created_at
             FROM tenders
             WHERE {where} AND is_duplicate = 0
             ORDER BY id DESC
@@ -440,7 +454,13 @@ def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
     """
     preset = preset or get_preset(conn)
     ensure_schema(conn)
-    rows = candidates(conn, preset, days=days)
+
+    # 조회는 가장 긴 구분 기간으로 한 번만 한다. 구분마다 SQL 을 날리면
+    # 같은 공고를 세 번 읽고 점수도 세 번 매기게 된다.
+    sec_days = {**DEFAULT_PRESET['section_days'],
+                **(preset.get('section_days') or {})}
+    span = max(list(sec_days.values()) + [int(days or 0)])
+    rows = candidates(conn, preset, days=span)
 
     if classify_missing and rows:
         # 사전규격·중소벤처24 는 status 만으로 구분이 끝난다. 분류가 필요한 것은
@@ -467,7 +487,7 @@ def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
 
     buckets = {k: [] for k in SECTION_KEY}
     counts = {'A': 0, 'B': 0, 'C': 0, '미분류': 0}
-    dropped = {'구분없음': 0, '분류제외': 0, '점수미달': 0}
+    dropped = {'구분없음': 0, '기간초과': 0, '분류제외': 0, '점수미달': 0}
 
     for r in rows:
         cls, hr = cls_map.get(r['id'], (None, 0))
@@ -476,6 +496,9 @@ def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
         sec = section_of(r['status'], cls)
         if sec is None:
             dropped['구분없음'] += 1
+            continue
+        if not _within(r['created_at'], sec_days.get(sec, span)):
+            dropped['기간초과'] += 1
             continue
         if wanted and cls not in wanted:
             dropped['분류제외'] += 1
@@ -514,16 +537,18 @@ def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
             'key': k,
             'label': SECTION_LABEL[k],
             'limit': int(limits.get(k, 0)),
+            'days': int(sec_days.get(k, span)),
             'available': len(buckets[k]),
             'items': take,
         })
 
     total_raw = conn.execute(
         "SELECT COUNT(*) FROM tenders WHERE date(created_at) >= date('now', ?)",
-        (f'-{int(days)} day',)).fetchone()[0]
+        (f'-{span} day',)).fetchone()[0]
 
     return {
-        'days': days,
+        'days': span,
+        'section_days': sec_days,
         'total_collected': total_raw,
         'passed_keywords': len(rows),
         'class_counts': counts,
