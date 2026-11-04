@@ -114,6 +114,11 @@ function config() {
             normal: num('lim-normal') ?? 10,
             support: num('lim-support') ?? 5,
         },
+        section_days: {
+            pre: num('day-pre') ?? 7,
+            normal: num('day-normal') ?? 7,
+            support: num('day-support') ?? 14,
+        },
         use_embedding: document.getElementById('use-embedding').checked,
         limit: (num('lim-pre') ?? 10) + (num('lim-normal') ?? 10)
              + (num('lim-support') ?? 5),
@@ -128,8 +133,14 @@ function runPreview() {
     previewTimer = setTimeout(doPreview, 250);   // 타이핑 중 과도한 호출 방지
 }
 
+function maxDays() {
+    // 조회는 가장 긴 구분 기간으로 한 번만 한다 (서버도 같은 계산을 한다)
+    return Math.max(num('day-pre') ?? 7, num('day-normal') ?? 7,
+                    num('day-support') ?? 14);
+}
+
 async function doPreview() {
-    const days = Number(document.getElementById('days').value);
+    const days = maxDays();
     try {
         const pv = await api('/api/brief/preview', {
             method: 'POST',
@@ -154,6 +165,12 @@ function step(label, value, tone) {
 
 function renderFunnel(pv) {
     const arrow = '<span class="text-gray-300">&rarr;</span>';
+    const sd = pv.section_days || {};
+    const note = document.getElementById('span-note');
+    if (note) {
+        note.textContent =
+            `사전규격 ${sd.pre}일 · 일반공고 ${sd.normal}일 · 지원사업 ${sd.support}일 기준`;
+    }
     document.getElementById('funnel').innerHTML = [
         step(`최근 ${pv.days}일 수집`, pv.total_collected),
         arrow,
@@ -213,6 +230,7 @@ function renderResult(pv) {
         <div class="pt-2 first:pt-0">
           <div class="flex items-baseline gap-2 pb-1 border-b border-gray-200 mb-1.5">
             <span class="text-sm font-semibold text-gray-800">${esc(sec.label)}</span>
+            <span class="text-xs text-gray-400">최근 ${sec.days}일</span>
             <span class="text-xs ${sec.items.length < sec.limit ? 'text-amber-700' : 'text-gray-500'}">
               후보 ${sec.available}건 중 ${sec.items.length}/${sec.limit}건
               ${sec.items.length < sec.limit ? '— 후보 부족' : ''}</span>
@@ -255,7 +273,7 @@ async function classifyNow() {
     btn.disabled = true;
     btn.textContent = '분류 중... (수십 초)';
     try {
-        const days = Number(document.getElementById('days').value);
+        const days = maxDays();
         const res = await api('/api/brief/classify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -310,7 +328,9 @@ async function loadHistory() {
                 · 분류 [${(c.classes || []).join(',') || '전체'}]
                 · 게재 ${(c.section_limits
                     ? `${c.section_limits.pre}/${c.section_limits.normal}/${c.section_limits.support}`
-                    : (c.limit ?? '-'))}건</div>`;
+                    : (c.limit ?? '-'))}건${c.section_days
+                    ? ` · 기간 ${c.section_days.pre}/${c.section_days.normal}/${c.section_days.support}일`
+                    : ''}</div>`;
         }).join('');
     } catch (e) { /* 이력 실패는 무시 */ }
 }
@@ -329,6 +349,10 @@ async function init() {
     document.getElementById('lim-pre').value = sl.pre ?? 10;
     document.getElementById('lim-normal').value = sl.normal ?? 10;
     document.getElementById('lim-support').value = sl.support ?? 5;
+    const sd = p.section_days || {};
+    document.getElementById('day-pre').value = sd.pre ?? 7;
+    document.getElementById('day-normal').value = sd.normal ?? 7;
+    document.getElementById('day-support').value = sd.support ?? 14;
     document.getElementById('min-score').value = p.min_score ?? 0;
     document.getElementById('use-embedding').checked = p.use_embedding !== false;
     document.getElementById('saved-info').textContent =
@@ -343,7 +367,8 @@ async function init() {
         });
     }
     for (const id of ['days-ahead', 'min-price', 'min-score',
-                      'lim-pre', 'lim-normal', 'lim-support']) {
+                      'lim-pre', 'lim-normal', 'lim-support',
+                      'day-pre', 'day-normal', 'day-support']) {
         document.getElementById(id).addEventListener('input', runPreview);
     }
     document.getElementById('use-embedding').addEventListener('change', runPreview);

@@ -10,14 +10,7 @@
         <div class="card-body">
             <div class="flex items-center justify-between gap-2 mb-3">
                 <span class="text-sm font-semibold text-gray-800">조건 적정성</span>
-                <div class="flex items-center gap-2">
-                    <label class="text-xs text-gray-500">수집 기간</label>
-                    <select id="days" class="form-input text-sm w-24" onchange="runPreview()">
-                        <option value="1">1일</option>
-                        <option value="3" selected>3일</option>
-                        <option value="7">7일</option>
-                    </select>
-                </div>
+                <span id="span-note" class="text-xs text-gray-500"></span>
             </div>
 
             <div id="funnel" class="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm">
@@ -110,19 +103,39 @@
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">사전규격
                             <span class="font-normal text-gray-400">발주 전</span></label>
-                        <input type="number" id="lim-pre" class="form-input text-sm w-full" min="0" max="30">
+                        <div class="flex items-center gap-1">
+                            <input type="number" id="lim-pre" class="form-input text-sm w-full" min="0" max="30">
+                            <span class="text-xs text-gray-400 shrink-0">건 /</span>
+                            <input type="number" id="day-pre" class="form-input text-sm w-16" min="1" max="60">
+                            <span class="text-xs text-gray-400 shrink-0">일</span>
+                        </div>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">일반공고
                             <span class="font-normal text-gray-400">입찰</span></label>
-                        <input type="number" id="lim-normal" class="form-input text-sm w-full" min="0" max="30">
+                        <div class="flex items-center gap-1">
+                            <input type="number" id="lim-normal" class="form-input text-sm w-full" min="0" max="30">
+                            <span class="text-xs text-gray-400 shrink-0">건 /</span>
+                            <input type="number" id="day-normal" class="form-input text-sm w-16" min="1" max="60">
+                            <span class="text-xs text-gray-400 shrink-0">일</span>
+                        </div>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-gray-600 mb-1">지원사업
                             <span class="font-normal text-gray-400">직접 신청</span></label>
-                        <input type="number" id="lim-support" class="form-input text-sm w-full" min="0" max="30">
+                        <div class="flex items-center gap-1">
+                            <input type="number" id="lim-support" class="form-input text-sm w-full" min="0" max="30">
+                            <span class="text-xs text-gray-400 shrink-0">건 /</span>
+                            <input type="number" id="day-support" class="form-input text-sm w-16" min="1" max="60">
+                            <span class="text-xs text-gray-400 shrink-0">일</span>
+                        </div>
                     </div>
                 </div>
+                <p class="text-xs text-gray-500">
+                    조회 기간을 구분마다 따로 둡니다. 지원사업은 모집이 2주 가까이 열려 있는 반면
+                    입찰 공고는 짧게 뜨고 닫힙니다. 한 기간으로 묶으면 지원사업 후보가 모자라거나,
+                    이미 식은 공고까지 실립니다.
+                </p>
                 <label class="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
                     <input type="checkbox" id="use-embedding" class="rounded">
                     제목 의미 유사도(임베딩) 혼합 — 규칙 점수 60% + 임베딩 40%
