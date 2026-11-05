@@ -30,7 +30,11 @@ async function api(url, opts) {
     const r = await fetch(url, opts);
     let d = null;
     try { d = await r.json(); } catch (e) { /* 본문 없음 */ }
-    if (!r.ok) throw new Error((d && d.error) || `HTTP ${r.status}`);
+    if (!r.ok) {
+        const err = new Error((d && d.error) || `HTTP ${r.status}`);
+        err.detail = d || {};        // hint·user_tried 를 화면에서 쓴다
+        throw err;
+    }
     return d;
 }
 
@@ -78,9 +82,14 @@ async function testConn() {
             `<span class="text-green-700">연결 성공 · ${esc(res.server)}:${res.port}</span>`;
         toast(`연결 성공 — ${res.user}`);
     } catch (e) {
+        // 서버가 준 설명과 서비스별 안내를 화면에 남긴다.
+        // 토스트는 사라지므로 원인을 다시 볼 수 없다.
+        const d = e.detail || {};
         document.getElementById('conn-state').innerHTML =
-            `<span class="text-red-700">연결 실패</span>`;
-        toast(e.message, true);
+            `<div class="text-red-700">${esc(e.message)}</div>`
+            + (d.hint ? `<div class="text-amber-800 mt-1">${esc(d.hint)}</div>` : '')
+            + (d.user_tried ? `<div class="text-gray-500 mt-0.5">시도한 계정: ${esc(d.user_tried)}</div>` : '');
+        toast('연결 실패 — 아래 안내를 확인하세요.', true);
     } finally {
         btn.disabled = false; btn.textContent = '연결 테스트';
     }

@@ -39,12 +39,42 @@ KST = timezone(timedelta(hours=9))
 
 SETTINGS_PATH = os.path.join(BASE, 'data', 'settings.json')
 
+# 인증이 막혔을 때의 안내. 535 는 "아이디/비번이 틀렸다" 가 아니라
+# "이 비밀번호로는 SMTP 를 열어주지 않는다" 인 경우가 대부분이라, 서비스마다
+# 무엇을 발급받아야 하는지 화면에서 바로 알려준다.
+AUTH_HINT = {
+    'gmail': ('Gmail 은 계정 비밀번호가 아니라 앱 비밀번호가 필요합니다. '
+              'Google 계정 → 보안 → 2단계 인증 → 앱 비밀번호'),
+    'naver': ('네이버는 계정 비밀번호가 아니라 애플리케이션 비밀번호가 필요합니다. '
+              '네이버 내정보 → 보안설정 → 2단계 인증 [관리] → 애플리케이션 '
+              '비밀번호 관리에서 발급하세요. '
+              '그리고 메일 환경설정 → POP3/IMAP 설정에서 '
+              'POP3/SMTP 와 IMAP/SMTP 를 모두 "사용함" 으로 두어야 합니다.'),
+    'daum':  ('다음은 메일 환경설정 → IMAP/POP3 에서 사용을 켜야 하고, '
+              '2단계 인증을 쓰면 앱 비밀번호가 필요합니다.'),
+    'outlook': 'Outlook 은 계정 비밀번호를 사용합니다. 조직 계정이면 관리자 정책을 확인하세요.',
+}
+
 SMTP_PRESETS = {
     'gmail':   {'server': 'smtp.gmail.com',        'port': 587, 'ssl': False},
     'naver':   {'server': 'smtp.naver.com',        'port': 587, 'ssl': False},
     'daum':    {'server': 'smtp.daum.net',         'port': 465, 'ssl': True},
     'outlook': {'server': 'smtp-mail.outlook.com', 'port': 587, 'ssl': False},
 }
+
+# 아이디만 적어도 되는 서비스가 있어 입력이 갈린다. 그대로 두면 보내는 메일의
+# From 이 "오늘의 브리핑 <lahinlihi1>" 처럼 주소가 아닌 값이 되어 수신 서버가
+# 거부한다. 로그인에는 아이디만 써도 되지만 From 에는 전체 주소가 필요하다.
+SERVICE_DOMAIN = {'gmail': 'gmail.com', 'naver': 'naver.com', 'daum': 'daum.net'}
+
+
+def normalize_user(user, service):
+    """아이디만 들어오면 서비스 도메인을 붙여 전체 주소로 만든다."""
+    user = (user or '').strip()
+    dom = SERVICE_DOMAIN.get(service)
+    if user and dom and '@' not in user:
+        return f'{user}@{dom}'
+    return user
 
 # 말미 고지문 — 참고 브리핑이 책임을 한정한 방식.
 # 행동 제안을 빼는 대신 자료의 성격을 명시한다.
@@ -490,7 +520,8 @@ def smtp_config():
 def _send_one(cfg, to_email, subject, html):
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = f"{cfg['from_name']} <{cfg['user']}>"
+    msg['From'] = (f"{cfg['from_name']} "
+                   f"<{normalize_user(cfg['user'], cfg['service'])}>")
     msg['To'] = to_email
     msg.attach(MIMEText(html, 'html', 'utf-8'))
 
@@ -701,6 +732,8 @@ def update_mail_settings(patch):
         p['server'] = SMTP_PRESETS[svc]['server']
         p['port'] = SMTP_PRESETS[svc]['port']
         p['ssl'] = SMTP_PRESETS[svc]['ssl']
+    if p.get('user'):
+        p['user'] = normalize_user(p['user'], svc)
     if not p.get('password'):
         p.pop('password', None)
     _save_settings(p)
@@ -717,7 +750,8 @@ def test_connection(user=None, password=None, service=None):
     cfg = smtp_config()
     svc = service or cfg['service']
     preset = SMTP_PRESETS.get(svc, SMTP_PRESETS['gmail'])
-    user = user or cfg['user']
+    # 저장(update_mail_settings)과 같은 규칙으로 보정 — 테스트한 계정과 저장될 계정이 같아야 한다
+    user = normalize_user(user or cfg['user'], svc)
     password = password or cfg['password']
     if not (user and password):
         return {'ok': False, 'error': '계정과 비밀번호가 필요합니다.'}
@@ -732,9 +766,16 @@ def test_connection(user=None, password=None, service=None):
         return {'ok': True, 'server': preset['server'], 'port': preset['port'],
                 'user': user}
     except smtplib.SMTPAuthenticationError as e:
-        hint = ''
-        if svc == 'gmail':
-            hint = ' Gmail 은 일반 비밀번호가 아니라 앱 비밀번호가 필요합니다.'
-        return {'ok': False, 'error': f'인증 실패: {e.smtp_code}.{hint}'}
+        # 서버가 준 설명을 버리면 화면에 '535.' 만 남아 원인을 알 수 없다.
+        detail = e.smtp_error
+        if isinstance(detail, bytes):
+            detail = detail.decode('utf-8', 'replace')
+        return {'ok': False,
+                'error': f'인증 실패 {e.smtp_code} — {detail}',
+                'hint': AUTH_HINT.get(svc, ''),
+                'user_tried': user}
+    except smtplib.SMTPException as e:
+        return {'ok': False, 'error': f'SMTP 오류: {e}',
+                'hint': AUTH_HINT.get(svc, '')}
     except Exception as e:
         return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
