@@ -157,3 +157,6 @@ update_site_*.py
 validate_*.py
 backfill_*.py
 newsletter_preview.html
+
+# 시사점 초기화 백업 — 기사 본문 조각(재료)이 들어 있어 저장소에 올리지 않는다
+data/backup/

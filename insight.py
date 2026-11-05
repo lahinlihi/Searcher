@@ -661,6 +661,76 @@ def save_daily(conn, results, run_date=None):
     return saved, run_date
 
 
+# ════════════════════════════════════════════════════════════ 초기화
+
+def reset_insights(conn, before=None, backup_dir=None):
+    """
+    시사점 삭제. 삭제 전 JSON 백업을 반드시 남긴다.
+
+    백업을 선택지로 두지 않는 이유는, 시사점이 재생성으로 똑같이 복원되지
+    않기 때문이다. 생성은 모델 호출이라 같은 재료로도 다른 문장이 나오고,
+    사람이 편집·승인한 흔적은 되살릴 방법이 아예 없다. 지우기 전에 남겨 두는
+    비용(126건 기준 수백 KB)이 잃는 것보다 훨씬 싸다.
+
+    before: 'YYYY-MM-DD'. 주면 그 날짜 **이전** 것만 지운다(그날은 남긴다).
+            None 이면 전체.
+
+    hr_news 는 건드리지 않는다. 수집 자산이고, 남아 있어야 네이버 API 를
+    다시 부르지 않고 곧바로 재생성할 수 있다.
+    """
+    import os
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    ensure_schema(conn)
+
+    where, params = '', []
+    if before:
+        where, params = ' WHERE run_date < ?', [before]
+
+    rows = conn.execute(f'SELECT * FROM daily_insights{where} ORDER BY id',
+                        params).fetchall()
+    if not rows:
+        return {'deleted': 0, 'backup': None}
+
+    kst = _tz(_td(hours=9))
+    stamp = _dt.now(kst).strftime('%Y%m%d_%H%M%S')
+    backup_dir = backup_dir or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), 'data', 'backup')
+    os.makedirs(backup_dir, exist_ok=True)
+    path = os.path.join(backup_dir, f'daily_insights_{stamp}.json')
+
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump([dict(r) for r in rows], f, ensure_ascii=False, indent=1)
+
+    # 백업이 실제로 읽히는지 확인한 뒤에 지운다. 쓰기만 하고 깨진 파일을
+    # 남긴 채 원본을 날리면 백업이 없는 것과 같다.
+    with open(path, encoding='utf-8') as f:
+        check = json.load(f)
+    if len(check) != len(rows):
+        raise RuntimeError(f'백업 검증 실패 — {len(rows)}건 중 {len(check)}건만 기록됨')
+
+    cur = conn.execute(f'DELETE FROM daily_insights{where}', params)
+    conn.commit()
+    return {'deleted': cur.rowcount, 'backup': path, 'backed_up': len(check)}
+
+
+def restore_insights(conn, path):
+    """백업 파일에서 되돌린다. 같은 (run_date, topic) 은 덮어쓴다."""
+    ensure_schema(conn)
+    with open(path, encoding='utf-8') as f:
+        rows = json.load(f)
+    cols = [r[1] for r in conn.execute('PRAGMA table_info(daily_insights)')]
+    n = 0
+    for r in rows:
+        keys = [k for k in cols if k in r and k != 'id']
+        conn.execute(
+            f"INSERT OR REPLACE INTO daily_insights ({','.join(keys)}) "
+            f"VALUES ({','.join('?' * len(keys))})",
+            [r[k] for k in keys])
+        n += 1
+    conn.commit()
+    return n
+
+
 # ════════════════════════════════════════════════════════════ 검수 API 지원
 
 def _row_to_dict(r):
@@ -799,6 +869,45 @@ def _cmd_daily(days, top_n):
 if __name__ == '__main__':
     import sys
     sys.stdout.reconfigure(encoding='utf-8')
+
+    if '--reset' in sys.argv:
+        import hr_news as _h
+
+        def _opt(name):
+            return (sys.argv[sys.argv.index(name) + 1]
+                    if name in sys.argv else None)
+
+        before = _opt('--before')
+        conn = _h.connect()
+        ensure_schema(conn)
+        n = conn.execute(
+            'SELECT COUNT(*) FROM daily_insights'
+            + (' WHERE run_date < ?' if before else ''),
+            [before] if before else []).fetchone()[0]
+        if not n:
+            print('지울 시사점이 없습니다.')
+            sys.exit(0)
+
+        scope = f'{before} 이전' if before else '전체'
+        print(f'시사점 {n}건({scope})을 삭제합니다. 삭제 전 백업을 남깁니다.')
+        if '--yes' not in sys.argv:
+            if input("계속하려면 RESET 을 입력하세요: ").strip() != 'RESET':
+                print('취소했습니다.')
+                sys.exit(0)
+        res = reset_insights(conn, before=before)
+        conn.close()
+        print(f"백업 {res['backed_up']}건 → {res['backup']}")
+        print(f"삭제 {res['deleted']}건")
+        sys.exit(0)
+
+    if '--restore' in sys.argv:
+        import hr_news as _h
+        path = sys.argv[sys.argv.index('--restore') + 1]
+        conn = _h.connect()
+        n = restore_insights(conn, path)
+        conn.close()
+        print(f'복원 {n}건 ← {path}')
+        sys.exit(0)
 
     if '--daily' in sys.argv:
         def _arg(name, default):
