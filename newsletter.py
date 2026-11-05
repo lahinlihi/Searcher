@@ -157,27 +157,35 @@ def active_subscribers(conn):
 
 # ════════════════════════════════════════════════════════════ 발송 데이터 구성
 
-def build(conn, run_date=None):
+def build(conn, run_date=None, statuses=('approved',)):
     """
     발송 데이터 구성.
 
-    승인된(approved) 시사점만 담는다. 관련 기사는 제목·출처·링크만 싣는다.
+    기본은 승인된(approved) 시사점만이다. 관련 기사는 제목·출처·링크만 싣는다.
+
+    statuses 를 넓히는 것은 **미리보기 전용**이다. 승인 전 모습을 보려면
+    화면에서 확인하고 싶은 것이 사람의 자연스러운 요구인데, 그것 때문에
+    승인 게이트를 열 수는 없다. 그래서 인자로 분리하고 기본값을 좁게 두었다.
+    send_test()·send_all() 은 이 인자를 넘기지 않으므로 발송 경로는 그대로
+    승인분만 탄다.
     """
     import hr_news
     import insight
     insight.ensure_schema(conn)
 
+    st = tuple(statuses) or ('approved',)
+    ph = ','.join('?' * len(st))
     if not run_date:
         row = conn.execute(
-            "SELECT run_date FROM daily_insights WHERE status='approved' "
-            "ORDER BY run_date DESC LIMIT 1").fetchone()
+            f"SELECT run_date FROM daily_insights WHERE status IN ({ph}) "
+            f"ORDER BY run_date DESC LIMIT 1", st).fetchone()
         if not row:
             return None
         run_date = row['run_date']
 
     rows = conn.execute(
-        "SELECT * FROM daily_insights WHERE run_date=? AND status='approved' "
-        "ORDER BY id", (run_date,)).fetchall()
+        f"SELECT * FROM daily_insights WHERE run_date=? AND status IN ({ph}) "
+        f"ORDER BY id", (run_date, *st)).fetchall()
     if not rows:
         return None
 

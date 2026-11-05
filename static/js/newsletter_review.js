@@ -378,6 +378,8 @@ function altHtml(a, n) {
         ...(a.lint.blocking || []).map(b => b.label),
         ...(a.code.missing_numbers || []).map(x => `재료에 없는 수치 ${x}`),
         ...(a.code.missing_orgs || []).map(x => `재료에 없는 기관 ${x}`),
+        ...(a.copy && a.copy.level === 'block'
+            ? [`기사 문장 ${a.copy.max_run}자 그대로`] : []),
     ];
     return `<div class="text-xs border border-blue-200 bg-white rounded px-2 py-1.5 mt-1.5">
       <div class="flex items-center gap-1.5 flex-wrap">

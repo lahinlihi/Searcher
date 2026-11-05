@@ -281,13 +281,19 @@ def preview_page():
     from flask import Response
     conn = _conn()
     try:
-        data = nl.build(conn, request.args.get('date') or None)
+        # draft=1 이면 검토 대기분까지 포함해 보여준다. 미리보기 전용이며
+        # 발송 경로(send_test/send_all)는 이 인자를 넘기지 않는다.
+        draft = request.args.get('draft') == '1'
+        st = ('approved', 'pending') if draft else ('approved',)
+        data = nl.build(conn, request.args.get('date') or None, statuses=st)
         if not data:
             return Response(
                 '<p style="font-family:sans-serif;padding:40px;color:#555">'
-                '승인된 시사점이 없습니다. 검수 화면에서 먼저 승인하세요.</p>',
+                '실을 시사점이 없습니다. 편집실에서 먼저 생성·승인하세요.</p>',
                 mimetype='text/html')
         html = nl.render_html(data, unsubscribe_url='#', is_test=True)
+        if draft:
+            html = html.replace('<body', '<body data-draft="1"', 1)
         return Response(html, mimetype='text/html')
     finally:
         conn.close()

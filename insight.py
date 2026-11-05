@@ -332,6 +332,20 @@ PROMPT = """너는 HR·인재양성 전문기업이 고객사에 보내는 일�
 "관심이 커지고 있다", "변화가 예상된다", "주목할 만하다" 같은
 누구나 쓸 수 있는 문장은 전문성을 깎는다. 쓰지 마라.
 
+## 재료 문장을 그대로 옮기지 마라
+
+재료는 **사실을 꺼내 쓰는 곳**이지 문장을 가져오는 곳이 아니다.
+발송물에는 "기사 본문은 포함하지 않으며 제목과 출처만 싣습니다" 라고
+고지한다. 재료의 표현을 그대로 옮기면 그 고지와 어긋난다.
+
+  - 수치·법령명·기관명·날짜는 그대로 써라. 그건 사실이다.
+  - 그 사실을 잇는 **서술과 나열 순서는 네가 새로 짜라.**
+  - 재료의 한 구절을 **20자 넘게 연이어** 따라 쓰지 마라.
+
+  재료:   "정년연장 입법 지연과 초광역특구법의 노동특례 추진을 문제 삼으면서"
+  금지:   "정년연장 입법 지연과 초광역특구법의 노동특례 추진을 문제 삼으며"
+  올바름: "정년연장 입법이 미뤄진 점과 초광역특구법의 노동특례를 함께 거론함"
+
 ## 형식 — 음슴체로 쓴다
 
 종결은 **~함 / ~임 / ~됨 / 명사형**으로 한다. 서술체·평서체를 쓰지 마라.
@@ -559,7 +573,11 @@ def generate_daily(conn, days=3, top_n=3, api_key=None, quiet=False):
     """오늘의 토픽 상위 N개에 대해 시사점 생성."""
     import hr_news as _h
     topics, total = _h.rank_topics(conn, days=days, top_n=max(top_n * 3, 10))
-    targets = [t for t in topics if not t['metrics']['excluded']][:top_n]
+    # off_domain: 질의는 HR 이지만 클러스터가 우리 주제를 벗어난 것.
+    # 홍보(excluded)와 달리 점수는 높을 수 있어 따로 거른다.
+    targets = [t for t in topics
+               if not t['metrics']['excluded']
+               and not t['metrics'].get('off_domain')][:top_n]
     out = []
     for t in targets:
         material = build_material(conn, t['query'], t['cluster']['rows'])

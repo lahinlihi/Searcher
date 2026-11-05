@@ -608,6 +608,16 @@ RE_SELFPRAISE = re.compile(
     r'(?:\d+년\s*연속|무재해|ZERO|제로\s*(?:기록|달성|도전)|업계\s*최초|'
     r'국내\s*최초|최대\s*규모|대상\s*수상|인증\s*획득|표창|우수기업\s*선정)')
 
+# 토픽이 HR 영역에 속하는지 보는 어휘. 제목에 하나라도 있으면 영역 안으로 센다.
+# 넓게 잡는다 — 좁히면 '과태료' 같은 간접 표현이 걸러져 감독·처벌 기사를 잃는다.
+HR_DOMAIN = (
+    '노동', '근로', '고용', '채용', '임금', '직무', '교육', '훈련', '인재', '인사',
+    '퇴직', '휴직', '정년', '해고', '산재', '안전보건', '노조', '노사', '일자리',
+    '취업', '구직', '직원', '사업주', '과태료', '야근', '최저임금', '중대재해',
+    '노동부', '고용부', '면접', '이직', '복지', '연봉', '직장', '사업장', '감독관',
+)
+HR_RATIO_MIN = 0.30   # 이 아래면 영역 밖으로 본다 (실측으로 정한 값)
+
 CATEGORY_WEIGHT = {
     '정책·제도': 1.5,
     '감독·처벌': 1.3,
@@ -658,6 +668,15 @@ def score_cluster(c):
     best_rank = min(ranks) if ranks else 999
 
     cat, weight = classify(titles)
+
+    # HR 영역 비율 — 질의가 HR 이어도 엉뚱한 클러스터가 올라온다.
+    # 실측(2026-11-05): 'AI 채용' 질의에 북한 해커의 '가짜 면접' 침투 기사가
+    # 106건 클러스터로 묶여 점수 154 로 1위를 차지했다. 결이 다르지만
+    # 채용 담당자에게 무관하지도 않아 자동 차단 대신 비율만 재고,
+    # 명백히 벗어난 것(이주민 다문화 21%, 요양시설 진료비 23%)만 거르게 한다.
+    hr_hit = sum(1 for t in titles if any(k in (t or '') for k in HR_DOMAIN))
+    hr_ratio = round(hr_hit / n, 3) if n else 0.0
+
     base = n * 1.0 + t1 * 4.0 + t2 * 2.0 + max(0, 30 - best_rank) * 0.3
     if t1 + t2 == 0:          # 주요 매체 부재 — 전문지 살포
         base *= 0.3
@@ -667,7 +686,9 @@ def score_cluster(c):
         'n': n, 'outlets': len(sources), 't1': t1, 't2': t2,
         'major': t1 + t2, 'best_rank': best_rank,
         'category': cat, 'weight': weight,
+        'hr_ratio': hr_ratio,
         'excluded': (weight == 0.0),
+        'off_domain': hr_ratio < HR_RATIO_MIN,
         'score': round(score, 1),
     }
 

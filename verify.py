@@ -29,6 +29,8 @@
 import json
 import re
 
+FRAGMENT_SEP = ' ⁄ '   # hr_news 가 조각을 잇는 구분자. 원문에 없던 인접성 방지용.
+
 CITE = re.compile(r'\[([\d,\s]+)\]')
 # 수치는 단위가 붙은 것만 대조한다.
 # 단위 없는 맨 숫자('6학년'의 6 같은 것)까지 대조하면 오탐이 쏟아진다.
@@ -149,6 +151,62 @@ def code_checks(point, material):
             'no_citation': not cited}
 
 
+# ════════════════════════════════════════════════════════════ 1.5층 — 문장 복제
+
+COPY_WARN = 25    # 이 길이 이상 연속 일치하면 사람이 보게 한다
+COPY_BLOCK = 32   # 이 길이 이상이면 기자의 문장 구성을 그대로 가져온 것으로 본다
+
+
+def copy_check(point, material, warn=COPY_WARN):
+    """항목이 재료 문장을 그대로 옮겨 왔는지 본다.
+
+    왜 필요한가
+      발송물에는 '기사 본문은 포함하지 않으며 제목과 출처만 싣습니다' 라고
+      고지한다. 그런데 생성 모델이 재료 문장을 거의 그대로 옮기면 그 고지와
+      어긋난다. 실측(2026-11-05 1편): 4개 항목에서 21~34자 연속 일치.
+
+    길이만으로는 갈라지지 않는다
+      '내년부터 상시근로자 50인 이상 사업장(건설업' 25자는 법정 요건이라
+      달리 쓸 방법이 거의 없다. 반면 '정년연장 입법 지연과 초광역특구법의
+      노동특례 추진을 문제 삼으' 34자는 기자가 고른 나열 순서와 연결이다.
+      앞은 사실, 뒤는 표현이다. 기계가 이 둘을 가르기 어려우므로 길이로
+      후보만 좁히고 판단은 사람에게 넘긴다.
+
+    반환: {'max_run', 'hits': [{'len','text'}], 'level': ok|warn|block}
+    """
+    clean = strip_cite(point)
+    if not clean or not material:
+        return {'max_run': 0, 'hits': [], 'level': 'ok'}
+
+    pool = []
+    for m in material:
+        pool += [f.strip() for f in (m.get('body') or '').split(FRAGMENT_SEP)]
+        if m.get('title'):
+            pool.append(m['title'])
+    pool = [p for p in pool if p]
+
+    hits, i = [], 0
+    while i + warn <= len(clean):
+        win = clean[i:i + warn]
+        src = next((f for f in pool if win in f), None)
+        if src is None:
+            i += 1
+            continue
+        # 걸렸으면 양쪽으로 최대한 늘려 실제 겹침 길이를 잰다
+        end = i + warn
+        while end < len(clean) and clean[i:end + 1] in src:
+            end += 1
+        start = i
+        while start > 0 and clean[start - 1:end] in src:
+            start -= 1
+        hits.append({'len': end - start, 'text': clean[start:end]})
+        i = end
+
+    mx = max((h['len'] for h in hits), default=0)
+    level = 'block' if mx >= COPY_BLOCK else ('warn' if mx >= warn else 'ok')
+    return {'max_run': mx, 'hits': hits, 'level': level}
+
+
 # ════════════════════════════════════════════════════════════ 2층 — AI 위치 지목
 
 LOCATE_PROMPT = """아래 '항목'이 '재료'의 어느 문장에서 나왔는지 찾아라.
@@ -235,7 +293,14 @@ def verify(conn, row, use_ai=True, api_key=None):
     for i, p in enumerate(points, 1):
         code = code_checks(p, material) if usable else None
         ai = locate(p, material, api_key) if (use_ai and usable) else []
+        # 문장 복제는 재구성 재료로도 볼 수 있다 — 재료 번호와 무관하게
+        # '이 문장이 어디선가 그대로 왔는가' 만 보기 때문이다.
+        copy = copy_check(p, material) if material else {'max_run': 0, 'hits': [], 'level': 'ok'}
         flags = []
+        if copy['level'] == 'block':
+            flags.append(f"기사 문장 {copy['max_run']}자 그대로 — 다시 쓰세요")
+        elif copy['level'] == 'warn':
+            flags.append(f"기사 문장 {copy['max_run']}자 일치 — 확인 필요")
         if not usable:
             flags = []
         else:
@@ -251,9 +316,9 @@ def verify(conn, row, use_ai=True, api_key=None):
                 flags.append('AI 인용이 재료와 불일치')
         items.append({'i': i, 'raw': p, 'text': strip_cite(p),
                       'cited': cited_numbers(p),
-                      'code': code, 'ai': ai, 'flags': flags,
-                      'level': 'none' if not usable
-                               else ('warn' if flags else 'pass')})
+                      'code': code, 'ai': ai, 'copy': copy, 'flags': flags,
+                      'level': ('warn' if flags else
+                                ('none' if not usable else 'pass'))})
 
     return {'id': row['id'], 'material': material, 'material_rebuilt': rebuilt,
             'verifiable': usable, 'items': items,
@@ -274,6 +339,8 @@ REWRITE_PROMPT = """너는 기자다. 편집자가 아래 문장을 돌려보냈
   멈춘다. (예: '대비가 필요함' 금지 / '관련 수요가 늘어남' 허용)
 - 자사·당사·우리 회사를 언급하지 않는다.
 - **재료에 없는 사실을 보태지 마라.** 수치·기관·날짜는 재료에 있는 것만 쓴다.
+- **재료 문장을 그대로 옮기지 마라.** 수치·법령명·기관명은 그대로 쓰되,
+  잇는 서술과 나열 순서는 새로 짠다. 한 구절을 20자 넘게 연이어 따라 쓰지 않는다.
 - 근거 표기 {cites} 를 문장 끝에 그대로 유지한다.
 
 JSON으로만 답하라:
@@ -318,13 +385,16 @@ def rewrite(point, material, note='', api_key=None):
             text = f'{text} {cites}'
         lint = _i.lint(strip_cite(text))
         code = code_checks(text, material)
+        copy = copy_check(text, material)
         alts.append({
             'approach': a.get('approach') or '',
             'text': text,
             'lint_ok': not lint['blocking'],
             'lint': lint,
             'code': code,
-            'ok': not lint['blocking'] and code['ok'],
+            'copy': copy,
+            'ok': (not lint['blocking'] and code['ok']
+                   and copy['level'] != 'block'),
         })
     return {'current': point, 'note': note, 'model': model,
             'alternatives': alts}
