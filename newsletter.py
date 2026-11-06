@@ -33,6 +33,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formataddr
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 KST = timezone(timedelta(hours=9))
@@ -520,8 +521,11 @@ def smtp_config():
 def _send_one(cfg, to_email, subject, html):
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = (f"{cfg['from_name']} "
-                   f"<{normalize_user(cfg['user'], cfg['service'])}>")
+    # 한글 이름을 f-string 으로 붙이면 "이름 <주소>" 전체가 base64 로 인코딩되어
+    # 주소가 사라진다 → 네이버가 553 5.7.2 (not a valid RFC-5322 address) 로 거부.
+    # formataddr 는 이름만 인코딩하고 <주소> 는 그대로 둔다.
+    msg['From'] = formataddr(
+        (cfg['from_name'], normalize_user(cfg['user'], cfg['service'])), 'utf-8')
     msg['To'] = to_email
     msg.attach(MIMEText(html, 'html', 'utf-8'))
 
