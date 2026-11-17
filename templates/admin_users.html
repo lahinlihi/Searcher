@@ -137,7 +137,8 @@ const ROLE_BADGE = {
     user:      '<span class="inline-block text-xs font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-600">일반회원</span>',
 };
 
-function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// 따옴표까지 바꾼다. 속성값 안에 들어가는 아이디·이메일이 속성을 벗어나지 못하게.
+function esc(s){ return safeHtml(s); }
 
 // ── 목록 로드 ─────────────────────────────────────────────────────────────────
 async function loadUsers() {
@@ -203,7 +204,10 @@ function buildActions(u, isSelf) {
     // admin: 누구든 가능 / moderator: user만
     const canPw = myRole === 'admin' || (myRole === 'moderator' && u.role === 'user');
     if (canPw) {
-        btns.push(`<button onclick="openPwModal(${u.id}, '${esc(u.username)}')"
+        // 아이디를 onclick 문자열에 직접 넣지 않는다. 가입자가 정한 글자가
+        // 스크립트 문맥에 들어가면 따옴표 하나로 다른 코드를 실행시킬 수 있다.
+        btns.push(`<button data-username="${esc(u.username)}"
+                           onclick="openPwModal(${u.id}, this.dataset.username)"
                            class="text-xs text-blue-600 hover:underline">PW변경</button>`);
     }
 

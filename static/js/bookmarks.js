@@ -76,7 +76,7 @@ async function loadBookmarks() {
     } catch (e) {
         console.error('관심공고 로드 실패:', e);
         document.getElementById('bookmarks-list').innerHTML =
-            `<p class="text-red-500 text-sm">불러오기 실패: ${e.message}</p>`;
+            `<p class="text-red-500 text-sm">불러오기 실패: ${safeHtml(e.message)}</p>`;
     }
 }
 
@@ -102,7 +102,7 @@ async function loadDismissed() {
     } catch (e) {
         console.error('관심없음 로드 실패:', e);
         document.getElementById('dismissed-list').innerHTML =
-            `<p class="text-red-500 text-sm">불러오기 실패: ${e.message}</p>`;
+            `<p class="text-red-500 text-sm">불러오기 실패: ${safeHtml(e.message)}</p>`;
     }
 }
 
@@ -256,7 +256,7 @@ function renderBookmarkCard(tender) {
                 <span class="font-medium text-blue-600">${price}</span>
                 ${announcedDate ? `<span class="text-gray-400">등록: ${announcedDate}</span>` : ''}
                 <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="text-blue-500 hover:underline">상세보기 →</a>
-                ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-500 hover:underline">공고 원문 →</a>` : ''}
+                ${tender.url ? `<a href="${safeUrl(tender.url)}" target="_blank" class="text-gray-500 hover:underline">공고 원문 →</a>` : ''}
             </div>
         </div>`;
 }

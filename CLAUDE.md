@@ -55,45 +55,60 @@ Flask 서버는 코드 변경 사항을 실시간 반영하지 않으므로, 아
 #### ⚠️ 절대 금지 사항
 
 - `cmd /c "taskkill /PID $PID /F"` — Git Bash(MSYS)에서 경로 변환 문제로 프로세스를 죽이지 못하는 경우가 있음. **사용 금지**
-- 포트 확인 없이 "재시작 완료" 선언 — 구버전 프로세스가 살아있으면 구버전 코드가 계속 서빙됨
-- HTTP 200/302 확인만으로 "코드 적용 완료" 선언 — 구버전 서버도 HTTP 응답을 반환함
+- **포트 조회만으로 "종료됨"·"기동됨"을 판단하지 않는다.** `Get-NetTCPConnection -LocalPort 5002 -State Listen` 과 `netstat` 은
+  서버가 응답 중인데도 5002 LISTEN 줄을 보여주지 않는 경우가 있다(2026-11-05, 11-17 확인). 구버전 프로세스를 놓치면
+  구버전 코드가 계속 서빙된다. **`app.py` 를 실행 중인 python 프로세스 목록**으로 판단한다.
+- HTTP 응답 확인만으로 "코드 적용 완료" 선언 — 구버전 서버도 HTTP 응답을 반환함
+- `nohup python app.py &` 로 띄우기 — 세션이 끝나면 서버도 함께 내려간다(2026-11-05: 서버가 죽어 07:30 작업이 돌지 않음)
+- 크롤링이 진행 중일 때 재시작 — 수집 중이던 결과를 잃고 Selenium 브라우저가 주인 없이 남는다
 
 #### 서버 재시작 절차 — 6단계 필수
 
-**Step 1: PowerShell로 기존 프로세스 종료**
-```bash
-# Git Bash에서 실행
-powershell -Command "
-\$p = (Get-NetTCPConnection -LocalPort 5002 -ErrorAction SilentlyContinue).OwningProcess | Select-Object -First 1
-if (\$p) { Stop-Process -Id \$p -Force; Write-Host \"PID \$p 종료\" }
-else { Write-Host '포트 5002 미사용' }
-"
+명령은 **PowerShell** 기준이다.
+
+**Step 1: 크롤링 진행 여부 확인 후 기존 프로세스 종료**
+```powershell
+Set-Location C:\Users\USER\Searcher
+python -c "import sqlite3;c=sqlite3.connect('file:data/tenders.db?mode=ro',uri=True);print(c.execute('select status from crawl_logs order by id desc limit 1').fetchone()[0])"
+# → running 이면 끝날 때까지 기다린다 (정기 크롤 09:00, 13:00 / 약 7분)
+
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+  Where-Object { $_.CommandLine -match 'app\.py' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force; "PID $($_.ProcessId) 종료" }
 ```
 
-**Step 2: 포트 해제 확인 (최대 10초 대기)**
-```bash
-for i in $(seq 1 10); do
-    r=$(powershell -Command "Get-NetTCPConnection -LocalPort 5002 -ErrorAction SilentlyContinue" 2>/dev/null)
-    [ -z "$r" ] && echo "포트 5002 해제 확인" && break
-    echo "대기 중... ${i}초"; sleep 1
-done
+**Step 2: 프로세스가 0개인지 확인 (최대 10초 대기)**
+```powershell
+for ($i=1; $i -le 10; $i++) {
+  if (-not (Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match 'app\.py' })) { "app.py 프로세스 0개 확인"; break }
+  Start-Sleep 1
+}
 ```
 
 **Step 3: 새 서버 시작**
-```bash
-cd /c/Users/USER/Searcher
-nohup python app.py > server_restart.log 2>&1 &
-echo "새 PID: $!"
+```powershell
+Start-Process -FilePath "C:\Python314\python.exe" -ArgumentList "-u","app.py" `
+  -WorkingDirectory "C:\Users\USER\Searcher" `
+  -RedirectStandardOutput "C:\Users\USER\Searcher\server_restart.log" `
+  -RedirectStandardError  "C:\Users\USER\Searcher\server_restart_err.log" `
+  -WindowStyle Hidden -PassThru
 ```
+> `-u` 를 빼면 출력이 버퍼에 쌓여 로그 파일이 한참 동안 0바이트로 남는다(2026-11-17 확인).
+> `Start-Process` 로 띄워야 이 세션이 끝나도 서버가 살아 있다.
 
-**Step 4: 서버 HTTP 응답 확인 (최대 15초 대기)**
-```bash
-for i in $(seq 1 15); do
-    s=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5002/ 2>/dev/null)
-    { [ "$s" = "200" ] || [ "$s" = "302" ]; } && echo "서버 기동 확인: HTTP $s" && break
-    echo "대기 중... ${i}초"; sleep 1
-done
+**Step 4: 서버 HTTP 응답 확인 (최대 90초 대기)**
+```powershell
+for ($i=1; $i -le 90; $i++) {
+  try { $code = (Invoke-WebRequest -Uri "http://localhost:5002/api/memos/unread-count" -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop).StatusCode }
+  catch { $code = $_.Exception.Response.StatusCode.value__ }
+  if ($code -eq 401 -or $code -eq 200) { "서버 기동 확인: HTTP $code"; break }
+  Start-Sleep 1
+}
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match 'app\.py' } | Select-Object ProcessId, CreationDate
 ```
+> `/` 로 확인하지 않는다. localhost 로 `/` 를 열면 공개 도메인으로 301 리다이렉트되므로 200/302 가 나오지 않는다.
+> `/api/...` 는 리다이렉트 대상이 아니다. 로그인 없이 부르면 **401 이 정상**이다.
+> 프로세스가 **1개**이고 시작 시각이 방금인지 함께 본다.
 
 **Step 5: 신규 코드 적용 확인 (수정한 모듈·함수 기준)**
 ```bash
@@ -106,32 +121,53 @@ assert '핵심_변경_패턴' in src, '신규 코드 미적용!'
 print('신규 코드 적용 확인')
 "
 ```
-> 예시: 반기 제거 패턴 확인 → `assert '상하반기' in src`
-> Step 5 실패 시: `cat server_restart.log` 로 에러 확인 후 원인 분석
+> 이것은 디스크의 코드를 확인할 뿐이다. 가능하면 **실행 중인 서버의 동작**으로도 확인한다
+> (바뀐 응답, 서빙되는 JS 내용, 새 로그 문구 등).
+> 실패 시: `server_restart_err.log` 와 `server_restart.log` 에서 원인 확인
 
 **Step 6: 사용자에게 보고**
 Step 1~5가 모두 통과한 이후에만 "적용 완료"를 보고한다.
 
 ---
 
-## Searcher 프로젝트 — 공공데이터포털(G2B) API 레이트 리밋 규칙
+## Searcher 프로젝트 — 공공데이터포털(G2B) API 규칙
 
-### 규칙: API 요청을 인위적으로 증폭시키지 않는다
+### 규칙 1: API 요청을 인위적으로 증폭시키지 않는다
 
 공공데이터포털 G2B API는 API 키 기준으로 레이트 리밋을 적용한다. 429 응답 발생 시
-최대 1시간 차단되며, 차단 중에는 모든 요청이 실패한다.
+최대 1시간 차단되며, 차단 중에는 모든 요청이 실패한다. 같은 키를 정기 크롤러도 쓴다.
+
+### 규칙 2: 조회 기간에는 API 가 정한 한도가 있다 — 한도 안에서 가장 넓게 한 번에 요청한다
+
+**"넓은 범위로 한 번에" 가 항상 가능한 것이 아니다.** API 마다 조회 기간 한도가 있고, 넘으면
+데이터가 아니라 오류가 온다.
+
+| API | 확인된 한도 | 근거 |
+|---|---|---|
+| 입찰공고 목록 `getBidPblancListInfoServc` (정기 크롤러) | **달력 7일** (시작일 00:00 ~ 종료일 23:59 를 포함해 7일) | 2026-11-17 단일 요청으로 확인: 8일 → 오류, 7일·1일 → 정상 |
+| 개찰결과·낙찰결과 `...PPSSrch` (과거 이력 조회) | 미확인. 코드(`routes/tenders.py`)는 월 단위로 조회한다 | 코드 주석: "한 달을 넘으면 07 오류" |
+
+- 한도 초과 응답은 HTTP 200 에 `resultCode: 07`, `resultMsg: 입력범위값 초과 에러` 로 온다.
+  **429 가 아니다.** 본문 최상위 키가 `response` 가 아니라 `nkoneps.com.response.ResponseError` 라서
+  크롤러 로그에는 "잘못된 응답 형식" 으로 찍힌다. 이 문구를 보면 기간 한도부터 의심한다.
+- 크롤러의 기간은 `시작 = 오늘 - days_range` 의 00:00 부터 오늘 23:59 까지다. 즉 `days_range` 보다
+  **하루 많은** 날짜를 요청한다. 한도가 7일이면 `days_range` 는 **6** 이어야 한다
+  (`data/settings.json` 의 `g2b_api.days_range`).
+- 한도는 공지 없이 바뀐다. 2026-11-10 까지 8일 범위가 통하다가 11-11 부터 거부됐다.
 
 #### 잘못된 접근 (절대 금지)
-- 날짜 범위를 인위적으로 월별/분기별로 쪼개서 60~120개 요청을 한꺼번에 발송
+- 한도보다 **잘게** 쪼개기 — 7일까지 되는 API 를 하루씩 7번 부르는 것
+- 한도를 확인하지 않고 넓은 범위(예: 5년)를 한 번에 요청 — 오류만 돌아온다
 - 테스트 목적으로 동일 API를 반복 호출 (loop, 배치 등)
 
 #### 올바른 접근
-- **5년 단일 범위** (`inqryBgnDt` ~ `inqryEndDt`)로 1회 요청 후 페이지네이션
-- 특정 공고명 검색 → 통상 결과 수십 건 → **엔드포인트당 1~2 요청으로 충분**
-- 결과가 100건 초과할 때만 페이지를 추가로 요청
+- 한도 안에서 **가장 넓은 단일 범위**로 1회 요청 후 페이지네이션
+- 한도를 넘는 기간이 꼭 필요하면 **한도 단위로만** 나눈다 (그보다 잘게 나누지 않는다)
+- 결과가 한 페이지를 넘을 때만 다음 페이지를 요청
 
 #### 테스트 시 주의
-- G2B API 연결 테스트는 **단일 요청**으로만 수행
+- G2B API 연결 테스트는 **단일 요청**으로만 수행한다. 한도를 찾을 때도 요청마다 조건을 하나만 바꾸고,
+  각 요청의 조건과 응답을 기록한다 (루프로 범위를 훑지 않는다)
 - 로직 검증은 API 호출 없이 Python 내에서 데이터 변환 로직만 단독 실행
 
 ---
@@ -169,6 +205,35 @@ print(result['count'], 'items')
 ```
 
 수동 크롤링 버튼(웹 UI)은 서버 재시작 후에만 신뢰할 수 있다.
+
+---
+
+## Searcher 프로젝트 — 크롤러는 "0건"을 성공으로 보고하지 않는다
+
+### 원칙
+크롤러가 예외 없이 끝났다는 것과 수집이 됐다는 것은 다르다. **"성공, 0건" 이 몇 번 이어지면
+고장으로 본다.** 수집 결과를 볼 때는 성공 표시가 아니라 **사이트별 마지막 적재일**을 본다.
+
+```sql
+SELECT source_site, COUNT(*), MAX(substr(created_at,1,10)) AS last_new
+FROM tenders GROUP BY source_site ORDER BY last_new;
+```
+
+### 배경 (2026-11-17 에 한꺼번에 발견)
+로그 화면에는 전부 "성공" 으로 떠 있었다.
+
+| 사이트 | 겉보기 | 실제 | 멈춘 기간 |
+|---|---|---|---|
+| 경상북도 | 성공, 0건 | 사이트 개편으로 선택자가 맞지 않음 | 2개월 |
+| 대구테크노파크 | 성공, 100건 | 상세 링크가 없어 전부 목록 주소를 URL 로 가짐 → URL 중복 판정이 전부 버림 | 4개월 |
+| 광진구 | 성공, 10건 | 구청 RSS 피드가 2025-08 글에서 멈춰 있음 (외부 원인) | 7개월 |
+| 나라장터 입찰공고 | **실패** 로 표시됐으나 엿새 방치 | API 기간 한도 변경 | 6일 |
+
+### 지켜야 할 것
+- 새 크롤러·새 사이트 설정은 **첫 페이지를 받았는데 0건이면 오류로 기록**한다 (`self.errors` 에 추가 → `success=False`)
+- "수집 N건" 만 보고 끝내지 않는다. **신규로 저장된 건수**를 함께 본다. 수집은 되는데 저장이 0이면 중복 판정을 의심한다
+- 상세 링크가 없는 사이트는 URL 이 목록 주소로 채워진다. 이 URL 은 공고의 고유값이 아니다
+- 크롤러를 고친 뒤 검증은 **실제 크롤 1회 후 DB 에 새 행이 들어왔는지**로 한다
 
 ---
 

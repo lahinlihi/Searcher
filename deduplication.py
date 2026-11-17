@@ -30,6 +30,20 @@ def remove_duplicates(tenders, existing_tender_numbers=None, existing_titles=Non
     seen_titles = existing_titles.copy()
     seen_urls = existing_urls.copy()
 
+    # 이번 수집분 안에서 서로 다른 공고 여러 건이 같은 URL 을 달고 있으면, 그 URL 은
+    # 공고 하나의 주소가 아니라 목록 페이지 주소다(상세 링크가 없는 사이트는 크롤러가
+    # 목록 주소를 대신 넣는다). 이런 URL 로 중복을 판정하면 첫 한 건만 저장되고
+    # 이후 모든 공고가 '이미 있는 URL' 로 버려진다
+    # (대구테크노파크: 109건 전부 URL 1종, 2026-07-06 이후 신규 0건).
+    # 공유 URL 은 URL 판정에서 빼고 공고번호·제목으로만 가린다.
+    _numbers_by_url = {}
+    for _t in tenders:
+        _u = _t.get('url', '')
+        if _u:
+            _numbers_by_url.setdefault(_u, set()).add(
+                _t.get('tender_number') or _t.get('title', ''))
+    shared_urls = {u for u, ids in _numbers_by_url.items() if len(ids) > 1}
+
     for tender in tenders:
         tender_number = tender.get('tender_number')
         title = tender.get('title', '')
@@ -42,7 +56,7 @@ def remove_duplicates(tenders, existing_tender_numbers=None, existing_titles=Non
             continue
 
         # 2. URL 중복 체크 — 같은 URL은 동일 공고 (제목이 조금 바뀌어도)
-        if url and url in seen_urls:
+        if url and url not in shared_urls and url in seen_urls:
             tender['is_duplicate'] = True
             duplicate_tenders.append(tender)
             continue
@@ -59,7 +73,7 @@ def remove_duplicates(tenders, existing_tender_numbers=None, existing_titles=Non
 
         if tender_number:
             seen_numbers.add(tender_number)
-        if url:
+        if url and url not in shared_urls:
             seen_urls.add(url)
         if title:
             seen_titles.add(title)

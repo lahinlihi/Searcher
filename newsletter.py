@@ -248,7 +248,11 @@ def build(conn, run_date=None, statuses=('approved',)):
         closing = re.sub(r'\s*\[[\d,\s]+\]', '',
                          d.get('closing') or '').strip()
 
-        articles = _articles_for(conn, d['topic'], hr_news, limit=4)
+        # 관련 기사 = 이 시사점을 만들 때 실제로 읽힌 기사. 생성 당시 재료가
+        # 없는 옛 데이터만 토픽 단어 검색으로 대신한다.
+        articles = _articles_from_material(conn, d, hr_news, limit=4)
+        if articles is None:
+            articles = _articles_for(conn, d['topic'], hr_news, limit=4)
         sections.append({
             'category': d.get('category') or '',
             'headline': d.get('headline') or '',
@@ -272,9 +276,61 @@ def build(conn, run_date=None, statuses=('approved',)):
     return {'run_date': run_date, 'sections': sections, 'tenders': tenders}
 
 
+def _articles_from_material(conn, row, hr_news, limit=4):
+    """
+    시사점의 근거가 된 기사 — 제목·출처·링크·날짜만.
+
+    생성할 때 daily_insights.material 에 (번호, 출처, 제목, 본문 조각)을
+    남겨 두었다. 그 출처·제목으로 hr_news 에서 링크를 되찾는다.
+    토픽 단어로 다시 검색하면('AI 인재' → 제목에 'AI' 가 든 아무 기사) 시사점과
+    무관한 기사가 '관련 기사'로 실리고, 열 때마다 목록이 바뀐다.
+
+    본문에서 인용 표기 [1,5] 로 실제 쓰인 기사를 먼저 싣고, 남는 자리에
+    나머지 재료를 싣는다. 재료가 저장되지 않은 옛 데이터면 None 을 돌려준다.
+    """
+    try:
+        material = json.loads(row.get('material') or '[]')
+    except Exception:
+        material = []
+    if not material:
+        return None
+
+    texts = []
+    try:
+        texts += json.loads(row.get('points') or '[]')
+    except Exception:
+        pass
+    texts += [row.get('synthesis') or '', row.get('closing') or '']
+    cited = []
+    for t in texts:
+        for grp in re.findall(r'\[([\d,\s]+)\]', t or ''):
+            for n in re.findall(r'\d+', grp):
+                if int(n) not in cited:
+                    cited.append(int(n))
+
+    by_n = {m.get('n'): m for m in material}
+    ordered = [by_n[n] for n in cited if n in by_n]
+    ordered += [m for m in material if m.get('n') not in cited]
+
+    out, seen = [], set()
+    for m in ordered:
+        r = conn.execute(
+            """SELECT title, source, original_link, pub_date, tier
+               FROM hr_news WHERE title=? AND source=?
+               ORDER BY pub_date DESC LIMIT 1""",
+            (m.get('title'), m.get('source'))).fetchone()
+        if r is None or r['original_link'] in seen:
+            continue
+        seen.add(r['original_link'])
+        out.append(hr_news.render_for_newsletter(dict(r)))
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _articles_for(conn, topic, hr_news, limit=4):
     """
-    토픽 관련 기사 — 제목·출처·링크·날짜만.
+    토픽 관련 기사 — 제목·출처·링크·날짜만. (재료가 없는 옛 데이터용)
 
     hr_news.render_for_newsletter() 를 거치므로 패시지는 반환되지 않는다.
     """
@@ -593,8 +649,67 @@ def send_test(conn, to_email, run_date=None, sent_by=None):
             'sections': len(data['sections'])}
 
 
-def send_all(conn, run_date=None, sent_by=None):
-    """구독자 전체 발송 — 수신거부 링크를 개인별로 넣는다."""
+# 진행 중으로 표시된 발송이 이 시간 넘게 갱신되지 않으면 중단된 것으로 본다.
+SEND_STALE_SEC = 600
+
+
+def real_send_state(conn, run_date):
+    """
+    이 발행일의 실발송 기록 요약.
+
+    sent        이미 받은 주소 (소문자)
+    trackable   모든 기록에 받은 사람 목록이 있는가 (없으면 이어 보내기 불가)
+    in_progress 지금 다른 발송이 돌고 있는가
+    """
+    rows = conn.execute(
+        "SELECT * FROM newsletter_sends WHERE run_date=? AND kind='real' "
+        "ORDER BY id", (run_date,)).fetchall()
+    sent, trackable, in_progress = set(), True, False
+    now = datetime.now(KST)
+    for r in rows:
+        try:
+            det = json.loads(r['detail'] or '{}')
+        except Exception:
+            det = {}
+        if 'sent' not in det:
+            trackable = False
+            continue
+        sent.update(e.lower() for e in det['sent'])
+        if det.get('state') == 'sending':
+            try:
+                age = (now - datetime.fromisoformat(det['updated_at'])).total_seconds()
+            except Exception:
+                age = SEND_STALE_SEC + 1
+            if age < SEND_STALE_SEC:
+                in_progress = True
+    return {'count': len(rows), 'sent': sent, 'trackable': trackable,
+            'in_progress': in_progress}
+
+
+def _update_send(conn, send_id, ok, fail, detail):
+    detail['updated_at'] = datetime.now(KST).isoformat(timespec='seconds')
+    conn.execute(
+        'UPDATE newsletter_sends SET success_count=?, fail_count=?, detail=? '
+        'WHERE id=?', (ok, fail, json.dumps(detail, ensure_ascii=False), send_id))
+    conn.commit()
+
+
+def send_all(conn, run_date=None, sent_by=None, mode=None):
+    """
+    구독자 전체 발송 — 수신거부 링크를 개인별로 넣는다.
+
+    같은 발행일을 두 번 보내지 않는다. 받는 쪽에서 가장 눈에 띄는 사고가
+    중복 수신이고, 한 번 나간 메일은 되돌릴 수 없다.
+
+      mode=None      이미 보낸 발행일이면 보내지 않고 상태만 알려준다
+      mode='resume'  아직 받지 않은 구독자에게만 보낸다 (중간에 끊겼을 때,
+                     발송 뒤에 구독자가 늘었을 때)
+      mode='force'   전원에게 다시 보낸다
+
+    기록은 보내기 **전에** 만들고 한 명 보낼 때마다 갱신한다. 끝난 뒤에 한 번만
+    적으면, 도중에 서버가 죽거나 요청이 끊겼을 때 누가 받았는지 알 수 없어
+    다시 누르는 순간 전원이 한 번 더 받는다.
+    """
     data = build(conn, run_date)
     if not data:
         return {'error': '승인된 시사점이 없습니다. 검수 화면에서 먼저 승인하세요.'}
@@ -606,21 +721,76 @@ def send_all(conn, run_date=None, sent_by=None):
         return {'error': 'SMTP 설정이 없습니다. settings.json 의 newsletter.smtp 를 채우세요.'}
 
     subject = subject_for(data)
-    ok, fail, errors = 0, 0, []
-    for s in subs:
+    run = data['run_date']
+    ensure_schema(conn)
+    if conn.in_transaction:
+        conn.commit()
+
+    # 확인과 기록 생성을 한 트랜잭션으로 묶는다. 두 사람이 동시에 눌러도
+    # 뒤에 온 쪽은 앞쪽이 만든 기록을 보고 멈춘다.
+    conn.execute('BEGIN IMMEDIATE')
+    try:
+        st = real_send_state(conn, run)
+        targets = list(subs)
+        refuse = None
+        if st['in_progress']:
+            refuse = {'error': '이 발행일의 발송이 지금 진행 중입니다. 끝난 뒤 다시 확인하세요.',
+                      'in_progress': True}
+        elif st['count']:
+            remaining = [s for s in subs if s['email'].lower() not in st['sent']]
+            if mode == 'resume':
+                if not st['trackable']:
+                    refuse = {'error': '이전 발송에 받은 사람 기록이 없어 이어 보낼 수 없습니다.',
+                              'already_sent': True}
+                elif not remaining:
+                    refuse = {'error': '아직 받지 않은 구독자가 없습니다.',
+                              'already_sent': True, 'remaining': 0}
+                else:
+                    targets = remaining
+            elif mode != 'force':
+                refuse = {
+                    'error': f'{run} 발행분은 이미 발송됐습니다. 다시 보내면 중복 수신됩니다.',
+                    'already_sent': True, 'sent': len(st['sent']),
+                    'remaining': len(remaining) if st['trackable'] else None}
+        if refuse:
+            conn.rollback()
+            return refuse
+
+        detail = {'state': 'sending', 'mode': mode or 'first', 'sent': [],
+                  'errors': [],
+                  'updated_at': datetime.now(KST).isoformat(timespec='seconds')}
+        cur = conn.execute(
+            """INSERT INTO newsletter_sends
+               (run_date, kind, subject, recipient_count, success_count,
+                fail_count, sent_by, sent_at, detail)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (run, 'real', subject, len(targets), 0, 0, sent_by,
+             detail['updated_at'], json.dumps(detail, ensure_ascii=False)))
+        send_id = cur.lastrowid
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    ok, fail = 0, 0
+    for s in targets:
         url = f"{cfg['base_url']}/newsletter/unsubscribe/{s['unsubscribe_token']}"
         html = render_html(data, unsubscribe_url=url,
                            consent_at=s['consent_at'])
         try:
             _send_one(cfg, s['email'], subject, html)
             ok += 1
+            detail['sent'].append(s['email'])
         except Exception as e:
             fail += 1
-            errors.append({'email': s['email'], 'error': f'{type(e).__name__}: {e}'})
-    _log_send(conn, data['run_date'], 'real', subject, len(subs), ok, fail,
-              sent_by, {'errors': errors[:20]})
-    return {'ok': True, 'run_date': data['run_date'], 'subject': subject,
-            'total': len(subs), 'success': ok, 'fail': fail, 'errors': errors[:5]}
+            detail['errors'].append(
+                {'email': s['email'], 'error': f'{type(e).__name__}: {e}'})
+        _update_send(conn, send_id, ok, fail, detail)   # 한 명마다 기록
+    detail['state'] = 'done'
+    _update_send(conn, send_id, ok, fail, detail)
+    return {'ok': True, 'run_date': run, 'subject': subject, 'mode': mode or 'first',
+            'total': len(targets), 'success': ok, 'fail': fail,
+            'skipped': len(subs) - len(targets), 'errors': detail['errors'][:5]}
 
 
 def send_history(conn, limit=20):

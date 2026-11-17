@@ -1587,7 +1587,7 @@ async function toggleBookmark() {
                     ${statusBadge}${badge}
                     ${deadline}
                 </div>
-                <span class="font-medium text-gray-800 leading-snug">${t.title}</span>
+                <span class="font-medium text-gray-800 leading-snug">${safeHtml(t.title)}</span>
             </a>`;
         }).join('');
 
@@ -1759,7 +1759,7 @@ async function loadHistory(allTypes = false, force = false) {
         }
         _historyLoaded = true;
 
-        if (data.error) { body.innerHTML = `<p class="text-red-500 text-sm">${data.error}</p>`; return; }
+        if (data.error) { body.innerHTML = `<p class="text-red-500 text-sm">${safeHtml(data.error)}</p>`; return; }
 
         // 검색어 배지
         const badge = document.getElementById('history-query-badge');
@@ -1772,7 +1772,7 @@ async function loadHistory(allTypes = false, force = false) {
                 msg += `<p class="text-xs text-amber-500 text-center mt-2">⚠ 입찰공고 API 미응답 — 개찰/낙찰 결과만 표시됩니다.</p>`;
             }
             if (data.errors && data.errors.length) {
-                msg += `<p class="text-xs text-red-400 text-center mt-2">API 오류: ${data.errors.join(', ')}</p>`;
+                msg += `<p class="text-xs text-red-400 text-center mt-2">API 오류: ${safeHtml(data.errors.join(', '))}</p>`;
             }
             msg += `<p class="text-center mt-3"><button onclick="loadHistory(false, true)" class="text-xs text-blue-500 hover:text-blue-700 underline">다시 조회</button></p>`;
             body.innerHTML = msg;
@@ -1819,7 +1819,7 @@ async function loadHistory(allTypes = false, force = false) {
 
             // 날짜
             const rawDt = item.rlOpengDt || item.opengDt || item.fnlSucsfDate || item.bidNtceDt || '';
-            const openDt = rawDt.substring(0, 10);
+            const openDt = safeHtml(rawDt.substring(0, 10));
 
             // 공고명 / 링크
             const nmRaw   = item.bidNtceNm || '';
@@ -1829,7 +1829,7 @@ async function loadHistory(allTypes = false, force = false) {
 
             // 차세대 나라장터(2025.01~) 공고 직접 링크 — 비로그인 시 SSO 로그인 후 이동
             const g2bUrl = bidNo
-                ? `https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=${bidNo}&bidPbancOrd=${bidSeq}`
+                ? `https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=${encodeURIComponent(bidNo)}&bidPbancOrd=${encodeURIComponent(bidSeq)}`
                 : '';
 
             const linkCls =
@@ -1838,11 +1838,11 @@ async function loadHistory(allTypes = false, force = false) {
                 status === '계약'     ? 'text-green-700 hover:underline'  :
                 'text-blue-600 hover:underline';
             const nmHtml = g2bUrl
-                ? `<a href="${g2bUrl}" target="_blank" class="${linkCls} underline decoration-dotted" title="나라장터 공고 보기 (${bidNo})">${nm || bidNo}</a>`
-                : `<span class="text-gray-600" title="${nmRaw}">${nm || bidNo || '-'}</span>`;
+                ? `<a href="${safeUrl(g2bUrl)}" target="_blank" class="${linkCls} underline decoration-dotted" title="나라장터 공고 보기 (${safeHtml(bidNo)})">${safeHtml(nm || bidNo)}</a>`
+                : `<span class="text-gray-600" title="${safeHtml(nmRaw)}">${safeHtml(nm || bidNo || '-')}</span>`;
 
             // 기관명
-            const org = item.dminsttNm || item.ntceInsttNm || '-';
+            const org = safeHtml(item.dminsttNm || item.ntceInsttNm || '-');
 
             // 추정가격 (부가세 포함)
             const presmptRaw = item._presmptPrce ? parseInt(item._presmptPrce) : 0;
@@ -1862,7 +1862,7 @@ async function loadHistory(allTypes = false, force = false) {
                 rowBg      = 'bg-gray-50';
 
             } else if (status === '계약') {
-                const contractWinner = fc ? (fc.winner || '-') : '-';
+                const contractWinner = safeHtml(fc ? (fc.winner || '-') : '-');
                 const contractAmt    = fc && fc.amount ? formatAmtKr(parseInt(fc.amount)) : (presmptAmt || '-');
                 const prevLabel =
                     failType === 'sole_bidder' ? '단독응찰' :
@@ -1889,9 +1889,9 @@ async function loadHistory(allTypes = false, force = false) {
                 const amt    = (item.sucsfbidAmt ? formatAmtKr(parseInt(item.sucsfbidAmt)) : null) || presmptAmt || '-';
                 // 개찰 1순위와 실제 낙찰자가 다른 경우 (적격심사 탈락 등)
                 const candidateNote = (item._openg_candidate && item._openg_candidate !== winner)
-                    ? `<div class="text-xs text-orange-500 mt-0.5" title="개찰 시 1순위 투찰자가 적격심사에서 탈락하여 차순위로 낙찰된 경우">⚠ 개찰 1순위: ${item._openg_candidate}</div>`
+                    ? `<div class="text-xs text-orange-500 mt-0.5" title="개찰 시 1순위 투찰자가 적격심사에서 탈락하여 차순위로 낙찰된 경우">⚠ 개찰 1순위: ${safeHtml(item._openg_candidate)}</div>`
                     : '';
-                winnerCell = `<span class="font-medium text-gray-800">${winner}</span>${cntBadge}${candidateNote}`;
+                winnerCell = `<span class="font-medium text-gray-800">${safeHtml(winner)}</span>${cntBadge}${candidateNote}`;
                 amtCell    = `<span class="text-blue-700 font-semibold">${amt}</span>`;
                 statusCell = `<span class="text-xs font-semibold border px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border-blue-200">낙찰</span>`;
                 rowBg = i % 2 === 0 ? 'bg-white' : 'bg-gray-50';
@@ -1909,11 +1909,11 @@ async function loadHistory(allTypes = false, force = false) {
 
         html += `</tbody></table></div>`;
         if (data.errors && data.errors.length) {
-            html += `<p class="text-xs text-orange-400 mt-3">일부 오류: ${data.errors.join(', ')}</p>`;
+            html += `<p class="text-xs text-orange-400 mt-3">일부 오류: ${safeHtml(data.errors.join(', '))}</p>`;
         }
         body.innerHTML = html;
     } catch (e) {
-        body.innerHTML = `<p class="text-red-500 text-sm">이력 조회 실패: ${e.message}</p>`;
+        body.innerHTML = `<p class="text-red-500 text-sm">이력 조회 실패: ${safeHtml(e.message)}</p>`;
     }
 }
 
@@ -2885,7 +2885,7 @@ function _renderResult(data, tenderId) {
         // 발견 파일
         if (data.files_found && data.files_found.length > 0) {
             document.getElementById('files-list').innerHTML = data.files_found
-                .map(n => `<span class="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded border">${n}</span>`)
+                .map(n => `<span class="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded border">${safeHtml(n)}</span>`)
                 .join('');
             document.getElementById('files-section').classList.remove('hidden');
         }
@@ -2961,8 +2961,8 @@ function _renderResult(data, tenderId) {
                 document.getElementById('rule-extract').innerHTML = rest
                     .map(([k, v]) =>
                         `<div class="bg-white rounded-lg p-3 border">
-                            <p class="text-xs font-semibold text-gray-400 mb-1">${labels[k] || k}</p>
-                            <p class="text-sm text-gray-800">${v}</p>
+                            <p class="text-xs font-semibold text-gray-400 mb-1">${safeHtml(labels[k] || k)}</p>
+                            <p class="text-sm text-gray-800">${safeHtml(v)}</p>
                         </div>`)
                     .join('');
                 document.getElementById('rule-section').classList.remove('hidden');

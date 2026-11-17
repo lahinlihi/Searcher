@@ -266,11 +266,24 @@ def api_send_status():
             'mail_ready': bool(mail.get('user') and mail.get('password_set')),
             'blockers': blockers,
             'already_sent': dict(sent) if sent else None,
+            **_send_progress(nl, conn, run_date, subs),
         })
     except Exception as e:
         return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
     finally:
         conn.close()
+
+
+def _send_progress(nl, conn, run_date, subs):
+    """이미 보낸 발행일이면 몇 명이 받았고 몇 명이 남았는지."""
+    if not run_date:
+        return {'sent_count': 0, 'remaining': None, 'send_in_progress': False}
+    st = nl.real_send_state(conn, run_date)
+    remaining = None
+    if st['count'] and st['trackable']:
+        remaining = sum(1 for r in subs if r['email'].lower() not in st['sent'])
+    return {'sent_count': len(st['sent']), 'remaining': remaining,
+            'send_in_progress': st['in_progress']}
 
 
 @bp.route('/newsletter/preview')
@@ -330,15 +343,25 @@ def api_send():
     import newsletter as nl
     from flask import g
     data = request.get_json(silent=True) or {}
-    if data.get('confirm') != 'SEND':
+    mode = data.get('mode')
+    if mode not in (None, 'resume', 'force'):
+        return jsonify({'error': '허용되지 않는 발송 방식입니다.'}), 400
+    # 전원 재발송은 다른 확인 문구를 요구한다. 같은 문구면 습관적으로 입력해
+    # 중복 발송을 내기 쉽다.
+    need = 'RESEND' if mode == 'force' else 'SEND'
+    if data.get('confirm') != need:
         return jsonify({'error': '확인 문구가 일치하지 않습니다.'}), 400
     conn = _conn()
     try:
         res = nl.send_all(conn, data.get('date') or None,
-                          sent_by=g.user.username if g.user else None)
+                          sent_by=g.user.username if g.user else None,
+                          mode=mode)
     finally:
         conn.close()
-    return (jsonify(res), 400) if 'error' in res else jsonify(res)
+    if 'error' in res:
+        dup = res.get('already_sent') or res.get('in_progress')
+        return jsonify(res), (409 if dup else 400)
+    return jsonify(res)
 
 
 @bp.route('/api/newsletter/subscribers', methods=['GET', 'POST'])

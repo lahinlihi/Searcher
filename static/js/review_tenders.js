@@ -21,7 +21,7 @@ async function loadReviewTenders() {
         renderReviewList();
     } catch (e) {
         document.getElementById('review-list').innerHTML =
-            `<p class="text-red-500 text-sm">불러오기 실패: ${e.message}</p>`;
+            `<p class="text-red-500 text-sm">불러오기 실패: ${safeHtml(e.message)}</p>`;
     }
 }
 
@@ -144,7 +144,7 @@ function renderReviewCard(tender) {
                 <span class="font-medium text-gray-800 truncate">${agency}</span>
                 <span class="font-medium text-blue-600">${price}</span>
                 <a href="/tender/${tender.id}#memos" target="_blank" rel="noopener" class="text-purple-500 hover:underline text-xs">의견 보기 →</a>
-                ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-500 hover:underline text-xs">공고 원문 →</a>` : ''}
+                ${tender.url ? `<a href="${safeUrl(tender.url)}" target="_blank" class="text-gray-500 hover:underline text-xs">공고 원문 →</a>` : ''}
             </div>
             ${latestMemo ? `
             <div class="mt-2 px-3 py-2 bg-purple-50 border border-purple-100 rounded-lg text-sm text-gray-700">

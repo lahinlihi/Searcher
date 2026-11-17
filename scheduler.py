@@ -49,6 +49,86 @@ SUPPORTED_CRAWLER_TYPES = {
 LEGACY_CRAWLERS = {'sung-dong-gu'}
 
 
+# ── 예약 작업 실행 기록 ────────────────────────────────────────────────────
+#
+# 예약 작업의 결과는 지금까지 print 뿐이었다. 그 출력은 서버를 재시작할 때마다
+# 덮어써지는 로그 파일로 가므로, 어느 날 수집이 빠졌을 때 '실패했는지, 아예
+# 안 돌았는지'를 나중에 알 방법이 없었다. 작업마다 한 줄씩 DB 에 남긴다.
+# 이 기록은 '오늘 이미 돌았는가' 판정(기동 시 보충 실행)에도 쓴다.
+# 기록 자체가 실패해도 작업은 계속돼야 하므로 예외는 전부 삼킨다.
+
+_JOB_RUNS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS job_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    job         TEXT NOT NULL,
+    run_date    TEXT NOT NULL,      -- YYYY-MM-DD (서버 현지 시각)
+    started_at  TEXT NOT NULL,
+    finished_at TEXT,
+    status      TEXT NOT NULL,      -- running / ok / empty / failed
+    detail      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_job_runs ON job_runs(job, run_date);
+"""
+
+
+def _job_conn():
+    import hr_news
+    conn = hr_news.connect()
+    conn.executescript(_JOB_RUNS_SCHEMA)
+    return conn
+
+
+def job_run_start(job):
+    try:
+        conn = _job_conn()
+        try:
+            now = datetime.now()
+            cur = conn.execute(
+                'INSERT INTO job_runs (job, run_date, started_at, status) '
+                'VALUES (?,?,?,?)',
+                (job, now.strftime('%Y-%m-%d'),
+                 now.isoformat(timespec='seconds'), 'running'))
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[실행기록] 시작 기록 실패 (무시): {type(e).__name__}: {e}")
+        return None
+
+
+def job_run_finish(run_id, status, detail=''):
+    if run_id is None:
+        return
+    try:
+        conn = _job_conn()
+        try:
+            conn.execute(
+                'UPDATE job_runs SET finished_at=?, status=?, detail=? WHERE id=?',
+                (datetime.now().isoformat(timespec='seconds'), status,
+                 (detail or '')[:2000], run_id))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[실행기록] 종료 기록 실패 (무시): {type(e).__name__}: {e}")
+
+
+def job_runs_on(job, run_date):
+    """그날 이 작업의 상태 목록. 조회 실패 시 None."""
+    try:
+        conn = _job_conn()
+        try:
+            return [r['status'] for r in conn.execute(
+                'SELECT status FROM job_runs WHERE job=? AND run_date=? ORDER BY id',
+                (job, run_date))]
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[실행기록] 조회 실패 (무시): {type(e).__name__}: {e}")
+        return None
+
+
 class CrawlScheduler:
     """크롤링 스케줄러"""
 
@@ -61,6 +141,9 @@ class CrawlScheduler:
         self._stop_event = threading.Event()   # set() 하면 크롤러 루프 중단
         self._crawl_thread = None              # 현재 실행 중인 크롤 스레드 (참고용, 진행 여부 판단에는 미사용)
         self._is_crawling = False              # 명시적 진행 상태 플래그.
+        # 예약 크롤과 수동 크롤이 겹치지 않게 하는 잠금. 겹치면 두 크롤이 같은
+        # 크롤러 인스턴스·Selenium 드라이버·중지 신호·진행률 변수를 함께 쓴다.
+        self._crawl_lock = threading.Lock()
         # 주의: is_crawling 판정에 스레드의 is_alive()를 쓰지 않는다.
         # APScheduler(BlockingScheduler)는 내부적으로 스레드 풀을 재사용해 잡을 실행하므로,
         # run_crawl_job()이 이미 끝나도 그 잡을 실행했던 풀 스레드 자체는 계속 살아있어
@@ -115,6 +198,8 @@ class CrawlScheduler:
         # misfire_grace_time: APScheduler 기본값(1초)이 너무 짧아 스케줄러 스레드가
         # 트리거 시점에 잠깐만 지연돼도(다른 작업 충돌, GC 등) 그날 실행이 조용히 스킵되는
         # 문제가 반복됐음. 여유 있게 잡아 트리거 시점이 지나도 그날 안에는 늦게라도 실행되게 함.
+        # (단, 이 값은 서버가 켜져 있을 때만 통한다. 서버가 예정 시각 뒤에 켜진 날은
+        #  아래 _schedule_catch_up 이 보충한다.)
         self._add_crawl_jobs()
         self._add_hr_news_job()
 
@@ -122,6 +207,91 @@ class CrawlScheduler:
         print("[스케줄러] 자동 크롤링 스케줄러가 시작되었습니다.")
         for t in self._get_crawl_times():
             print(f"[스케줄러] - {t}")
+
+        self._schedule_catch_up()
+
+    def _schedule_catch_up(self):
+        """
+        서버가 예정 시각보다 늦게 켜진 날, 놓친 작업을 한 번 보충한다.
+
+        위의 misfire_grace_time 은 서버가 **켜져 있는 동안** 실행이 늦어진 경우만
+        구제한다. 서버가 꺼져 있던 시각의 실행은 '놓친 실행'으로 잡히지도 않는다.
+        스케줄러는 켜진 시점 이후의 첫 시각(= 내일)만 예약하기 때문이다.
+        실제로 07:30 이후에 PC 가 켜진 날(11-06, 11-13, 11-16)은 HR뉴스가 0건이었다.
+
+        이 서버는 재시작이 잦으므로 '오늘 이미 돌았는지'를 반드시 확인한다.
+        확인 없이 보충하면 재시작할 때마다 네이버·LLM·나라장터 호출이 반복된다.
+        """
+        from datetime import timedelta
+        now = datetime.now()
+        hr_scheduled = False
+
+        try:
+            if settings_manager.get('hr_news.enabled', True):
+                h, m = (int(x) for x in self._get_hr_news_time().split(':'))
+                due = now.replace(hour=h, minute=m, second=0, microsecond=0)
+                if now > due and not self._hr_news_ran_today(now):
+                    self.scheduler.add_job(
+                        func=self.run_hr_news_job, trigger='date',
+                        run_date=now + timedelta(seconds=120),
+                        id='hr_news_catchup', name='HR뉴스 수집 (보충)',
+                        replace_existing=True, misfire_grace_time=3600)
+                    hr_scheduled = True
+                    print(f"[스케줄러] 오늘 {h:02d}:{m:02d} HR뉴스 수집을 놓쳤습니다 "
+                          "— 2분 뒤 보충 실행합니다.")
+        except Exception as e:
+            print(f"[스케줄러] HR뉴스 보충 판정 실패 (무시): {type(e).__name__}: {e}")
+
+        try:
+            dues = []
+            for t in self._get_crawl_times():
+                try:
+                    h, m = (int(x) for x in t.split(':'))
+                except (ValueError, AttributeError):
+                    continue
+                d = now.replace(hour=h, minute=m, second=0, microsecond=0)
+                if d < now:
+                    dues.append(d)
+            if dues:
+                last_due = max(dues)        # 여러 번 놓쳐도 가장 최근 한 번만 보충
+                with self.app.app_context():
+                    ran = CrawlLog.query.filter(
+                        CrawlLog.started_at >= last_due).first() is not None
+                if not ran:
+                    # HR뉴스 보충과 겹치지 않게 띄운다 (둘 다 같은 DB 에 쓴다)
+                    delay = 600 if hr_scheduled else 120
+                    self.scheduler.add_job(
+                        func=self.run_crawl_job, trigger='date',
+                        run_date=now + timedelta(seconds=delay),
+                        id='crawl_catchup', name='크롤링 (보충)',
+                        replace_existing=True, misfire_grace_time=3600)
+                    print(f"[스케줄러] 오늘 {last_due:%H:%M} 크롤링을 놓쳤습니다 "
+                          f"— {delay // 60}분 뒤 보충 실행합니다.")
+        except Exception as e:
+            print(f"[스케줄러] 크롤링 보충 판정 실패 (무시): {type(e).__name__}: {e}")
+
+    def _hr_news_ran_today(self, now):
+        """오늘 HR뉴스 작업이 이미 돌았는가 (보충 실행 여부 판정)."""
+        today = now.strftime('%Y-%m-%d')
+        runs = job_runs_on('hr_news', today)
+        if runs is None:
+            return True                 # 기록을 읽지 못하면 보충하지 않는다(안전한 쪽)
+        if 'ok' in runs or 'running' in runs or len(runs) >= 2:
+            return True                 # 성공했거나, 돌고 있거나, 이미 두 번 시도했다
+        try:
+            import hr_news
+            conn = hr_news.connect()
+            try:
+                # 실행 기록이 생기기 전에 돈 날(또는 수동 수집)도 '돌았다'로 본다
+                n = conn.execute(
+                    'SELECT COUNT(*) FROM hr_news WHERE collected_at LIKE ?',
+                    (today + '%',)).fetchone()[0]
+            finally:
+                conn.close()
+            return n > 0
+        except Exception as e:
+            print(f"[스케줄러] HR뉴스 수집 여부 조회 실패: {type(e).__name__}: {e}")
+            return True
 
     def _get_crawl_times(self):
         """settings.json의 crawl.times를 읽어 ['HH:MM', ...] 반환 (없으면 기본값)"""
@@ -159,12 +329,35 @@ class CrawlScheduler:
         return settings_manager.get('hr_news.time', '07:30') or '07:30'
 
     def run_hr_news_job(self):
+        """HR뉴스 작업 실행 + 실행 기록. 본문은 _run_hr_news_job_inner."""
+        run_id = job_run_start('hr_news')
+        self._hr_notes = []
+        self._hr_collected = None
+        status, detail = 'ok', ''
+        try:
+            self._run_hr_news_job_inner()
+            if self._hr_collected == 0:
+                # 수집 0건은 조용한 날이 아니라 API 실패일 가능성이 높다
+                # (hr_news.search 는 실패를 빈 목록으로 돌려준다)
+                status = 'empty'
+            detail = ' / '.join(self._hr_notes)
+        except BaseException as e:
+            # SystemExit 도 잡는다 — hr_news._keys() 는 키가 없으면 sys.exit 한다.
+            status = 'failed'
+            detail = ' / '.join(self._hr_notes + [f'{type(e).__name__}: {e}'])
+            print(f"[HR뉴스] 작업 실패로 기록: {type(e).__name__}: {e}")
+            if not isinstance(e, (Exception, SystemExit)):
+                raise
+        finally:
+            job_run_finish(run_id, status, detail)
+
+    def _run_hr_news_job_inner(self):
         """HR뉴스 수집 → 토픽 선정 → 상위 토픽 다각도 심화"""
         try:
             import hr_news
         except Exception as e:
             print(f"[HR뉴스] 모듈 임포트 실패 — 건너뜁니다: {type(e).__name__}: {e}")
-            return
+            raise
 
         try:
             deep_n = int(settings_manager.get('hr_news.deep_topics', 3) or 3)
@@ -175,6 +368,8 @@ class CrawlScheduler:
             try:
                 new, upd = hr_news.upsert(conn, list(merged.values()))
                 print(f"[HR뉴스] 수집 {len(merged)}건 (신규 {new} 갱신 {upd}), API {calls}회")
+                self._hr_collected = len(merged)
+                self._hr_notes.append(f'수집 {len(merged)}건(신규 {new})')
 
                 topics, _ = hr_news.rank_topics(conn, days=days, top_n=10)
                 targets = [t for t in topics
@@ -197,6 +392,7 @@ class CrawlScheduler:
                     ok = sum(1 for r in results if r['ok'])
                     print(f"[HR뉴스] 시사점 {saved}건 저장 "
                           f"(검사 통과 {ok}, run_date={run_date}, 검수 대기)")
+                    self._hr_notes.append(f'시사점 {saved}건(검사 통과 {ok})')
                     for r in results:
                         if not r['ok']:
                             labels = ', '.join(b['label']
@@ -206,6 +402,7 @@ class CrawlScheduler:
                     import traceback
                     print(f"[HR뉴스] 시사점 생성 실패: {type(e).__name__}: {e}")
                     traceback.print_exc()
+                    self._hr_notes.append(f'시사점 생성 실패: {type(e).__name__}: {e}')
 
                 # 입찰동향 A/B/C 분류 — 메일에 '지원사업' 구분을 채우려면
                 # 분류가 먼저 있어야 한다. 사전규격·중소벤처24 는 status 로
@@ -227,6 +424,7 @@ class CrawlScheduler:
                         print("[HR뉴스] 입찰동향 분류 대상 없음")
                 except Exception as e:
                     print(f"[HR뉴스] 입찰동향 분류 실패: {type(e).__name__}: {e}")
+                    self._hr_notes.append(f'입찰동향 분류 실패: {type(e).__name__}: {e}')
             finally:
                 conn.close()
             print(f"[HR뉴스] 완료 — 총 API {calls}회")
@@ -234,6 +432,7 @@ class CrawlScheduler:
             import traceback
             print(f"[HR뉴스] 작업 실패: {type(e).__name__}: {e}")
             traceback.print_exc()
+            raise       # 바깥 run_hr_news_job 이 실패로 기록한다
 
     def _add_hr_news_job(self):
         """HR뉴스 수집 잡 등록 (job id: hr_news)"""
@@ -502,6 +701,68 @@ class CrawlScheduler:
                 }, 'timeout'
 
     def run_crawl_job(self):
+        """예약 크롤 진입점. 이미 크롤이 돌고 있으면 이번 회차는 건너뛴다."""
+        if not self._crawl_lock.acquire(blocking=False):
+            print(f"[스케줄러] 다른 크롤링이 진행 중 — 이번 예약 실행은 건너뜁니다: {datetime.now()}")
+            return
+        try:
+            self._run_crawl_job_locked()
+        finally:
+            self._crawl_lock.release()
+
+    def run_manual_crawl(self, sites=None):
+        """수동 크롤 진입점. 이미 크롤이 돌고 있으면 시작하지 않는다."""
+        if not self._crawl_lock.acquire(blocking=False):
+            print("[수동 크롤링] 다른 크롤링이 진행 중 — 시작하지 않습니다.")
+            return {'success': False, 'error': '이미 크롤링이 진행 중입니다.'}
+        try:
+            return self._run_manual_crawl_locked(sites)
+        finally:
+            self._crawl_lock.release()
+
+    def _mark_crawl_failed(self, crawl_log, e):
+        """
+        크롤 실패를 로그에 남긴다.
+
+        저장 도중 DB 오류(잠금, 무결성)로 실패했다면 세션에 깨진 트랜잭션이
+        남아 있다. 되돌리지 않고 commit 하면 그 commit 도 실패해, 로그가
+        영원히 'running' 으로 남고 화면에는 크롤이 끝나지 않은 것처럼 보인다.
+        """
+        try:
+            db.session.rollback()
+            crawl_log.completed_at = datetime.now()
+            crawl_log.status = 'failed'
+            crawl_log.error_message = str(e)[:2000]
+            db.session.commit()
+        except Exception as e2:
+            db.session.rollback()
+            print(f"[스케줄러] 실패 로그 기록도 실패: {type(e2).__name__}: {e2}")
+
+    def _close_finished_drivers(self, site_results):
+        """
+        이번 크롤에서 **끝까지 돈** 사이트의 Selenium 브라우저를 닫는다.
+
+        닫지 않으면 헤드리스 크롬이 다음 크롤까지 몇 시간씩 떠 있고, 그 사이
+        서버를 재시작하면 주인 없는 프로세스로 남는다(2026-11-17 확인: 09시
+        크롤이 띄운 크롬·드라이버 18개, 약 1GB 가 서버 재시작 뒤에도 남아 있었다).
+
+        타임아웃·강제 중지로 끝난 사이트는 건드리지 않는다. 작업 스레드가 아직
+        같은 드라이버를 쓰고 있을 수 있고, 그때 quit() 이 끼어들면 크롬이 좀비로
+        남는다(_run_crawler_with_timeout 의 주의 참고). 그런 드라이버는 지금까지
+        처럼 다음 크롤 시작 때 정리된다.
+        """
+        for site_name, res in site_results.items():
+            errs = ' '.join(str(x) for x in (res.get('errors') or []))
+            if '타임아웃' in errs or '강제 중지' in errs:
+                continue
+            crawler = self.crawlers.get(site_name)
+            if crawler is not None and getattr(crawler, 'driver', None):
+                try:
+                    crawler._close_selenium_driver()
+                except Exception as e:
+                    print(f"[{site_name}] 드라이버 종료 실패 (무시): {e}")
+
+    def _run_crawl_job_locked(self):
         """
         크롤링 작업 실행
         모든 사이트를 크롤링하고 결과를 DB에 저장
@@ -595,6 +856,9 @@ class CrawlScheduler:
                             'count': 0,
                             'errors': [str(e)],
                         }
+
+                # 끝까지 돈 사이트의 브라우저를 닫는다 (다음 크롤까지 띄워 두지 않는다)
+                self._close_finished_drivers(site_results)
 
                 # 중복 제거
                 unique_tenders, duplicate_count = mark_duplicates_in_db(
@@ -699,10 +963,7 @@ class CrawlScheduler:
 
             except Exception as e:
                 # 크롤링 실패
-                crawl_log.completed_at = datetime.now()
-                crawl_log.status = 'failed'
-                crawl_log.error_message = str(e)
-                db.session.commit()
+                self._mark_crawl_failed(crawl_log, e)
 
                 print(f"[스케줄러] 크롤링 실패: {str(e)}")
 
@@ -710,7 +971,7 @@ class CrawlScheduler:
                 self._is_crawling = False
                 self._current_site = None
 
-    def run_manual_crawl(self, sites=None):
+    def _run_manual_crawl_locked(self, sites=None):
         """
         수동 크롤링 실행
 
@@ -743,6 +1004,13 @@ class CrawlScheduler:
                 sites_config = settings_manager.get('crawl.sites_config', {})
                 if not sites_config:
                     sites_config = settings_manager.get('crawl.sites', {})
+
+                # 예약 크롤과 같은 이유로, 시작 전에 묵은 Selenium 드라이버를 정리한다.
+                # 이 처리가 예약 쪽에만 있어서, 수동 크롤은 몇 시간 전 드라이버를
+                # 그대로 써 driver.get() 에서 멈출 수 있었다.
+                for crawler in self.crawlers.values():
+                    if hasattr(crawler, '_close_selenium_driver'):
+                        crawler._close_selenium_driver()
 
                 # 크롤링할 사이트 결정
                 crawlers_to_run = {}
@@ -803,6 +1071,9 @@ class CrawlScheduler:
                             'count': 0,
                             'errors': [str(e)],
                         }
+
+                # 끝까지 돈 사이트의 브라우저를 닫는다 (다음 크롤까지 띄워 두지 않는다)
+                self._close_finished_drivers(site_results)
 
                 # 중복 제거
                 unique_tenders, duplicate_count = mark_duplicates_in_db(
@@ -912,10 +1183,7 @@ class CrawlScheduler:
                 }
 
             except Exception as e:
-                crawl_log.completed_at = datetime.now()
-                crawl_log.status = 'failed'
-                crawl_log.error_message = str(e)
-                db.session.commit()
+                self._mark_crawl_failed(crawl_log, e)
 
                 print(f"[수동 크롤링] 실패: {str(e)}")
 

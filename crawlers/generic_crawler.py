@@ -92,8 +92,10 @@ class GenericCrawler(BaseCrawler):
             elif self.crawl_type == 'sample':
                 # 샘플 데이터 생성 (테스트 목적으로만 사용)
                 print(f"[{self.site_name}] 샘플 모드는 비활성화되었습니다 - 크롤링 건너뜀")
+                self.errors.append("crawl_type 미설정(sample) — 수집하지 않음")
             else:
                 print(f"[{self.site_name}] 알 수 없는 크롤링 타입: {self.crawl_type}")
+                self.errors.append(f"알 수 없는 crawl_type: {self.crawl_type} — 수집하지 않음")
 
             print(f"[{self.site_name}] 완료: {len(self.results)}건 수집")
 
@@ -315,6 +317,7 @@ class GenericCrawler(BaseCrawler):
         """
         if not self.selectors or not self.selectors.get('item'):
             print(f"[{self.site_name}] 셀렉터 미설정 - 크롤링 건너뜀")
+            self.errors.append("셀렉터(selectors.item) 미설정 — 수집하지 않음")
             return
 
         max_items = self.site_config.get('max_items', 100)
@@ -361,6 +364,13 @@ class GenericCrawler(BaseCrawler):
             if not items:
                 if page == start_page:
                     print(f"[{self.site_name}] 공고를 찾을 수 없습니다 - 크롤링 건너뜀")
+                    # 첫 페이지는 받았는데 목록 행이 0개다. 게시판이 비는 일은 드물고,
+                    # 대개 사이트 개편으로 선택자가 안 맞게 된 것이다. 오류로 남기지
+                    # 않으면 '성공, 0건'으로 기록돼 죽은 사이트가 몇 달씩 정상으로 보인다
+                    # (경상북도: 2026-09 개편 뒤 두 달간 성공 0건).
+                    self.errors.append(
+                        "목록에서 공고 행을 찾지 못함(0건) — 사이트 구조 변경 또는 "
+                        f"선택자 불일치 가능 (item: {self.selectors.get('item')})")
                 break
 
             # 중복 페이지 감지 (잘못된 페이지 파라미터/클릭 실패 또는 마지막 페이지 이후)

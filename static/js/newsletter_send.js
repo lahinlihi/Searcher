@@ -86,7 +86,10 @@ function renderStatus(s) {
         ? `<div class="text-xs rounded border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
              이 발행일(${esc(s.run_date)})은 이미
              ${esc((s.already_sent.sent_at || '').slice(0, 16).replace('T', ' '))}에
-             ${s.already_sent.success_count}명에게 발송됐습니다. 다시 보내면 중복 수신됩니다.
+             ${s.sent_count || s.already_sent.success_count}명에게 발송됐습니다.
+             ${s.send_in_progress ? '지금 발송이 진행 중입니다.'
+               : s.remaining > 0 ? `아직 받지 않은 구독자가 ${s.remaining}명 있습니다.`
+               : '다시 보내면 중복 수신됩니다.'}
            </div>` : '';
 
     document.getElementById('send-target').textContent = ready
@@ -162,12 +165,30 @@ async function sendTest() {
 async function sendReal() {
     if (!STATUS || STATUS.blockers.length) { toast('점검을 통과해야 합니다.', true); return; }
     const n = STATUS.subscribers.length;
-    const warn = STATUS.already_sent
-        ? '\n\n주의: 이 발행일은 이미 발송됐습니다. 중복 수신됩니다.' : '';
-    const answer = prompt(
-        `승인 ${STATUS.counts.approved || 0}건을 구독자 ${n}명에게 발송합니다.\n`
-        + `되돌릴 수 없습니다.${warn}\n\n계속하려면 SEND 를 입력하세요.`);
-    if (answer !== 'SEND') { toast('발송을 취소했습니다.'); return; }
+    // 이미 보낸 발행일이면 서버가 그냥은 받아 주지 않는다.
+    // 남은 사람이 있으면 그 사람들에게만, 없으면 전원 재발송(확인 문구가 다르다).
+    let mode = null;
+    let word = 'SEND';
+    let msg = `승인 ${STATUS.counts.approved || 0}건을 구독자 ${n}명에게 발송합니다.\n`
+        + '되돌릴 수 없습니다.';
+    if (STATUS.already_sent) {
+        if (STATUS.send_in_progress) {
+            toast('이 발행일의 발송이 진행 중입니다. 끝난 뒤 다시 확인하세요.', true);
+            return;
+        }
+        if (STATUS.remaining > 0) {
+            mode = 'resume';
+            msg = `이 발행일은 이미 ${STATUS.sent_count}명에게 발송됐습니다.\n`
+                + `아직 받지 않은 ${STATUS.remaining}명에게만 보냅니다. 되돌릴 수 없습니다.`;
+        } else {
+            mode = 'force';
+            word = 'RESEND';
+            msg = '이 발행일은 이미 발송됐습니다.\n'
+                + `다시 보내면 구독자 ${n}명이 같은 메일을 한 번 더 받습니다.`;
+        }
+    }
+    const answer = prompt(`${msg}\n\n계속하려면 ${word} 를 입력하세요.`);
+    if (answer !== word) { toast('발송을 취소했습니다.'); return; }
 
     const btn = document.getElementById('btn-send');
     btn.disabled = true; btn.textContent = '발송 중...';
@@ -175,7 +196,7 @@ async function sendReal() {
         const res = await api('/api/newsletter/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ confirm: 'SEND', date: RUN_DATE }),
+            body: JSON.stringify({ confirm: word, date: RUN_DATE, mode }),
         });
         toast(`발송 완료 — 성공 ${res.success} / 실패 ${res.fail} (총 ${res.total})`,
             res.fail > 0);
@@ -183,6 +204,7 @@ async function sendReal() {
         loadStatus();
     } catch (e) {
         toast(e.message, true);
+        loadStatus().catch(() => {});      // 그 사이 다른 사람이 보냈을 수 있다
     } finally {
         btn.textContent = '구독자에게 발송';
     }

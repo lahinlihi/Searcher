@@ -342,25 +342,14 @@ async function loadStats() {
 
 // 키워드 매칭 개수 계산 및 강조 표시
 function highlightKeywordsInTitle(title, keywords) {
+    // 제목은 외부 사이트에서 받아 온 글자다. highlightSafe 가 이스케이프한 뒤
+    // 강조 태그만 넣어 돌려주므로, 반환값은 innerHTML 에 그대로 넣어도 된다.
     if (!keywords || keywords.length === 0 || !title) {
-        return { highlightedTitle: title, matchCount: 0 };
+        return { highlightedTitle: safeHtml(title), matchCount: 0 };
     }
-
-    let matchCount = 0;
-    let highlightedTitle = title;
     const titleLower = title.toLowerCase();
-
-    // 각 키워드를 찾아서 매칭 개수 계산
-    keywords.forEach(keyword => {
-        if (keyword && titleLower.includes(keyword.toLowerCase())) {
-            matchCount++;
-            // 대소문자 구분 없이 키워드를 찾아서 강조 표시
-            const regex = new RegExp(`(${keyword})`, 'gi');
-            highlightedTitle = highlightedTitle.replace(regex, '<mark class="keyword-highlight">$1</mark>');
-        }
-    });
-
-    return { highlightedTitle, matchCount };
+    const matched = keywords.filter(k => k && titleLower.includes(k.toLowerCase()));
+    return { highlightedTitle: highlightSafe(title, matched), matchCount: matched.length };
 }
 
 // 적합도 점수 배지 생성
@@ -416,10 +405,10 @@ function renderMobileKeywordTenders(section, tenders) {
         const noticeBadges = getNoticeBadgesHtml(tender.title);
         const score = tender.relevance_score ?? 0;
         const scoreBadge = buildScoreBadge(score, tender.matched_keywords || [], tender.business_type || '기타', tender.score_breakdown || null);
-        const bizType = (tender.business_type && tender.business_type !== '기타') ? tender.business_type : '미분류';
+        const bizType = (tender.business_type && tender.business_type !== '기타') ? safeHtml(tender.business_type) : '미분류';
         const { cls: deadlineClass, text: deadlineText } = _mobileDeadline(tender.days_left);
         const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
-        const agencyName = _mobileAgencyName(tender);
+        const agencyName = safeHtml(_mobileAgencyName(tender));
         return `
             <div class="tender-item section-${section}">
                 <div class="flex justify-between items-start mb-1">
@@ -459,8 +448,8 @@ function renderMobileTenderList(section, tenders) {
         const noticeBadges = getNoticeBadgesHtml(tender.title);
         const score = tender.relevance_score ?? 0;
         const scoreBadge = score > 0 ? buildScoreBadge(score, [], tender.business_type || '기타', tender.score_breakdown || null) : '';
-        const bizType = (tender.business_type && tender.business_type !== '기타') ? tender.business_type : '미분류';
-        const agencyName = _mobileAgencyName(tender);
+        const bizType = (tender.business_type && tender.business_type !== '기타') ? safeHtml(tender.business_type) : '미분류';
+        const agencyName = safeHtml(_mobileAgencyName(tender));
         return `
             <div class="tender-item section-${section}">
                 <div class="flex justify-between items-start mb-1">
@@ -613,6 +602,7 @@ function renderTenderCard(tender) {
     } else {
         agencyName = tender.agency || '-';
     }
+    agencyName = safeHtml(agencyName);
 
     // 마감일
     const daysLeft = tender.days_left;
@@ -622,7 +612,7 @@ function renderTenderCard(tender) {
     const deadlineText = daysLeft !== null ? `D-${daysLeft}` : '-';
 
     // 유형
-    const bizType = (tender.business_type && tender.business_type !== '기타') ? tender.business_type : '미분류';
+    const bizType = (tender.business_type && tender.business_type !== '기타') ? safeHtml(tender.business_type) : '미분류';
 
     // 공고 앞 인라인 특이사항 배지
     const t = tender.title || '';
@@ -703,6 +693,7 @@ function renderKeywordTenders(elementId, tenders, keywords) {
         } else {
             agencyName = tender.agency;
         }
+        agencyName = safeHtml(agencyName);
 
         return `
             <div class="tender-item">
@@ -730,7 +721,7 @@ function renderKeywordTenders(elementId, tenders, keywords) {
                     <span class="font-medium text-gray-800 truncate">${agencyName}</span>
                     <span class="font-medium text-blue-600">${price}</span>
                     <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="text-blue-500 hover:underline">상세보기 →</a>
-                    ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-500 hover:underline">원본 공고 →</a>` : ''}
+                    ${tender.url ? `<a href="${safeUrl(tender.url)}" target="_blank" class="text-gray-500 hover:underline">원본 공고 →</a>` : ''}
                 </div>
             </div>
         `;
@@ -789,6 +780,7 @@ function renderTenderList(elementId, tenders) {
         } else {
             agencyName = tender.agency;
         }
+        agencyName = safeHtml(agencyName);
 
         return `
             <div class="tender-item">
@@ -815,7 +807,7 @@ function renderTenderList(elementId, tenders) {
                     <span class="font-medium text-gray-800 truncate">${agencyName}</span>
                     <span class="font-medium text-blue-600">${price}</span>
                     <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="text-blue-500 hover:underline">상세보기 →</a>
-                    ${tender.url ? `<a href="${tender.url}" target="_blank" class="text-gray-500 hover:underline">원본 공고 →</a>` : ''}
+                    ${tender.url ? `<a href="${safeUrl(tender.url)}" target="_blank" class="text-gray-500 hover:underline">원본 공고 →</a>` : ''}
                 </div>
             </div>
         `;

@@ -575,19 +575,8 @@ function updateFilterCountBadge() {
 
 // 키워드 강조 함수
 function highlightKeywords(text) {
-    if (!currentKeywords || currentKeywords.length === 0) {
-        return text;
-    }
-
-    let highlightedText = text;
-    currentKeywords.forEach(keyword => {
-        if (keyword) {
-            // 대소문자 구분 없이 검색
-            const regex = new RegExp(`(${keyword})`, 'gi');
-            highlightedText = highlightedText.replace(regex, '<mark class="bg-yellow-200 font-semibold px-1 rounded">$1</mark>');
-        }
-    });
-    return highlightedText;
+    // 반환값은 이스케이프된 HTML 이다 (강조 태그만 포함). innerHTML 에 그대로 넣는다.
+    return highlightSafe(text, currentKeywords, 'bg-yellow-200 font-semibold px-1 rounded');
 }
 
 // 정렬 화살표 반환
@@ -678,11 +667,11 @@ function renderResultsMobile(tenders) {
             <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="card-title-link block mb-1.5"${titleStyle}>${highlightedTitle}</a>
             <div class="flex items-center justify-between gap-2">
                 <div>
-                    <div class="card-agency truncate max-w-[200px]" title="${(displayAgency || '').replace(/"/g,'&quot;')}">${displayAgency || '-'}</div>
+                    <div class="card-agency truncate max-w-[200px]" title="${safeHtml(displayAgency || '')}">${safeHtml(displayAgency || '-')}</div>
                     <div class="card-meta mt-0.5">${price} · ${announcedDate}</div>
                 </div>
                 <div class="shrink-0">
-                    ${tender.url ? `<a href="${tender.url}" target="_blank" class="origin-link text-xs border border-gray-200 rounded px-2 py-1">원본</a>` : ''}
+                    ${tender.url ? `<a href="${safeUrl(tender.url)}" target="_blank" class="origin-link text-xs border border-gray-200 rounded px-2 py-1">원본</a>` : ''}
                 </div>
             </div>
         </div>`;
@@ -801,14 +790,14 @@ function renderResultsDesktop(tenders) {
                 <td style="text-align:center;width:46px;">${statusBadge}</td>
                 <td style="text-align:center;width:72px;">${scoreBadge}</td>
                 <td class="title-col">
-                    <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="title-link"${titleStyle} title="${cleanNoticeTitle(tender.title).replace(/"/g,'&quot;')}">${noticeBadges}${highlightedTitle}</a>
+                    <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="title-link"${titleStyle} title="${safeHtml(cleanNoticeTitle(tender.title))}">${noticeBadges}${highlightedTitle}</a>
                 </td>
-                <td class="agency-col" title="${agencyTooltip.replace(/"/g,'&quot;')}">${displayAgency}</td>
+                <td class="agency-col" title="${safeHtml(agencyTooltip)}">${safeHtml(displayAgency)}</td>
                 <td style="text-align:right;">${price}</td>
                 <td style="text-align:center;font-size:0.75rem;color:#6B7280;">${announcedDate}</td>
                 <td style="text-align:center;" class="${deadlineClass}">${deadlineText}</td>
                 <td style="text-align:center;">
-                    ${tender.url ? `<a href="${tender.url}" target="_blank" class="origin-link">원본</a>` : '-'}
+                    ${tender.url ? `<a href="${safeUrl(tender.url)}" target="_blank" class="origin-link">원본</a>` : '-'}
                 </td>
             </tr>`;
     };
@@ -950,9 +939,9 @@ function displayActiveFilters(filters) {
                 const groupTexts = orGroups.map(group => {
                     if (group.includes('+')) {
                         const andKeywords = group.split('+').map(k => k.trim()).filter(k => k);
-                        return '(' + andKeywords.join(' <strong>그리고</strong> ') + ')';
+                        return '(' + andKeywords.map(safeHtml).join(' <strong>그리고</strong> ') + ')';
                     } else {
-                        return group;
+                        return safeHtml(group);
                     }
                 });
                 const keywordText = groupTexts.join(' <strong>또는</strong> ');
@@ -974,7 +963,7 @@ function displayActiveFilters(filters) {
         if (filters.excludeKeywords) {
             const keywords = filters.excludeKeywords.split(',').map(k => k.trim()).filter(k => k);
             if (keywords.length > 0) {
-                const keywordText = keywords.join(', ');
+                const keywordText = keywords.map(safeHtml).join(', ');
                 html += `
                     <span class="inline-flex items-center gap-1 px-3 py-1 bg-red-100 text-red-800 text-sm rounded-full">
                         <span>제외: ${keywordText}</span>
@@ -994,7 +983,7 @@ function displayActiveFilters(filters) {
     if (filters.status) {
         html += `
             <span class="inline-flex items-center gap-1 px-3 py-1 bg-purple-100 text-purple-800 text-sm rounded-full">
-                <span>상태: ${filters.status}</span>
+                <span>상태: ${safeHtml(filters.status)}</span>
                 <button onclick="removeFilter('status', '')" class="hover:bg-purple-200 rounded-full p-0.5">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -1011,7 +1000,7 @@ function displayActiveFilters(filters) {
         const toText = filters.announcedDateTo || '끝';
         html += `
             <span class="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-800 text-sm rounded-full">
-                <span>공고일: ${fromText} ~ ${toText}</span>
+                <span>공고일: ${safeHtml(fromText)} ~ ${safeHtml(toText)}</span>
                 <button onclick="removeFilter('announced-date', '')" class="hover:bg-green-200 rounded-full p-0.5">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -1028,7 +1017,7 @@ function displayActiveFilters(filters) {
         const toText = filters.deadlineDateTo || '끝';
         html += `
             <span class="inline-flex items-center gap-1 px-3 py-1 bg-orange-100 text-orange-800 text-sm rounded-full">
-                <span>마감일: ${fromText} ~ ${toText}</span>
+                <span>마감일: ${safeHtml(fromText)} ~ ${safeHtml(toText)}</span>
                 <button onclick="removeFilter('deadline-date', '')" class="hover:bg-orange-200 rounded-full p-0.5">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -1068,7 +1057,7 @@ function displayActiveFilters(filters) {
         const maxTxt = filters.maxPriceVal !== '' ? `${Number(filters.maxPriceVal).toLocaleString()}만원` : '∞';
         html += `
             <span class="inline-flex items-center gap-1 px-3 py-1 bg-indigo-100 text-indigo-800 text-sm rounded-full">
-                <span>금액: ${minTxt} ~ ${maxTxt}</span>
+                <span>금액: ${safeHtml(minTxt)} ~ ${safeHtml(maxTxt)}</span>
                 <button onclick="removeFilter('amount', '')" class="hover:bg-indigo-200 rounded-full p-0.5">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -1083,7 +1072,7 @@ function displayActiveFilters(filters) {
     if (filters.regions && filters.regions.length > 0) {
         html += `
             <span class="inline-flex items-center gap-1 px-3 py-1 bg-teal-100 text-teal-800 text-sm rounded-full">
-                <span>지역: ${filters.regions.join(', ')}</span>
+                <span>지역: ${safeHtml(filters.regions.join(', '))}</span>
                 <button onclick="removeFilter('regions', '')" class="hover:bg-teal-200 rounded-full p-0.5">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -1098,7 +1087,7 @@ function displayActiveFilters(filters) {
     if (filters.demandAgencyInclude) {
         html += `
             <span class="inline-flex items-center gap-1 px-3 py-1 bg-cyan-100 text-cyan-800 text-sm rounded-full">
-                <span>수요기관: ${filters.demandAgencyInclude}</span>
+                <span>수요기관: ${safeHtml(filters.demandAgencyInclude)}</span>
                 <button onclick="removeFilter('demand-agency-include', '')" class="hover:bg-cyan-200 rounded-full p-0.5">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -1113,7 +1102,7 @@ function displayActiveFilters(filters) {
     if (filters.demandAgencyExclude) {
         html += `
             <span class="inline-flex items-center gap-1 px-3 py-1 bg-rose-100 text-rose-800 text-sm rounded-full">
-                <span>수요기관 제외: ${filters.demandAgencyExclude}</span>
+                <span>수요기관 제외: ${safeHtml(filters.demandAgencyExclude)}</span>
                 <button onclick="removeFilter('demand-agency-exclude', '')" class="hover:bg-rose-200 rounded-full p-0.5">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>

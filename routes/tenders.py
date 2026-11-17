@@ -796,6 +796,13 @@ _REGION_ALIASES: dict = {
 
 _history_cache: dict = {}           # {tender_id: (epoch, result_dict)}
 _HISTORY_CACHE_TTL = 3600           # 1시간
+# '다시 조회'(force)도 이 시간 안에는 캐시를 돌려준다. 조회 한 번이 나라장터 API 를
+# 최대 216회 부르므로(질의 3 × API 2 × 36개월), 버튼을 연달아 누르면 키가 차단된다.
+_HISTORY_FORCE_MIN_INTERVAL = 300
+_HISTORY_CACHE_MAX = 500            # 이보다 많아지면 만료된 항목을 비운다
+# 이력 조회는 한 번에 하나만. 두 사람이 동시에 누르면 호출이 그대로 두 배가 된다.
+import threading as _threading
+_history_lock = _threading.Lock()
 
 
 @bp.route('/api/tenders/<int:tender_id>/history')
@@ -826,13 +833,40 @@ def api_tender_history(tender_id):
     # ── 캐시 확인 (1시간 TTL) ────────────────────────────────────────────────
     _force = request.args.get('force', '0') == '1'
     _now_ts = _time.time()
-    _cached = _history_cache.get(tender_id)
-    if _cached and not _force:
-        _ts, _result = _cached
-        if _now_ts - _ts < _HISTORY_CACHE_TTL:
+    def _from_cache():
+        _c = _history_cache.get(tender_id)
+        if not _c:
+            return None
+        _ts, _result = _c
+        _age = _time.time() - _ts
+        if _age < (_HISTORY_FORCE_MIN_INTERVAL if _force else _HISTORY_CACHE_TTL):
             return jsonify({**_result, 'cached': True})
+        return None
+
+    _hit = _from_cache()
+    if _hit is not None:
+        return _hit
 
     tender = Tender.query.get_or_404(tender_id)
+
+    # 앞선 조회가 끝나기를 기다렸다가, 그 사이 같은 공고가 조회됐으면 그 결과를 쓴다.
+    with _history_lock:
+        _hit = _from_cache()
+        if _hit is not None:
+            return _hit
+        return _tender_history_uncached(tender, tender_id)
+
+
+def _tender_history_uncached(tender, tender_id):
+    """api_tender_history 의 본문 — 캐시에 없을 때 나라장터 API 를 실제로 조회한다."""
+    import requests as _req
+    import re as _re
+    import time as _time
+    from datetime import datetime as _dt
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import calendar as _cal
+    from urllib.parse import unquote as _unquote
+    from settings_manager import settings_manager
 
     _raw_key = settings_manager.get('crawl.sites.g2b_api.service_key', '')
     if not _raw_key:
@@ -1077,9 +1111,16 @@ def api_tender_history(tender_id):
             for bdt, edt in periods
         ]
         for fut in as_completed(futures):
+            if fut.cancelled():
+                continue
             kind, items, err = fut.result()
             if err:
                 if '429' in str(err) or '할당량' in str(err):
+                    if not _quota_exceeded:
+                        # 한도 초과가 확인되면 아직 시작하지 않은 요청을 취소한다.
+                        # 그대로 두면 차단된 키로 남은 요청 수백 건이 모두 나간다.
+                        for _f in futures:
+                            _f.cancel()
                     _quota_exceeded = True
                 errors.append(f'{kind}: {err}')
                 continue
@@ -1310,6 +1351,10 @@ def api_tender_history(tender_id):
         'errors':         list(set(errors))[:5],
         'pblnc_api_ok':   True,
     }
+    if len(_history_cache) >= _HISTORY_CACHE_MAX:
+        _cut = _time.time() - _HISTORY_CACHE_TTL
+        for _k in [k for k, (ts, _) in _history_cache.items() if ts < _cut]:
+            _history_cache.pop(_k, None)
     _history_cache[tender_id] = (_time.time(), _result_data)
 
     return jsonify({

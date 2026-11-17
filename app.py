@@ -47,6 +47,10 @@ app = Flask(__name__)
 app.config.from_object(Config)
 app.secret_key = _load_secret_key()
 app.permanent_session_lifetime = timedelta(days=7)
+# 다른 사이트의 폼·이미지·스크립트가 보내는 요청에는 세션 쿠키를 붙이지 않는다.
+# (링크를 눌러 들어오는 이동에는 붙는다 — 소셜 로그인 콜백이 이 경우다)
+# 브라우저 기본값에 기대지 않고 명시한다.
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # ── 리버스 프록시(Cloudflare 등) 지원 ────────────────────────────────────────
 # Cloudflare Tunnel / nginx 뒤에서 X-Forwarded-Host, X-Forwarded-Proto 헤더를 신뢰
@@ -98,6 +102,33 @@ def _fix_https_scheme():
         if not (request.path.startswith('/api/') or request.path.startswith('/static/')):
             path = request.full_path.rstrip('?')
             return redirect(f'https://{_PUBLIC_HOST}{path}', code=301)
+
+
+@app.before_request
+def _block_cross_site_writes():
+    """
+    다른 사이트에서 보낸 상태 변경 요청을 거부한다 (CSRF 방어).
+
+    로그인한 사람이 다른 사이트를 여는 것만으로, 그 사이트가 이 서버에
+    '공고 전체 삭제' 같은 요청을 그 사람 이름으로 보낼 수 있었다.
+    브라우저는 POST·PUT·DELETE 에 요청을 낸 페이지의 주소(Origin)를 붙인다.
+    그 주소가 이 서버가 아니면 거부한다.
+
+    Origin 이 없는 요청은 통과시킨다. curl·스크립트 같은 브라우저 밖의 호출이고,
+    그런 호출에는 남의 로그인 쿠키가 자동으로 붙지 않는다.
+    """
+    if request.method in ('GET', 'HEAD', 'OPTIONS'):
+        return
+    origin = request.headers.get('Origin')
+    if not origin:
+        if request.headers.get('Sec-Fetch-Site') == 'cross-site':
+            return jsonify({'error': '다른 사이트에서 보낸 요청은 처리하지 않습니다.'}), 403
+        return
+    from urllib.parse import urlsplit
+    origin_host = urlsplit(origin).netloc.lower()
+    if origin_host in (request.host.lower(), _PUBLIC_HOST.lower()):
+        return
+    return jsonify({'error': '다른 사이트에서 보낸 요청은 처리하지 않습니다.'}), 403
 
 
 @app.before_request

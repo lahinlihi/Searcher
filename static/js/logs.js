@@ -38,12 +38,12 @@ async function loadLogs() {
             const failSites = [];
             Object.entries(siteResults).forEach(([site, result]) => {
                 if (result.success) {
-                    successSites.push(`<span class="text-green-600">${site}: ✓ (${result.count || 0}건)</span>`);
+                    successSites.push(`<span class="text-green-600">${safeHtml(site)}: ✓ (${result.count || 0}건)</span>`);
                 } else {
                     const errMsg = (result.errors && result.errors.length > 0)
                         ? result.errors[0]
                         : '원인 불명';
-                    failSites.push(`<span class="text-red-600">${site}: ✗ — ${errMsg}</span>`);
+                    failSites.push(`<span class="text-red-600">${safeHtml(site)}: ✗ — ${safeHtml(errMsg)}</span>`);
                 }
             });
             const siteResultsHtml = successSites.concat(failSites).join(' | ');
@@ -61,7 +61,7 @@ async function loadLogs() {
                             <p><strong>완료 시간:</strong> ${endTime}</p>
                             <p><strong>수집:</strong> ${log.total_found || 0}건 | <strong>새 공고:</strong> ${log.new_tenders || 0}건</p>
                             ${siteResultsHtml ? `<p><strong>사이트 결과:</strong> ${siteResultsHtml}</p>` : ''}
-                            ${log.error_message ? `<p class="text-red-600"><strong>오류:</strong> ${log.error_message}</p>` : ''}
+                            ${log.error_message ? `<p class="text-red-600"><strong>오류:</strong> ${safeHtml(log.error_message)}</p>` : ''}
                         </div>
                     </div>
                 </div>
