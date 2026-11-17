@@ -43,12 +43,6 @@ function switchTab(tab) {
     });
 }
 
-function refreshCurrentTab() {
-    if (currentTab === 'bookmarks') loadBookmarks();
-    else if (currentTab === 'dismissed') loadDismissed();
-    else if (currentTab === 'memos') loadMemos();
-}
-
 async function loadBookmarks() {
     try {
         const res = await fetch('/api/bookmarks');
@@ -301,14 +295,7 @@ async function removeBookmark(tenderId, bookmarkId) {
     } catch (e) { console.error(e); }
 }
 
-function formatPrice(price) {
-    if (price >= 100000000) return (price / 100000000).toFixed(1) + '억원';
-    if (price >= 10000000)  return (price / 10000000).toFixed(1) + '천만원';
-    if (price >= 10000)     return (price / 10000).toFixed(0) + '만원';
-    return price.toLocaleString() + '원';
-}
-
 function escapeHtml(str) {
-    if (!str) return '';
-    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    // 공통 함수(common.js)를 쓴다. 사본마다 바꾸는 글자가 달랐다(따옴표 누락 등).
+    return safeHtml(str);
 }

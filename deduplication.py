@@ -81,40 +81,6 @@ def remove_duplicates(tenders, existing_tender_numbers=None, existing_titles=Non
     return unique_tenders, duplicate_tenders
 
 
-def merge_duplicates(tenders):
-    """
-    중복 공고 병합 (같은 공고의 다른 버전)
-
-    Args:
-        tenders (list): 공고 리스트
-
-    Returns:
-        list: 병합된 공고 리스트
-    """
-    # 공고번호별로 그룹화
-    grouped = {}
-
-    for tender in tenders:
-        tender_number = tender.get('tender_number')
-        if not tender_number:
-            continue
-
-        if tender_number not in grouped:
-            grouped[tender_number] = []
-        grouped[tender_number].append(tender)
-
-    # 각 그룹에서 최신 공고만 유지
-    merged = []
-    for tender_number, group in grouped.items():
-        if len(group) == 1:
-            merged.append(group[0])
-        else:
-            # 가장 최근에 크롤링된 것 선택
-            latest = max(group, key=lambda x: x.get('announced_date', ''))
-            merged.append(latest)
-
-    return merged
-
 
 import re as _re
 

@@ -7,21 +7,14 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
 import json
-import concurrent.futures
 
-from crawlers.sungdonggu_crawler import SungDongGuCrawler
 from crawlers.generic_crawler import GenericCrawler
 from crawlers.g2b_api_crawler import G2BApiCrawler
 from crawlers.g2b_pre_spec_crawler import G2BPreSpecCrawler
-from crawlers.lh_api_crawler import LHApiCrawler
 from crawlers.smb24_api_crawler import SMB24ApiCrawler
 from crawlers.kosmes_crawler import KosmesCrawler
 from crawlers.sbiz24_crawler import Sbiz24Crawler
 from crawlers.rss_crawler import RSSCrawler
-from crawlers.mois_predece_crawler import MOISPredeceCrawler
-from crawlers.kist_bid_crawler import KISTBidCrawler
-from crawlers.kist_notice_crawler import KISTNoticeCrawler
-from crawlers.koica_api_crawler import KOICAApiCrawler
 from deduplication import mark_duplicates_in_db, mark_nia_procurement_duplicates
 from database import db, Tender, CrawlLog
 from settings_manager import settings_manager
@@ -32,12 +25,7 @@ from settings_manager import settings_manager
 SUPPORTED_CRAWLER_TYPES = {
     'api',          # G2BApiCrawler
     'pre_spec',     # G2BPreSpecCrawler
-    'lh_api',       # LHApiCrawler
     'smb24_api',    # SMB24ApiCrawler
-    'mois_predece', # MOISPredeceCrawler
-    'kist_bid',     # KISTBidCrawler
-    'kist_notice',  # KISTNoticeCrawler
-    'koica_api',    # KOICAApiCrawler
     'kosmes',       # KosmesCrawler
     'sbiz24',       # Sbiz24Crawler
     'rss',          # RSSCrawler
@@ -422,6 +410,10 @@ class CrawlScheduler:
                               f"API {api_c}회)")
                     else:
                         print("[HR뉴스] 입찰동향 분류 대상 없음")
+                    # 메일용 입찰동향을 미리 계산해 저장한다 (발송 화면이 바로 뜨도록)
+                    snap = tb.build_section_cached(conn, force=True)
+                    print(f"[HR뉴스] 메일용 입찰동향 저장 {len(snap['items'])}건"
+                          + (" (임베딩 미준비 — 저장 생략)" if snap.get('degraded') else ""))
                 except Exception as e:
                     print(f"[HR뉴스] 입찰동향 분류 실패: {type(e).__name__}: {e}")
                     self._hr_notes.append(f'입찰동향 분류 실패: {type(e).__name__}: {e}')
@@ -762,6 +754,191 @@ class CrawlScheduler:
                 except Exception as e:
                     print(f"[{site_name}] 드라이버 종료 실패 (무시): {e}")
 
+    def _enabled_crawlers(self, sites_config):
+        """설정에서 켜져 있는 사이트의 크롤러만 (등록 순서 유지)."""
+        out = {}
+        for site_name, crawler in self.crawlers.items():
+            if sites_config.get(site_name, {}).get('enabled', True):
+                out[site_name] = crawler
+            else:
+                print(f"[{site_name}] 설정에서 비활성화됨 - 건너뜀")
+        return out
+
+    def _crawl_and_save(self, crawlers_to_run, crawl_log, label):
+        """
+        사이트 순회 → 중복 제거 → 저장 → 로그 갱신 → 후처리.
+
+        예약 크롤(_run_crawl_job_locked)과 수동 크롤(_run_manual_crawl_locked)이 함께 쓴다.
+        이 본문은 두 함수에 170줄씩 복사돼 있었고, 한쪽만 고쳐진 채 어긋나 있었다
+        (묵은 Selenium 드라이버 정리가 예약 쪽에만 있었다). 고칠 곳을 한 군데로 둔다.
+        앱 컨텍스트 안에서, 크롤 잠금을 잡은 상태로 불러야 한다.
+        """
+        all_tenders = []
+        site_results = {}
+
+        # Selenium 드라이버를 매 크롤 실행 전 초기화
+        # — 이전 실행에서 열어둔 드라이버가 오래 유지되면(16시간 등) stale 상태가 되어
+        #   driver.get()에서 무한대기가 발생함. 실행마다 새 드라이버를 사용해 방지.
+        for crawler in self.crawlers.values():
+            if hasattr(crawler, '_close_selenium_driver'):
+                crawler._close_selenium_driver()
+
+        # 진행률 초기화
+        self._sites_done = 0
+        self._sites_total = len(crawlers_to_run)
+
+        # 각 사이트 크롤링 (사이트당 최대 120초 — 진단용 타임아웃)
+        for site_name, crawler in crawlers_to_run.items():
+            # 강제 중지 신호 확인
+            if self._stop_event.is_set():
+                print(f"[{label}] 중지 신호 수신 — 나머지 크롤러를 건너뜁니다.")
+                break
+
+            self._current_site = site_name
+            self._current_site_started_at = datetime.now()
+
+            try:
+                print(f"[{site_name}] 크롤링 시작...")
+                result, status = self._run_crawler_with_timeout(site_name, crawler)
+                site_elapsed = int((datetime.now() - self._current_site_started_at).total_seconds())
+
+                site_results[site_name] = {
+                    'success': result['success'],
+                    'count': result['count'],
+                    'errors': result.get('errors', [])[:3],
+                    'elapsed_sec': site_elapsed,
+                }
+                self._sites_done += 1
+
+                if status == 'stopped':
+                    break
+                if status == 'timeout':
+                    continue
+
+                # 데이터가 있으면 오류가 있어도 저장 (부분 수집 허용)
+                if result['data']:
+                    all_tenders.extend(result['data'])
+                if not result['success']:
+                    print(f"[{site_name}] 경고 (부분 수집): {result['errors']}")
+
+            except Exception as e:
+                print(f"[{site_name}] 크롤링 실패: {str(e)}")
+                site_results[site_name] = {
+                    'success': False,
+                    'count': 0,
+                    'errors': [str(e)],
+                }
+
+        # 끝까지 돈 사이트의 브라우저를 닫는다 (다음 크롤까지 띄워 두지 않는다)
+        self._close_finished_drivers(site_results)
+
+        # 중복 제거
+        unique_tenders, duplicate_count = mark_duplicates_in_db(
+            self.app, all_tenders)
+
+        # DB에 저장 (신규 INSERT + 기존 UPDATE)
+        new_count = 0
+        update_count = 0
+        all_by_number = {t['tender_number']: t for t in all_tenders if t.get('tender_number')}
+        unique_numbers = {t['tender_number'] for t in unique_tenders if t.get('tender_number')}
+
+        # 1) 신규 공고 INSERT
+        for tender_data in unique_tenders:
+            tender = Tender(
+                title=tender_data['title'],
+                agency=tender_data['agency'],
+                demand_agency=tender_data.get('demand_agency'),
+                tender_number=tender_data['tender_number'],
+                announced_date=tender_data.get('announced_date'),
+                deadline_date=tender_data.get('deadline_date'),
+                opening_date=tender_data.get('opening_date'),
+                estimated_price=tender_data.get('estimated_price'),
+                bid_method=tender_data.get('bid_method'),
+                status=tender_data.get('status', '일반'),
+                is_sme_only=tender_data.get('is_sme_only', False),
+                source_site=tender_data['source_site'],
+                url=tender_data.get('url'),
+                is_duplicate=tender_data.get('is_duplicate', False),
+                extra_data=tender_data.get('extra_data'),
+                business_number=tender_data.get('business_number'),
+            )
+            db.session.add(tender)
+            new_count += 1
+
+        # 2) 기존 공고 UPDATE — 주요 필드 갱신 (extra_data 유무와 무관하게 적용)
+        update_numbers = [num for num, td in all_by_number.items()
+                           if num not in unique_numbers]
+        if update_numbers:
+            existing_records = Tender.query.filter(
+                Tender.tender_number.in_(update_numbers)).all()
+            existing_map = {t.tender_number: t for t in existing_records}
+            for num in update_numbers:
+                td = all_by_number[num]
+                ex = existing_map.get(num)
+                if not ex:
+                    continue
+                changed = False
+                if not ex.extra_data and td.get('extra_data'):
+                    ex.extra_data = td['extra_data']
+                    changed = True
+                if td.get('deadline_date') and ex.deadline_date != td['deadline_date']:
+                    ex.deadline_date = td['deadline_date']
+                    changed = True
+                if td.get('opening_date') and ex.opening_date != td['opening_date']:
+                    ex.opening_date = td['opening_date']
+                    changed = True
+                if td.get('status') and ex.status != td['status']:
+                    ex.status = td['status']
+                    changed = True
+                if td.get('url') and not ex.url:
+                    ex.url = td['url']
+                    changed = True
+                if td.get('business_number') and not ex.business_number:
+                    ex.business_number = td['business_number']
+                    changed = True
+                if td.get('agency') and ex.agency != td['agency']:
+                    ex.agency = td['agency']
+                    changed = True
+                if changed:
+                    update_count += 1
+
+        db.session.commit()
+
+        # 크롤링 로그 업데이트
+        crawl_log.completed_at = datetime.now()
+        crawl_log.total_found = len(all_tenders)
+        crawl_log.new_tenders = new_count
+        crawl_log.site_results = json.dumps(
+            site_results, ensure_ascii=False)
+        crawl_log.status = 'stopped' if self._stop_event.is_set() else 'completed'
+        db.session.commit()
+
+        if self._stop_event.is_set():
+            print(f"[{label}] 크롤링 강제 중지됨")
+        else:
+            print(f"[{label}] 크롤링 완료")
+        print(f"  - 총 수집: {len(all_tenders)}건")
+        print(f"  - 새 공고: {new_count}건")
+        print(f"  - 업데이트: {update_count}건")
+        print(f"  - 중복 제거: {duplicate_count}건")
+
+        # 크롤링 후 smb24 기관명 보정
+        self._fix_smb24_agencies()
+
+        # NIA [조달입찰공고] 중 나라장터 동명 공고가 있으면 중복 처리
+        nia_dup_count = mark_nia_procurement_duplicates(self.app)
+        if nia_dup_count:
+            print(f"  - NIA 조달입찰공고 중복처리: {nia_dup_count}건")
+
+        return {
+            'total_found': len(all_tenders),
+            'new_tenders': new_count,
+            'updated_tenders': update_count,
+            'duplicate_count': duplicate_count,
+            'site_results': site_results,
+        }
+
+
     def _run_crawl_job_locked(self):
         """
         크롤링 작업 실행
@@ -787,176 +964,14 @@ class CrawlScheduler:
             db.session.commit()
 
             try:
-                all_tenders = []
-                site_results = {}
 
                 # 설정에서 활성화된 사이트만 크롤링
                 sites_config = settings_manager.get('crawl.sites_config', {})
                 if not sites_config:
                     sites_config = settings_manager.get('crawl.sites', {})
 
-                # Selenium 드라이버를 매 크롤 실행 전 초기화
-                # — 이전 실행에서 열어둔 드라이버가 오래 유지되면(16시간 등) stale 상태가 되어
-                #   driver.get()에서 무한대기가 발생함. 실행마다 새 드라이버를 사용해 방지.
-                for crawler in self.crawlers.values():
-                    if hasattr(crawler, '_close_selenium_driver'):
-                        crawler._close_selenium_driver()
-
-                # 진행률 초기화 (비활성화 사이트 제외한 실제 실행 대상 수 기준)
-                self._sites_done = 0
-                self._sites_total = sum(
-                    1 for s in self.crawlers
-                    if sites_config.get(s, {}).get('enabled', True)
-                )
-
-                # 각 사이트 크롤링 (사이트당 최대 120초 — 진단용 타임아웃)
-                for site_name, crawler in self.crawlers.items():
-                    # 강제 중지 신호 확인
-                    if self._stop_event.is_set():
-                        print("[스케줄러] 중지 신호 수신 — 나머지 크롤러를 건너뜁니다.")
-                        break
-
-                    # 설정에서 비활성화된 사이트는 건너뛰기
-                    site_info = sites_config.get(site_name, {})
-                    if not site_info.get('enabled', True):
-                        print(f"[{site_name}] 설정에서 비활성화됨 - 건너뜀")
-                        continue
-
-                    self._current_site = site_name
-                    self._current_site_started_at = datetime.now()
-
-                    try:
-                        print(f"[{site_name}] 크롤링 시작...")
-                        result, status = self._run_crawler_with_timeout(site_name, crawler)
-                        site_elapsed = int((datetime.now() - self._current_site_started_at).total_seconds())
-
-                        site_results[site_name] = {
-                            'success': result['success'],
-                            'count': result['count'],
-                            'errors': result.get('errors', [])[:3],
-                            'elapsed_sec': site_elapsed,
-                        }
-                        self._sites_done += 1
-
-                        if status == 'stopped':
-                            break
-                        if status == 'timeout':
-                            continue
-
-                        # 데이터가 있으면 오류가 있어도 저장 (부분 수집 허용)
-                        if result['data']:
-                            all_tenders.extend(result['data'])
-                        if not result['success']:
-                            print(f"[{site_name}] 경고 (부분 수집): {result['errors']}")
-
-                    except Exception as e:
-                        print(f"[{site_name}] 크롤링 실패: {str(e)}")
-                        site_results[site_name] = {
-                            'success': False,
-                            'count': 0,
-                            'errors': [str(e)],
-                        }
-
-                # 끝까지 돈 사이트의 브라우저를 닫는다 (다음 크롤까지 띄워 두지 않는다)
-                self._close_finished_drivers(site_results)
-
-                # 중복 제거
-                unique_tenders, duplicate_count = mark_duplicates_in_db(
-                    self.app, all_tenders)
-
-                # DB에 저장 (신규 INSERT + 기존 UPDATE)
-                new_count = 0
-                update_count = 0
-                all_by_number = {t['tender_number']: t for t in all_tenders if t.get('tender_number')}
-                unique_numbers = {t['tender_number'] for t in unique_tenders if t.get('tender_number')}
-
-                # 1) 신규 공고 INSERT
-                for tender_data in unique_tenders:
-                    tender = Tender(
-                        title=tender_data['title'],
-                        agency=tender_data['agency'],
-                        demand_agency=tender_data.get('demand_agency'),
-                        tender_number=tender_data['tender_number'],
-                        announced_date=tender_data.get('announced_date'),
-                        deadline_date=tender_data.get('deadline_date'),
-                        opening_date=tender_data.get('opening_date'),
-                        estimated_price=tender_data.get('estimated_price'),
-                        bid_method=tender_data.get('bid_method'),
-                        status=tender_data.get('status', '일반'),
-                        is_sme_only=tender_data.get('is_sme_only', False),
-                        source_site=tender_data['source_site'],
-                        url=tender_data.get('url'),
-                        is_duplicate=tender_data.get('is_duplicate', False),
-                        extra_data=tender_data.get('extra_data'),
-                        business_number=tender_data.get('business_number'),
-                    )
-                    db.session.add(tender)
-                    new_count += 1
-
-                # 2) 기존 공고 UPDATE — 주요 필드 갱신 (extra_data 유무와 무관하게 적용)
-                update_numbers = [num for num, td in all_by_number.items()
-                                   if num not in unique_numbers]
-                if update_numbers:
-                    existing_records = Tender.query.filter(
-                        Tender.tender_number.in_(update_numbers)).all()
-                    existing_map = {t.tender_number: t for t in existing_records}
-                    for num in update_numbers:
-                        td = all_by_number[num]
-                        ex = existing_map.get(num)
-                        if not ex:
-                            continue
-                        changed = False
-                        if not ex.extra_data and td.get('extra_data'):
-                            ex.extra_data = td['extra_data']
-                            changed = True
-                        if td.get('deadline_date') and ex.deadline_date != td['deadline_date']:
-                            ex.deadline_date = td['deadline_date']
-                            changed = True
-                        if td.get('opening_date') and ex.opening_date != td['opening_date']:
-                            ex.opening_date = td['opening_date']
-                            changed = True
-                        if td.get('status') and ex.status != td['status']:
-                            ex.status = td['status']
-                            changed = True
-                        if td.get('url') and not ex.url:
-                            ex.url = td['url']
-                            changed = True
-                        if td.get('business_number') and not ex.business_number:
-                            ex.business_number = td['business_number']
-                            changed = True
-                        if td.get('agency') and ex.agency != td['agency']:
-                            ex.agency = td['agency']
-                            changed = True
-                        if changed:
-                            update_count += 1
-
-                db.session.commit()
-
-                # 크롤링 로그 업데이트
-                crawl_log.completed_at = datetime.now()
-                crawl_log.total_found = len(all_tenders)
-                crawl_log.new_tenders = new_count
-                crawl_log.site_results = json.dumps(
-                    site_results, ensure_ascii=False)
-                crawl_log.status = 'stopped' if self._stop_event.is_set() else 'completed'
-                db.session.commit()
-
-                if self._stop_event.is_set():
-                    print("[스케줄러] 크롤링 강제 중지됨")
-                else:
-                    print("[스케줄러] 크롤링 완료")
-                print(f"  - 총 수집: {len(all_tenders)}건")
-                print(f"  - 새 공고: {new_count}건")
-                print(f"  - 업데이트: {update_count}건")
-                print(f"  - 중복 제거: {duplicate_count}건")
-
-                # 크롤링 후 smb24 기관명 보정 (agency 없는 건 bizinfo 스크래핑)
-                self._fix_smb24_agencies()
-
-                # NIA [조달입찰공고] 중 나라장터 동명 공고가 있으면 중복 처리
-                nia_dup_count = mark_nia_procurement_duplicates(self.app)
-                if nia_dup_count:
-                    print(f"  - NIA 조달입찰공고 중복처리: {nia_dup_count}건")
+                crawlers_to_run = self._enabled_crawlers(sites_config)
+                self._crawl_and_save(crawlers_to_run, crawl_log, '스케줄러')
 
                 # 크롤링 후 코드 변경사항 자동 push (data/는 .gitignore 제외)
                 self._git_push()
@@ -997,20 +1012,11 @@ class CrawlScheduler:
             db.session.commit()
 
             try:
-                all_tenders = []
-                site_results = {}
 
                 # 설정에서 활성화된 사이트 가져오기
                 sites_config = settings_manager.get('crawl.sites_config', {})
                 if not sites_config:
                     sites_config = settings_manager.get('crawl.sites', {})
-
-                # 예약 크롤과 같은 이유로, 시작 전에 묵은 Selenium 드라이버를 정리한다.
-                # 이 처리가 예약 쪽에만 있어서, 수동 크롤은 몇 시간 전 드라이버를
-                # 그대로 써 driver.get() 에서 멈출 수 있었다.
-                for crawler in self.crawlers.values():
-                    if hasattr(crawler, '_close_selenium_driver'):
-                        crawler._close_selenium_driver()
 
                 # 크롤링할 사이트 결정
                 crawlers_to_run = {}
@@ -1026,161 +1032,8 @@ class CrawlScheduler:
                         if site_info.get('enabled', True):
                             crawlers_to_run[site_name] = crawler
 
-                # 진행률 초기화
-                self._sites_done = 0
-                self._sites_total = len(crawlers_to_run)
-
-                # 각 사이트 크롤링 (사이트당 최대 120초 — 진단용 타임아웃)
-                for site_name, crawler in crawlers_to_run.items():
-                    # 강제 중지 신호 확인
-                    if self._stop_event.is_set():
-                        print("[수동 크롤링] 중지 신호 수신 — 나머지 크롤러를 건너뜁니다.")
-                        break
-
-                    self._current_site = site_name
-                    self._current_site_started_at = datetime.now()
-
-                    try:
-                        print(f"[{site_name}] 크롤링 시작...")
-                        result, status = self._run_crawler_with_timeout(site_name, crawler)
-                        site_elapsed = int((datetime.now() - self._current_site_started_at).total_seconds())
-
-                        site_results[site_name] = {
-                            'success': result['success'],
-                            'count': result['count'],
-                            'errors': result.get('errors', [])[:3],
-                            'elapsed_sec': site_elapsed,
-                        }
-                        self._sites_done += 1
-
-                        if status == 'stopped':
-                            break
-                        if status == 'timeout':
-                            continue
-
-                        # 데이터가 있으면 오류가 있어도 저장 (부분 수집 허용)
-                        if result['data']:
-                            all_tenders.extend(result['data'])
-                        if not result['success']:
-                            print(f"[{site_name}] 경고 (부분 수집): {result['errors']}")
-
-                    except Exception as e:
-                        print(f"[{site_name}] 크롤링 실패: {str(e)}")
-                        site_results[site_name] = {
-                            'success': False,
-                            'count': 0,
-                            'errors': [str(e)],
-                        }
-
-                # 끝까지 돈 사이트의 브라우저를 닫는다 (다음 크롤까지 띄워 두지 않는다)
-                self._close_finished_drivers(site_results)
-
-                # 중복 제거
-                unique_tenders, duplicate_count = mark_duplicates_in_db(
-                    self.app, all_tenders)
-
-                # DB에 저장 (신규 INSERT + 기존 UPDATE)
-                new_count = 0
-                update_count = 0
-                all_by_number = {t['tender_number']: t for t in all_tenders if t.get('tender_number')}
-                unique_numbers = {t['tender_number'] for t in unique_tenders if t.get('tender_number')}
-
-                # 1) 신규 공고 INSERT
-                for tender_data in unique_tenders:
-                    tender = Tender(
-                        title=tender_data['title'],
-                        agency=tender_data['agency'],
-                        demand_agency=tender_data.get('demand_agency'),
-                        tender_number=tender_data['tender_number'],
-                        announced_date=tender_data.get('announced_date'),
-                        deadline_date=tender_data.get('deadline_date'),
-                        opening_date=tender_data.get('opening_date'),
-                        estimated_price=tender_data.get('estimated_price'),
-                        bid_method=tender_data.get('bid_method'),
-                        status=tender_data.get('status', '일반'),
-                        is_sme_only=tender_data.get('is_sme_only', False),
-                        source_site=tender_data['source_site'],
-                        url=tender_data.get('url'),
-                        is_duplicate=tender_data.get('is_duplicate', False),
-                        extra_data=tender_data.get('extra_data'),
-                        business_number=tender_data.get('business_number'),
-                    )
-                    db.session.add(tender)
-                    new_count += 1
-
-                # 2) 기존 공고 UPDATE — 주요 필드 갱신 (extra_data 유무와 무관하게 적용)
-                update_numbers = [num for num, td in all_by_number.items()
-                                   if num not in unique_numbers]
-                if update_numbers:
-                    existing_records = Tender.query.filter(
-                        Tender.tender_number.in_(update_numbers)).all()
-                    existing_map = {t.tender_number: t for t in existing_records}
-                    for num in update_numbers:
-                        td = all_by_number[num]
-                        ex = existing_map.get(num)
-                        if not ex:
-                            continue
-                        changed = False
-                        if not ex.extra_data and td.get('extra_data'):
-                            ex.extra_data = td['extra_data']
-                            changed = True
-                        if td.get('deadline_date') and ex.deadline_date != td['deadline_date']:
-                            ex.deadline_date = td['deadline_date']
-                            changed = True
-                        if td.get('opening_date') and ex.opening_date != td['opening_date']:
-                            ex.opening_date = td['opening_date']
-                            changed = True
-                        if td.get('status') and ex.status != td['status']:
-                            ex.status = td['status']
-                            changed = True
-                        if td.get('url') and not ex.url:
-                            ex.url = td['url']
-                            changed = True
-                        if td.get('business_number') and not ex.business_number:
-                            ex.business_number = td['business_number']
-                            changed = True
-                        if td.get('agency') and ex.agency != td['agency']:
-                            ex.agency = td['agency']
-                            changed = True
-                        if changed:
-                            update_count += 1
-
-                db.session.commit()
-
-                # 크롤링 로그 업데이트
-                crawl_log.completed_at = datetime.now()
-                crawl_log.total_found = len(all_tenders)
-                crawl_log.new_tenders = new_count
-                crawl_log.site_results = json.dumps(
-                    site_results, ensure_ascii=False)
-                crawl_log.status = 'stopped' if self._stop_event.is_set() else 'completed'
-                db.session.commit()
-
-                if self._stop_event.is_set():
-                    print("[수동 크롤링] 강제 중지됨")
-                else:
-                    print("[수동 크롤링] 완료")
-                print(f"  - 총 수집: {len(all_tenders)}건")
-                print(f"  - 새 공고: {new_count}건")
-                print(f"  - 업데이트: {update_count}건")
-                print(f"  - 중복 제거: {duplicate_count}건")
-
-                # 크롤링 후 smb24 기관명 보정
-                self._fix_smb24_agencies()
-
-                # NIA [조달입찰공고] 중 나라장터 동명 공고가 있으면 중복 처리
-                nia_dup_count = mark_nia_procurement_duplicates(self.app)
-                if nia_dup_count:
-                    print(f"  - NIA 조달입찰공고 중복처리: {nia_dup_count}건")
-
-                return {
-                    'success': True,
-                    'total_found': len(all_tenders),
-                    'new_tenders': new_count,
-                    'updated_tenders': update_count,
-                    'duplicate_count': duplicate_count,
-                    'site_results': site_results
-                }
+                summary = self._crawl_and_save(crawlers_to_run, crawl_log, '수동 크롤링')
+                return {'success': True, **summary}
 
             except Exception as e:
                 self._mark_crawl_failed(crawl_log, e)
@@ -1228,11 +1081,6 @@ class CrawlScheduler:
                             site_info.get('name', site_id), site_info)
                         self.crawlers[site_id] = crawler
                         print(f"[스케줄러] {site_id}: 사전규격 API 크롤러 생성")
-                    elif crawler_type == 'lh_api':
-                        # LH API 크롤러
-                        crawler = LHApiCrawler(site_info)
-                        self.crawlers[site_id] = crawler
-                        print(f"[스케줄러] {site_id}: LH API 크롤러 생성")
                     elif crawler_type == 'smb24_api':
                         # 중소벤처 24 API 크롤러
                         crawler = SMB24ApiCrawler(site_info)
@@ -1243,26 +1091,6 @@ class CrawlScheduler:
                         crawler = RSSCrawler(site_info.get('name', site_id), site_info)
                         self.crawlers[site_id] = crawler
                         print(f"[스케줄러] {site_id}: RSS 크롤러 생성")
-                    elif crawler_type == 'mois_predece':
-                        # 행정안전부 대통령공고 크롤러
-                        crawler = MOISPredeceCrawler(site_info)
-                        self.crawlers[site_id] = crawler
-                        print(f"[스케줄러] {site_id}: 행정안전부 대통령공고 크롤러 생성")
-                    elif crawler_type == 'kist_bid':
-                        # KIST 입찰정보 API 크롤러 (내부망 전용)
-                        crawler = KISTBidCrawler(site_info)
-                        self.crawlers[site_id] = crawler
-                        print(f"[스케줄러] {site_id}: KIST 입찰정보 API 크롤러 생성")
-                    elif crawler_type == 'kist_notice':
-                        # KIST 일반공지 크롤러
-                        crawler = KISTNoticeCrawler(site_info)
-                        self.crawlers[site_id] = crawler
-                        print(f"[스케줄러] {site_id}: KIST 일반공지 크롤러 생성")
-                    elif crawler_type == 'koica_api':
-                        # KOICA 조달정보 API 크롤러
-                        crawler = KOICAApiCrawler(site_info)
-                        self.crawlers[site_id] = crawler
-                        print(f"[스케줄러] {site_id}: KOICA 조달정보 API 크롤러 생성")
                     elif crawler_type == 'kosmes':
                         # 중소벤처기업진흥공단 크롤러
                         crawler = KosmesCrawler(site_info)

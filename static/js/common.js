@@ -50,3 +50,42 @@ function highlightSafe(text, keywords, markClass) {
     }
     return out + safeHtml(s.slice(last));
 }
+
+// ── 공고 표시 공통 ─────────────────────────────────────────────────────────
+// 아래 셋은 dashboard.js · search.js · bookmarks.js 에 같은 내용으로 복사돼 있던 것이다.
+// 한 군데만 고치고 다른 사본을 잊는 일이 없도록 여기 하나만 둔다.
+
+// 제목의 [긴급]·[재공고] 표시를 배지 HTML 로 만든다 (우리가 만든 고정 HTML, 이스케이프 불필요)
+function getNoticeBadgesHtml(title) {
+    const t = title || '';
+    let html = '';
+    if (/\[긴급공고\]|\(긴급공고\)|\[긴급\]|\(긴급\)/.test(t)) {
+        html += '<span style="display:inline-flex;align-items:center;border-radius:9999px;padding:1px 8px;font-size:0.7rem;font-weight:700;background:#FEE2E2;color:#B91C1C;border:1px solid #FCA5A5;white-space:nowrap;margin-right:3px;">긴급</span>';
+    }
+    if (/\[재공고\]|\(재공고\)/.test(t)) {
+        html += '<span style="display:inline-flex;align-items:center;border-radius:9999px;padding:1px 8px;font-size:0.7rem;font-weight:700;background:#FFEDD5;color:#C2410C;border:1px solid #FDBA74;white-space:nowrap;margin-right:3px;">재공고</span>';
+    }
+    return html;
+}
+
+// 제목에서 [긴급]·[재공고] 표시를 뗀다 (배지로 따로 보여 주므로)
+function cleanNoticeTitle(title) {
+    return (title || '')
+        .replace(/\[긴급공고\]/g, '').replace(/\(긴급공고\)/g, '')
+        .replace(/\[긴급\]/g, '').replace(/\(긴급\)/g, '')
+        .replace(/\[재공고\]/g, '').replace(/\(재공고\)/g, '')
+        .trim();
+}
+
+// 금액을 억원/천만원/만원 단위로. (공고 검토 화면은 'N억 M만원' 형식의 자체 함수를 쓴다)
+function formatPrice(price) {
+    if (price >= 100000000) {
+        return (price / 100000000).toFixed(1) + '억원';
+    } else if (price >= 10000000) {
+        return (price / 10000000).toFixed(1) + '천만원';
+    } else if (price >= 10000) {
+        return (price / 10000).toFixed(0) + '만원';
+    } else {
+        return price.toLocaleString() + '원';
+    }
+}

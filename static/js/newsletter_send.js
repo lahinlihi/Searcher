@@ -11,8 +11,8 @@ let RUN_DATE = null;
 let STATUS = null;
 
 function esc(s) {
-    return String(s ?? '').replace(/[&<>"]/g, c =>
-        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    // 공통 함수(common.js)를 쓴다. 사본마다 바꾸는 글자가 달랐다(따옴표 누락 등).
+    return safeHtml(s);
 }
 
 let toastTimer;
@@ -64,7 +64,8 @@ function renderStatus(s) {
     document.getElementById('checklist').innerHTML =
         tile('실리는 시사점', `${approved}건`, approved > 0) +
         tile('아직 검토 대기', `${pending}건`, pending ? null : true) +
-        tile('입찰공고', `${s.tenders}건`, null) +
+        tile('입찰공고', `${s.tenders}건`
+            + (s.tenders_computed_at ? ` · ${s.tenders_computed_at.slice(11, 16)} 기준` : ''), null) +
         tile('받는 사람', `${s.subscribers.length}명`, s.subscribers.length > 0);
 
     document.getElementById('subject-box').innerHTML = `
@@ -207,6 +208,23 @@ async function sendReal() {
         loadStatus().catch(() => {});      // 그 사이 다른 사람이 보냈을 수 있다
     } finally {
         btn.textContent = '구독자에게 발송';
+    }
+}
+
+// 메일용 입찰동향은 저장해 둔 목록을 쓴다(크롤이 끝나면 자동으로 다시 계산).
+// 지금 다시 계산하고 싶을 때 누른다.
+async function refreshTenders() {
+    const btn = document.getElementById('btn-refresh-tenders');
+    if (btn) { btn.disabled = true; btn.textContent = '계산 중...'; }
+    try {
+        const r = await api('/api/newsletter/tenders/refresh', { method: 'POST' });
+        toast(`입찰동향 ${r.items}건을 다시 계산했습니다.`
+            + (r.degraded ? ' (임베딩 모델 준비 전이라 저장하지 않았습니다)' : ''));
+        await loadStatus();
+    } catch (e) {
+        toast(e.message, true);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '입찰동향 다시 계산'; }
     }
 }
 

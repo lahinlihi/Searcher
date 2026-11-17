@@ -267,7 +267,8 @@ def build(conn, run_date=None, statuses=('approved',)):
     tenders = None
     try:
         import tender_brief
-        tb = tender_brief.build_section(conn)
+        # 저장본을 쓴다 — 미리보기·테스트 발송·정식 발송이 같은 목록을 싣는다
+        tb = tender_brief.build_section_cached(conn)
         if tb['items']:
             tenders = tb
     except Exception as e:

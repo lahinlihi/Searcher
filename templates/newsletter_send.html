@@ -36,6 +36,11 @@
       <div id="blockers"></div>
       <div id="checklist" class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-xs"></div>
       <div id="subject-box" class="text-xs text-gray-600 border-t pt-2"></div>
+      <div class="text-xs text-gray-500">
+        입찰동향은 저장해 둔 목록을 싣습니다. 크롤이 끝나면 자동으로 다시 계산됩니다.
+        <button id="btn-refresh-tenders" type="button" onclick="refreshTenders()"
+                class="ml-1 underline text-blue-600">입찰동향 다시 계산</button>
+      </div>
       <div id="sent-warn"></div>
     </div>
   </div>

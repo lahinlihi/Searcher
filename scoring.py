@@ -525,58 +525,6 @@ def _detect_business_type(title):
     return '기타', 0
 
 
-def _priority_score(tender):
-    """
-    시간·규모 우선순위 점수 (최대 10.0점)
-
-    ① 마감 긴급도 (0-7점) — 전체 공고 유형에 적용
-       - 0-6일:  7.0 → 4.0  (0.5점/일, 긴급)
-       - 7-14일: 3.5 → 1.75 (0.25점/일, 주의)
-       - 15일+:  1.7 → 0.5  (0.05점/일, 여유)
-       - 마감 미정: 3.5점 (중간값)
-       - 마감 경과: 0.0점
-
-    ② 사업 규모 보너스 (0-3점) — 사전규격 동점 차별화에 핵심
-       10억+ → 3.0 / 5억+ → 2.5 / 1억+ → 2.0 /
-       5천만+ → 1.5 / 1천만+ → 1.0 / 그 이하 → 0.5
-    """
-    # ① 긴급도
-    days_left = None
-    if tender.deadline_date:
-        days_left = (tender.deadline_date - datetime.now()).days
-
-    if days_left is None:
-        urgency = 3.5
-    elif days_left < 0:
-        urgency = 0.0
-    else:
-        d = int(days_left)
-        if d <= 6:
-            urgency = 7.0 - d * 0.5                        # 7.0 → 4.0
-        elif d <= 14:
-            urgency = 3.5 - (d - 7) * 0.25                 # 3.5 → 1.75
-        else:
-            urgency = max(0.5, 1.75 - (d - 14) * 0.05)    # 1.7 → 0.5
-
-    # ② 규모 보너스
-    price = tender.estimated_price or 0
-    if price >= 1_000_000_000:
-        price_bonus = 3.0
-    elif price >= 500_000_000:
-        price_bonus = 2.5
-    elif price >= 100_000_000:
-        price_bonus = 2.0
-    elif price >= 50_000_000:
-        price_bonus = 1.5
-    elif price >= 10_000_000:
-        price_bonus = 1.0
-    elif price > 0:
-        price_bonus = 0.5
-    else:
-        price_bonus = 0.0
-
-    return min(10.0, round(urgency + price_bonus, 2))
-
 
 def _score_and_type(tender, include_keywords, type_weights=None, agency_weights=None, core_keywords=None, embed_sim=None):
     """

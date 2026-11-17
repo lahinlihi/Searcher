@@ -14,8 +14,8 @@ let KW = { in: [], ex: [] };
 let CLASSES = [];
 
 function esc(s) {
-    return String(s ?? '').replace(/[&<>"]/g, c =>
-        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    // 공통 함수(common.js)를 쓴다. 사본마다 바꾸는 글자가 달랐다(따옴표 누락 등).
+    return safeHtml(s);
 }
 
 let toastTimer;

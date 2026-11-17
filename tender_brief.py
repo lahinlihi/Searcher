@@ -21,6 +21,7 @@
 """
 import argparse
 import json
+import sqlite3
 import os
 import sys
 import time
@@ -191,6 +192,7 @@ def save_preset(conn, config, changed_by=None):
         'UPDATE brief_presets SET config=?, updated_by=?, updated_at=? WHERE id=?',
         (json.dumps(merged, ensure_ascii=False), changed_by, now, cur['id']))
     conn.commit()
+    invalidate_snapshot(conn)      # 조건이 바뀌었으므로 저장해 둔 메일용 목록을 버린다
     return get_preset(conn)
 
 
@@ -433,6 +435,7 @@ def classify(conn, rows, batch=40, api_key=None, quiet=False):
         if not quiet:
             print(f'  배치 {i // batch + 1}: {len(chunk)}건 → 저장 {saved} ({model})')
         time.sleep(0.5)
+    invalidate_snapshot(conn)      # 분류가 바뀌었으므로 저장해 둔 메일용 목록을 버린다
     return saved, calls
 
 
@@ -571,6 +574,86 @@ def build_section(conn, preset=None, days=3):
     return {'count': pv['items_all'],
             'items': pv['items'],
             'sections': pv['sections']}
+
+
+# ════════════════════════════════════════════════════════════ 저장본
+#
+# build_section 은 후보 수백 건의 제목을 임베딩 모델로 다시 인코딩한다(약 6초).
+# 발송 화면은 한 번 열 때 점검 API 와 미리보기가 각각 이것을 불러 12초가 걸렸고,
+# 테스트 발송·정식 발송 때도 매번 다시 계산했다. 그래서 '미리보기에서 본 목록'과
+# '실제로 나간 목록'이 같다는 보장이 없었다.
+# 하루치 결과를 저장해 두고 같은 것을 돌려준다. 다음 경우에만 다시 계산한다.
+#   - 저장본이 없다 / 날짜가 바뀌었다
+#   - 저장한 뒤에 크롤이 끝났다 (새 공고가 들어왔다)
+#   - 조건(프리셋)을 저장했거나 A/B/C 분류를 돌렸다 → invalidate_snapshot
+#   - 화면에서 [다시 계산] 을 눌렀다 → force=True
+
+SNAPSHOT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS brief_snapshots (
+    snap_date  TEXT PRIMARY KEY,     -- YYYY-MM-DD (KST)
+    payload    TEXT NOT NULL,        -- build_section 결과 JSON
+    created_at TEXT NOT NULL
+);
+"""
+
+
+def _last_crawl_done(conn):
+    """가장 최근에 끝난 크롤 시각 'YYYY-MM-DD HH:MM:SS' (없으면 빈 문자열)"""
+    try:
+        r = conn.execute(
+            "SELECT MAX(completed_at) FROM crawl_logs WHERE status='completed'"
+        ).fetchone()
+        return (r[0] or '')[:19]
+    except sqlite3.Error:
+        return ''
+
+
+def invalidate_snapshot(conn):
+    """저장본을 버린다. 조건이나 분류가 바뀌면 이전 결과는 더 이상 맞지 않는다."""
+    conn.executescript(SNAPSHOT_SCHEMA)
+    conn.execute('DELETE FROM brief_snapshots')
+    conn.commit()
+
+
+def build_section_cached(conn, force=False):
+    """build_section 의 저장본. 반환값에 computed_at(계산 시각)·cached 가 붙는다."""
+    conn.executescript(SNAPSHOT_SCHEMA)
+    now = datetime.now(KST)
+    today = now.strftime('%Y-%m-%d')
+    if not force:
+        row = conn.execute(
+            'SELECT payload, created_at FROM brief_snapshots WHERE snap_date=?',
+            (today,)).fetchone()
+        if row and row[1][:19].replace('T', ' ') >= _last_crawl_done(conn):
+            d = json.loads(row[0])
+            d['computed_at'] = row[1]
+            d['cached'] = True
+            return d
+
+    tb = build_section(conn)
+    created = now.isoformat(timespec='seconds')
+    out = {**tb, 'computed_at': created, 'cached': False}
+
+    # 임베딩 모델이 아직 로딩 중이면 규칙 점수만으로 순위가 매겨진다(scoring 의 폴백).
+    # 그 결과를 저장하면 하루 종일 덜 정확한 순위가 굳는다. 이때는 저장하지 않는다.
+    try:
+        import scoring
+        preset = get_preset(conn)
+        if preset.get('use_embedding', True) and not scoring._embed_model_ready:
+            out['degraded'] = True
+            return out
+    except Exception:
+        pass
+
+    conn.execute(
+        """INSERT INTO brief_snapshots (snap_date, payload, created_at)
+           VALUES (?,?,?)
+           ON CONFLICT(snap_date) DO UPDATE SET
+             payload=excluded.payload, created_at=excluded.created_at""",
+        (today, json.dumps(tb, ensure_ascii=False, default=str), created))
+    conn.execute('DELETE FROM brief_snapshots WHERE snap_date < ?', (today,))
+    conn.commit()
+    return out
 
 
 # ════════════════════════════════════════════════════════════ CLI

@@ -6,14 +6,14 @@
 
 const HINT = {
     gmail:   '앱 비밀번호가 필요합니다. Google 계정 → 보안 → 2단계 인증 → 앱 비밀번호',
-    naver:   '네이버 메일 환경설정에서 SMTP 사용을 켜야 합니다.',
+    naver:   '계정 비밀번호가 아니라 애플리케이션 비밀번호가 필요합니다. 네이버 내정보 → 보안설정 → 2단계 인증 [관리] → 애플리케이션 비밀번호 관리. 메일 환경설정에서 POP3/SMTP 사용도 켜야 합니다.',
     daum:    '다음 메일 환경설정에서 IMAP/SMTP 사용을 켜야 합니다.',
     outlook: '계정 비밀번호를 사용합니다.',
 };
 
 function esc(s) {
-    return String(s ?? '').replace(/[&<>"]/g, c =>
-        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    // 공통 함수(common.js)를 쓴다. 사본마다 바꾸는 글자가 달랐다(따옴표 누락 등).
+    return safeHtml(s);
 }
 
 let toastTimer;

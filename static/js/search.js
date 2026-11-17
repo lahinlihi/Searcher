@@ -65,27 +65,6 @@ function buildScoreBadge(score, businessType, breakdown, tenderId) {
     </span>`;
 }
 
-// ── 공고 종류 배지 헬퍼 ─────────────────────────────────────────────────────
-function getNoticeBadgesHtml(title) {
-    const t = title || '';
-    let html = '';
-    if (/\[긴급공고\]|\(긴급공고\)|\[긴급\]|\(긴급\)/.test(t)) {
-        html += '<span style="display:inline-flex;align-items:center;border-radius:9999px;padding:1px 8px;font-size:0.7rem;font-weight:700;background:#FEE2E2;color:#B91C1C;border:1px solid #FCA5A5;white-space:nowrap;margin-right:3px;">긴급</span>';
-    }
-    if (/\[재공고\]|\(재공고\)/.test(t)) {
-        html += '<span style="display:inline-flex;align-items:center;border-radius:9999px;padding:1px 8px;font-size:0.7rem;font-weight:700;background:#FFEDD5;color:#C2410C;border:1px solid #FDBA74;white-space:nowrap;margin-right:3px;">재공고</span>';
-    }
-    return html;
-}
-
-function cleanNoticeTitle(title) {
-    return (title || '')
-        .replace(/\[긴급공고\]/g, '').replace(/\(긴급공고\)/g, '')
-        .replace(/\[긴급\]/g, '').replace(/\(긴급\)/g, '')
-        .replace(/\[재공고\]/g, '').replace(/\(재공고\)/g, '')
-        .trim();
-}
-
 let currentPage = 1;
 let currentFilters = {};
 let currentKeywords = []; // 현재 검색한 키워드들
@@ -104,31 +83,6 @@ function _hideSearchHero() {
     searchPerformed = true;
     const hero = document.getElementById('search-hero');
     if (hero) hero.classList.add('hidden');
-}
-
-function doHeroSearch() {
-    const heroInput = document.getElementById('hero-search-input');
-    const mainKw    = document.getElementById('include-keywords');
-    const mobileKw  = document.getElementById('mobile-search-input');
-    if (heroInput && mainKw)   mainKw.value   = heroInput.value;
-    if (heroInput && mobileKw) mobileKw.value = heroInput.value;
-    searchTenders(1);
-}
-
-function heroStatusSearch(status) {
-    document.getElementById('status-filter').value = status;
-    searchTenders(1);
-}
-
-function openHeroOptions() {
-    if (isMobile()) {
-        openFilterDrawer();
-    } else {
-        _hideSearchHero();
-        setTimeout(() => {
-            document.getElementById('filter-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 50);
-    }
 }
 
 // ── 모바일 검색 함수 ──────────────────────────────────────────────────────────
@@ -1214,17 +1168,4 @@ function exportExcel() {
 
     // CSV 다운로드
     window.location.href = `/api/export/csv?${params.toString()}`;
-}
-
-// 가격 포맷
-function formatPrice(price) {
-    if (price >= 100000000) {
-        return (price / 100000000).toFixed(1) + '억원';
-    } else if (price >= 10000000) {
-        return (price / 10000000).toFixed(1) + '천만원';
-    } else if (price >= 10000) {
-        return (price / 10000).toFixed(0) + '만원';
-    } else {
-        return price.toLocaleString() + '원';
-    }
 }

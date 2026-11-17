@@ -162,46 +162,8 @@ class SettingsManager:
         self.settings = self._merge_settings(self.settings, updates)
         return self.save_settings()
 
-    def reset_to_default(self):
-        """
-        기본 설정으로 초기화
 
-        Returns:
-            bool: 성공 여부
-        """
-        self.settings = self._load_default_settings()
-        return self.save_settings()
 
-    def export_settings(self):
-        """
-        설정을 JSON 문자열로 내보내기
-
-        Returns:
-            str: JSON 문자열
-        """
-        return json.dumps(self.settings, indent=2, ensure_ascii=False)
-
-    def import_settings(self, json_str):
-        """
-        JSON 문자열에서 설정 가져오기
-
-        Args:
-            json_str (str): JSON 문자열
-
-        Returns:
-            bool: 성공 여부
-        """
-        try:
-            imported = json.loads(json_str)
-            self.settings = self._merge_settings(
-                self._load_default_settings(),
-                imported
-            )
-            return self.save_settings()
-
-        except Exception as e:
-            print(f"[설정] 설정 가져오기 실패: {str(e)}")
-            return False
 
     def _merge_settings(self, base, updates):
         """
@@ -228,39 +190,6 @@ class SettingsManager:
 
         return result
 
-    def get_crawler_config(self, site_id, site_config=None):
-        """
-        크롤러 설정 가져오기 (전역 기본값과 병합)
-
-        Args:
-            site_id (str): 사이트 ID
-            site_config (dict, optional): 사이트별 설정 (없으면 설정파일에서 조회)
-
-        Returns:
-            dict: 전역 기본값과 병합된 크롤러 설정
-        """
-        # 전역 기본값 가져오기
-        global_defaults = self.get('crawl.global_defaults', {})
-
-        # 사이트별 설정 가져오기
-        if site_config is None:
-            # sites와 sites_config 모두 확인
-            site_config = self.get(f'crawl.sites.{site_id}')
-            if not site_config:
-                site_config = self.get(f'crawl.sites_config.{site_id}', {})
-
-        # 병합 (사이트별 설정이 전역 기본값을 덮어씀)
-        merged_config = {}
-
-        # 전역 기본값 복사
-        for key, value in global_defaults.items():
-            merged_config[key] = value
-
-        # 사이트별 설정으로 덮어쓰기
-        for key, value in site_config.items():
-            merged_config[key] = value
-
-        return merged_config
 
     def validate_settings(self):
         """

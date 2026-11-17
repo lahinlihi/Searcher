@@ -650,29 +650,6 @@ class GenericCrawler(BaseCrawler):
 
         self.results.append(tender)
 
-    def _generate_sample_data(self):
-        """샘플 데이터 생성"""
-        num_tenders = random.randint(3, 8)
-
-        for i in range(num_tenders):
-            tender_number = self._generate_tender_number()
-
-            tender = {
-                'title': f'{self.site_name} 공고 샘플 {i + 1}',
-                'agency': self.site_name,
-                'tender_number': tender_number,
-                'announced_date': datetime.now() - timedelta(days=random.randint(1, 10)),
-                'deadline_date': datetime.now() + timedelta(days=random.randint(5, 25)),
-                'opening_date': datetime.now() + timedelta(days=random.randint(6, 26)),
-                'estimated_price': None,
-                'bid_method': '일반경쟁입찰',
-                'status': '일반',
-                'is_sme_only': random.choice([True, False]),
-                'source_site': self.site_name,
-                'url': f"{self.base_url}/detail?id={tender_number}"
-            }
-
-            self.results.append(tender)
 
     def _generate_tender_number(self, title=None):
         """공고번호 생성 — 제목 기반 결정론적 해시로 중복 방지"""

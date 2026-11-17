@@ -111,24 +111,6 @@ class ExcelExporter:
 
         return html
 
-    def export_by_status(self, tenders):
-        """
-        상태별로 구분하여 내보내기
-
-        Args:
-            tenders (list): 공고 리스트
-
-        Returns:
-            dict: {'pre': csv_content, 'normal': csv_content}
-        """
-        pre_tenders = [t for t in tenders if t.get('status') == '사전규격']
-        normal_tenders = [t for t in tenders if t.get('status') != '사전규격']
-
-        return {
-            'pre': self.export_to_csv(pre_tenders),
-            'normal': self.export_to_csv(normal_tenders),
-            'all': self.export_to_csv(tenders)
-        }
 
     def _tender_to_row(self, tender):
         """공고 데이터를 CSV 행으로 변환"""

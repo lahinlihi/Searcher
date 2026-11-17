@@ -260,6 +260,7 @@ def api_send_status():
                           'articles': len(s['articles'])}
                          for s in (data or {}).get('sections', [])],
             'tenders': len(((data or {}).get('tenders') or {}).get('items', [])),
+            'tenders_computed_at': ((data or {}).get('tenders') or {}).get('computed_at'),
             'subscribers': [{'email': r['email'], 'name': r['name'],
                              'company': r['company']} for r in subs],
             'mail_user': mail.get('user'),
@@ -268,6 +269,24 @@ def api_send_status():
             'already_sent': dict(sent) if sent else None,
             **_send_progress(nl, conn, run_date, subs),
         })
+    except Exception as e:
+        return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
+    finally:
+        conn.close()
+
+
+@bp.route('/api/newsletter/tenders/refresh', methods=['POST'])
+@moderator_required
+def api_tenders_refresh():
+    """메일용 입찰동향을 지금 다시 계산해 저장한다."""
+    import tender_brief as tb
+    conn = _conn()
+    try:
+        tb.ensure_schema(conn)
+        snap = tb.build_section_cached(conn, force=True)
+        return jsonify({'items': len(snap['items']),
+                        'computed_at': snap['computed_at'],
+                        'degraded': bool(snap.get('degraded'))})
     except Exception as e:
         return jsonify({'error': f'{type(e).__name__}: {e}'}), 500
     finally:
