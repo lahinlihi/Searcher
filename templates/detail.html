@@ -746,7 +746,7 @@
                                 <tr class="border-b last:border-b-0">
                                     <td class="px-3 py-2.5 text-gray-500 bg-gray-50 w-36 align-top text-sm leading-snug whitespace-nowrap">지역제한</td>
                                     <td class="px-3 py-2.5 text-sm font-medium">
-                                        <a href="{{ tender.url }}" target="_blank" rel="noopener"
+                                        <a href="{{ tender.url|safe_url }}" target="_blank" rel="noopener"
                                            class="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline">
                                             공고서 참조 <span class="text-xs">↗</span>
                                         </a>
@@ -760,7 +760,7 @@
                                 <tr class="border-b last:border-b-0">
                                     <td class="px-3 py-2.5 text-gray-500 bg-gray-50 w-36 align-top text-sm leading-snug whitespace-nowrap">업종제한사항</td>
                                     <td class="px-3 py-2.5 text-sm font-medium">
-                                        <a href="{{ tender.url }}" target="_blank" rel="noopener"
+                                        <a href="{{ tender.url|safe_url }}" target="_blank" rel="noopener"
                                            class="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline">
                                             공고서 참조 <span class="text-xs">↗</span>
                                         </a>
@@ -791,7 +791,7 @@
             <!-- 외부 링크 -->
             <div class="mt-5 pt-4 border-t flex flex-wrap gap-3 items-center">
                 {% if tender.url %}
-                <a href="{{ tender.url }}" target="_blank" class="btn-primary inline-block">
+                <a href="{{ tender.url|safe_url }}" target="_blank" class="btn-primary inline-block">
                     공고 원문 보기 →
                 </a>
                 {% endif %}
@@ -1310,7 +1310,7 @@
             ← 목록으로 돌아가기
         </button>
         {% if tender.url %}
-        <a href="{{ tender.url }}" target="_blank" class="btn-primary">
+        <a href="{{ tender.url|safe_url }}" target="_blank" class="btn-primary">
             공고 원문 보기 →
         </a>
         {% endif %}

@@ -150,6 +150,22 @@ def _load_user():
             db.session.commit()
 
 
+@app.template_filter('safe_url')
+def safe_url_filter(url):
+    """
+    외부에서 수집한 주소를 템플릿의 href 에 넣을 때 쓴다.
+
+    Jinja 자동 이스케이프는 < > " 같은 글자만 바꾼다. 주소가 'javascript:...' 로
+    시작하면 그대로 통과해, 링크를 누르는 순간 스크립트로 실행된다.
+    http(s) 주소와 사이트 내부 경로만 통과시키고 나머지는 '#' 으로 바꾼다.
+    화면 스크립트 쪽의 safeUrl(static/js/common.js)과 같은 규칙이다.
+    """
+    u = (url or '').strip()
+    if u.lower().startswith(('http://', 'https://')) or (u.startswith('/') and not u.startswith('//')):
+        return u
+    return '#'
+
+
 @app.template_filter('format_price')
 def format_price_filter(price):
     """금액을 한글 단위로 표현: 8억 4천만원, 7억 6천 3백 63만원 등"""

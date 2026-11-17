@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS job_runs (
     run_date    TEXT NOT NULL,      -- YYYY-MM-DD (서버 현지 시각)
     started_at  TEXT NOT NULL,
     finished_at TEXT,
-    status      TEXT NOT NULL,      -- running / ok / empty / failed
+    status      TEXT NOT NULL,      -- running / ok / partial / empty / failed
     detail      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_job_runs ON job_runs(job, run_date);
@@ -328,6 +328,10 @@ class CrawlScheduler:
                 # 수집 0건은 조용한 날이 아니라 API 실패일 가능성이 높다
                 # (hr_news.search 는 실패를 빈 목록으로 돌려준다)
                 status = 'empty'
+            elif any('실패' in n for n in self._hr_notes):
+                # 수집은 됐지만 시사점 생성이나 분류가 실패했다. 'ok' 로 두면
+                # 그날 뉴스레터 재료가 없는데도 기록상 정상으로 보인다.
+                status = 'partial'
             detail = ' / '.join(self._hr_notes)
         except BaseException as e:
             # SystemExit 도 잡는다 — hr_news._keys() 는 키가 없으면 sys.exit 한다.
@@ -360,8 +364,13 @@ class CrawlScheduler:
                 self._hr_notes.append(f'수집 {len(merged)}건(신규 {new})')
 
                 topics, _ = hr_news.rank_topics(conn, days=days, top_n=10)
+                # 시사점 생성(insight.generate_daily)과 같은 기준으로 고른다. 여기서는
+                # excluded 만 보고 off_domain(HR 어휘 비율 미달)은 보지 않아, 시사점에서
+                # 어차피 버릴 토픽('퇴사 MBC', '조문' 등)을 심화 수집하고 정작 시사점을
+                # 쓰는 토픽은 심화 재료 없이 생성되고 있었다.
                 targets = [t for t in topics
-                           if not t['metrics']['excluded']][:deep_n]
+                           if not t['metrics']['excluded']
+                           and not t['metrics'].get('off_domain')][:deep_n]
                 for t in targets:
                     dm, dc, _ = hr_news.deepen(t['query'], days=days + 3, quiet=True)
                     n, u = hr_news.upsert(conn, list(dm.values()))
