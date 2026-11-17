@@ -38,6 +38,11 @@ venv.bak/
 # 크롤링 DB
 data/tenders.db
 data/*.db
+# SQLite 가 본체 옆에 만드는 임시 파일. 최근에 쓴 DB 페이지(회원 정보 포함)가
+# 그대로 들어 있으므로 본체와 똑같이 막는다. data/*.db 로는 걸리지 않는다.
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
 
 # 개인 설정 (API 키, 필터, 키워드 포함)
 data/settings.json

@@ -489,6 +489,8 @@ async function save(id) {
                 closing: res.closing_material,
                 lint_ok: res.lint.ok ? 1 : 0,
                 lint_detail: { blocking: res.lint.blocking, warning: res.lint.warning },
+                // 승인된 항목을 고쳐 검사에 걸리면 서버가 승인을 푼다
+                status: res.status || ITEMS[i].status,
             };
         }
         // 문장이 바뀌었으니 이전 대조 결과는 더 이상 유효하지 않다

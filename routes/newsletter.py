@@ -359,10 +359,14 @@ def api_subscribers():
         email = (data.get('email') or '').strip()
         if '@' not in email:
             return jsonify({'error': '올바른 이메일 주소가 아닙니다.'}), 400
-        r = nl.add_subscriber(
-            conn, email, data.get('name'), data.get('company'),
-            consent_source=data.get('consent_source') or '관리자 등록',
-            consent_ip=request.headers.get('X-Forwarded-For', request.remote_addr))
+        try:
+            r = nl.add_subscriber(
+                conn, email, data.get('name'), data.get('company'),
+                consent_source=data.get('consent_source') or '관리자 등록',
+                consent_ip=request.headers.get('X-Forwarded-For', request.remote_addr),
+                reconsent=bool(data.get('reconsent')))
+        except nl.Unsubscribed as e:
+            return jsonify({'error': str(e), 'unsubscribed': True}), 409
         return jsonify(dict(r))
     finally:
         conn.close()

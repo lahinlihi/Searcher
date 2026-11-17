@@ -146,7 +146,7 @@ async function loadSubs() {
             ${esc(r.consent_source || '')}</td></tr>`).join('')}</tbody></table>`;
 }
 
-async function addSub() {
+async function addSub(reconsent) {
     const email = val('sub-email');
     if (!email || !email.includes('@')) { toast('이메일을 입력하세요.', true); return; }
     try {
@@ -155,6 +155,7 @@ async function addSub() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 email, name: val('sub-name'), company: val('sub-company'),
+                reconsent: reconsent === true,
             }),
         });
         ['sub-email', 'sub-name', 'sub-company']
@@ -162,6 +163,13 @@ async function addSub() {
         toast('구독자를 등록했습니다.');
         loadSubs();
     } catch (e) {
+        // 수신거부한 주소는 서버가 막는다. 재동의를 받았을 때만 다시 보낸다.
+        if (e.detail && e.detail.unsubscribed && reconsent !== true) {
+            if (confirm(e.message + '\n\n본인에게 재동의를 받았습니까?')) {
+                return addSub(true);
+            }
+            return;
+        }
         toast(e.message, true);
     }
 }

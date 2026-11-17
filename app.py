@@ -18,9 +18,34 @@ from database import db, init_db
 from decorators import _current_user
 from datetime import datetime, timedelta
 
+
+def _load_secret_key():
+    """
+    세션 서명 키. 소스에 적힌 고정값을 쓰지 않는다.
+
+    세션 쿠키는 이 키로 서명된다. 키가 저장소에 올라가 있으면 저장소를 본
+    누구나 user_id 를 넣은 쿠키를 만들어 관리자로 들어올 수 있다.
+    .env 의 SECRET_KEY(또는 settings.json 의 secret_key)를 쓰고, 둘 다 없으면
+    한 번 만들어 .env 에 적어 둔다. 실행 중에만 쓰는 임시 키로 두면 재시작마다
+    전원이 로그아웃되므로 파일에 남긴다. .env 는 .gitignore 대상이다.
+    """
+    key = os.environ.get('SECRET_KEY') or settings_manager.get('secret_key')
+    if key:
+        return key
+    import secrets
+    key = secrets.token_hex(32)
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+    with open(env_path, 'a', encoding='utf-8') as f:
+        f.write('\n# 세션 서명 키 (자동 생성). 바꾸면 모든 로그인 세션이 끊긴다.\n'
+                f'SECRET_KEY={key}\n')
+    os.environ['SECRET_KEY'] = key
+    print('[보안] SECRET_KEY 가 없어 새로 만들어 .env 에 저장했습니다.')
+    return key
+
+
 app = Flask(__name__)
 app.config.from_object(Config)
-app.secret_key = settings_manager.get('secret_key') or 'change-me-in-production-please'
+app.secret_key = _load_secret_key()
 app.permanent_session_lifetime = timedelta(days=7)
 
 # ── 리버스 프록시(Cloudflare 등) 지원 ────────────────────────────────────────

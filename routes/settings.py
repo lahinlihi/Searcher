@@ -31,10 +31,20 @@ def api_settings():
 
     elif request.method == 'POST':
         try:
-            new_settings = request.json
-            # gemini_api_key는 별도 엔드포인트로 관리 — 폼에 없으면 기존 값 유지
-            if 'gemini_api_key' not in new_settings:
-                new_settings['gemini_api_key'] = settings_manager.get('gemini_api_key', '')
+            posted = request.json
+            if not isinstance(posted, dict):
+                return jsonify({'error': '설정 형식이 올바르지 않습니다.'}), 400
+            # 화면은 crawl·notification·data·display·user_preferences 만 보낸다.
+            # 받은 것으로 통째로 바꾸면 화면에 없는 항목(newsletter 발송 계정,
+            # hr_news 검색어, 모델 우선순위, API 키)이 저장 한 번에 사라진다.
+            # → 받은 최상위 키만 교체하고 나머지는 그대로 둔다.
+            #   (깊은 병합은 쓰지 않는다. 화면에서 지운 크롤링 사이트가 되살아난다)
+            new_settings = {**settings_manager.settings, **posted}
+            # notification 은 화면이 4개 키만 보내므로 기존 키(발신 계정)를 보존
+            if isinstance(posted.get('notification'), dict):
+                new_settings['notification'] = {
+                    **(settings_manager.settings.get('notification') or {}),
+                    **posted['notification']}
             success = settings_manager.save_settings(new_settings)
 
             if success:
@@ -174,6 +184,9 @@ def api_email_settings():
             # 설정 파일 저장
             with open('data/settings.json', 'w', encoding='utf-8') as f:
                 json.dump(settings, f, ensure_ascii=False, indent=2)
+            # 파일을 직접 썼으므로 settings_manager 의 메모리 사본을 맞춘다.
+            # 안 맞추면 다음 설정 저장 때 이 변경이 되돌려진다.
+            settings_manager.load_settings()
 
             # EmailNotifier 설정 업데이트
             if settings['email_notification']['enabled']:

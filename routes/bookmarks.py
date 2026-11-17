@@ -171,7 +171,11 @@ def api_bookmark_label(bookmark_id):
         valid_labels = [k for k, _ in Bookmark.LABEL_CHOICES] + ['']
         if label not in valid_labels:
             return jsonify({'error': '유효하지 않은 라벨'}), 400
-        b = Bookmark.query.get_or_404(bookmark_id)
+        # 본인 북마크만. id 만으로 찾으면 남의 북마크 라벨을 바꿀 수 있다.
+        b = Bookmark.query.filter_by(
+            id=bookmark_id, user_id=g.user.id).first()
+        if b is None:
+            return jsonify({'error': '북마크를 찾을 수 없습니다.'}), 404
         b.label = label or None
         db.session.commit()
         return jsonify({'label': b.label, 'label_bonus': Bookmark.LABEL_BONUS.get(b.label or '', 0)})

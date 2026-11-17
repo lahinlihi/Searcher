@@ -144,10 +144,27 @@ def ensure_schema(conn):
     conn.commit()
 
 
+class Unsubscribed(Exception):
+    """수신거부한 주소를 재동의 확인 없이 다시 등록하려 했다."""
+
+
 def add_subscriber(conn, email, name=None, company=None,
-                   consent_source='관리자 등록', consent_ip=None):
-    """구독자 등록 — 수신동의 기록을 함께 남긴다(법적 근거)."""
+                   consent_source='관리자 등록', consent_ip=None,
+                   reconsent=False):
+    """
+    구독자 등록 — 수신동의 기록을 함께 남긴다(법적 근거).
+
+    수신거부한 주소는 reconsent=True 일 때만 되살린다. 같은 주소를 다시
+    등록하는 것만으로 조용히 활성화되면, 본인이 거부했는데 메일이 다시 간다.
+    """
     ensure_schema(conn)
+    prev = conn.execute(
+        'SELECT status, unsubscribed_at FROM newsletter_subscribers '
+        'WHERE email=?', (email.strip().lower(),)).fetchone()
+    if prev is not None and prev['status'] == 'unsubscribed' and not reconsent:
+        raise Unsubscribed(
+            f"{(prev['unsubscribed_at'] or '')[:10]} 에 수신거부한 주소입니다. "
+            "본인의 재동의를 받은 경우에만 다시 등록하세요.")
     now = datetime.now(KST).isoformat(timespec='seconds')
     token = secrets.token_urlsafe(24)
     conn.execute(
@@ -632,7 +649,11 @@ def main():
     ensure_schema(conn)
     try:
         if args.add:
-            r = add_subscriber(conn, args.add, args.name, args.company)
+            try:
+                r = add_subscriber(conn, args.add, args.name, args.company)
+            except Unsubscribed as e:
+                print(f'등록하지 않음: {e}')
+                return
             print(f'등록: {r["email"]} (동의 {r["consent_at"]})')
             return
         if args.subscribers:
@@ -698,6 +719,12 @@ def _save_settings(patch):
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(d, f, ensure_ascii=False, indent=2)
     os.replace(tmp, SETTINGS_PATH)       # 쓰는 도중 깨지지 않도록 원자적 교체
+    # 서버 안에서는 settings_manager 가 기동 때 읽은 사본을 들고 있다가
+    # set() 한 번에 파일 전체를 그 사본으로 다시 쓴다. 사본을 맞춰 두지 않으면
+    # 방금 저장한 발송 계정이 다른 설정을 저장하는 순간 되돌려진다.
+    sm = sys.modules.get('settings_manager')
+    if sm is not None:
+        sm.settings_manager.load_settings()
     return True
 
 

@@ -641,7 +641,13 @@ def ensure_schema(conn):
 
 
 def save_daily(conn, results, run_date=None):
-    """생성 결과 저장. 같은 날짜·토픽은 덮어쓴다."""
+    """
+    생성 결과 저장. 같은 날짜·토픽은 **검수 전(pending)일 때만** 덮어쓴다.
+
+    승인·제외된 항목은 건드리지 않는다. 덮어쓰면 status 는 'approved' 로
+    남은 채 본문만 검수 안 한 새 글로 바뀌어, 승인 없이 나가는 경로가 생긴다.
+    사람이 고친 문장도 함께 사라진다. 반환하는 saved 는 실제로 쓴 건수다.
+    """
     from datetime import datetime, timedelta, timezone as _tz
     kst = _tz(timedelta(hours=9))
     now = datetime.now(kst)
@@ -650,7 +656,7 @@ def save_daily(conn, results, run_date=None):
     saved = 0
     for r in results:
         o, v = r['obj'], r['lint']
-        conn.execute(
+        cur = conn.execute(
             """INSERT INTO daily_insights
                (run_date, topic, category, headline, mode, points, synthesis,
                 closing, material, model, attempts, lint_ok, lint_detail,
@@ -662,7 +668,8 @@ def save_daily(conn, results, run_date=None):
                  closing=excluded.closing, material=excluded.material,
                  model=excluded.model,
                  attempts=excluded.attempts, lint_ok=excluded.lint_ok,
-                 lint_detail=excluded.lint_detail""",
+                 lint_detail=excluded.lint_detail
+               WHERE daily_insights.status='pending'""",
             (run_date, r['topic'], r.get('category'), o.get('headline'),
              o.get('mode'), json.dumps(o.get('points') or [], ensure_ascii=False),
              o.get('synthesis'), o.get('closing_material'),
@@ -674,7 +681,7 @@ def save_daily(conn, results, run_date=None):
              json.dumps({'blocking': v['blocking'], 'warning': v['warning']},
                         ensure_ascii=False),
              'pending', now.isoformat(timespec='seconds')))
-        saved += 1
+        saved += cur.rowcount      # 승인·제외분을 건너뛰면 0
     conn.commit()
     return saved, run_date
 
@@ -814,17 +821,23 @@ def update_insight(conn, insight_id, headline=None, points=None,
         'closing_material': closing if closing is not None else d['closing'],
     }
     v = validate_insight(new)
+    # 승인된 항목을 고쳐서 검사에 걸리게 만들면 승인을 푼다. set_status 가
+    # '검사에 걸린 항목은 승인 불가' 를 지키는데, 승인 뒤 편집으로는 그 규칙을
+    # 우회할 수 있었다.
+    status = d['status']
+    if status == 'approved' and not v['ok']:
+        status = 'pending'
     conn.execute(
         """UPDATE daily_insights
            SET headline=?, points=?, synthesis=?, closing=?,
-               lint_ok=?, lint_detail=?
+               lint_ok=?, lint_detail=?, status=?
            WHERE id=?""",
         (new['headline'], json.dumps(new['points'], ensure_ascii=False),
          new['synthesis'], new['closing_material'], int(v['ok']),
          json.dumps({'blocking': v['blocking'], 'warning': v['warning']},
-                    ensure_ascii=False), insight_id))
+                    ensure_ascii=False), status, insight_id))
     conn.commit()
-    return {'id': insight_id, **new, 'lint': v}
+    return {'id': insight_id, **new, 'lint': v, 'status': status}
 
 
 def set_status(conn, insight_id, status):

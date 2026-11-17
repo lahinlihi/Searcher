@@ -60,10 +60,12 @@ def api_filter_detail(filter_id):
         try:
             data = request.json
 
-            # 기본 필터로 설정하는 경우, 다른 필터의 기본값 해제
+            # 기본 필터로 설정하는 경우, 본인의 다른 필터만 기본값 해제
+            # (user_id 조건이 없으면 모든 사용자의 기본 필터가 풀린다)
             if data.get('is_default') and not filter_obj.is_default:
-                Filter.query.filter(Filter.id != filter_id).update(
-                    {'is_default': False})
+                Filter.query.filter(
+                    Filter.user_id == g.user.id,
+                    Filter.id != filter_id).update({'is_default': False})
 
             filter_obj.name = data.get('name', filter_obj.name)
             filter_obj.is_default = data.get(
