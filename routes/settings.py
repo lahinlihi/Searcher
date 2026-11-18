@@ -39,13 +39,21 @@ def api_settings():
             # hr_news 검색어, 모델 우선순위, API 키)이 저장 한 번에 사라진다.
             # → 받은 최상위 키만 교체하고 나머지는 그대로 둔다.
             #   (깊은 병합은 쓰지 않는다. 화면에서 지운 크롤링 사이트가 되살아난다)
-            new_settings = {**settings_manager.settings, **posted}
-            # notification 은 화면이 4개 키만 보내므로 기존 키(발신 계정)를 보존
-            if isinstance(posted.get('notification'), dict):
-                new_settings['notification'] = {
-                    **(settings_manager.settings.get('notification') or {}),
-                    **posted['notification']}
-            success = settings_manager.save_settings(new_settings)
+            def _apply(current):
+                new_settings = {**current, **posted}
+                # notification 은 화면이 4개 키만 보내므로 기존 키(발신 계정)를 보존
+                if isinstance(posted.get('notification'), dict):
+                    new_settings['notification'] = {
+                        **(current.get('notification') or {}),
+                        **posted['notification']}
+                return new_settings
+
+            try:
+                settings_manager.modify(_apply)
+                success = True
+            except Exception as e:
+                print(f"[설정] 설정 파일 저장 실패: {e}")
+                success = False
 
             if success:
                 # 크롤링 시간(crawl.times)이 바뀌었으면 서버 재시작 없이 즉시 스케줄 반영
@@ -152,12 +160,7 @@ def api_email_settings():
     """이메일 알림 설정 조회/저장"""
     if request.method == 'GET':
         try:
-            # 설정 파일 로드
-            with open('data/settings.json', 'r', encoding='utf-8') as f:
-                settings = json.load(f)
-
-            email_settings = settings.get('email_notification', {})
-            return jsonify({'settings': email_settings})
+            return jsonify({'settings': settings_manager.get('email_notification', {})})
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
@@ -165,12 +168,7 @@ def api_email_settings():
         try:
             data = request.json
 
-            # 설정 파일 로드
-            with open('data/settings.json', 'r', encoding='utf-8') as f:
-                settings = json.load(f)
-
-            # 이메일 설정 업데이트
-            settings['email_notification'] = {
+            email_cfg = {
                 'enabled': data.get('enabled', False),
                 'email_service': data.get('email_service', 'gmail'),
                 'sender_email': data.get('sender_email', ''),
@@ -181,20 +179,15 @@ def api_email_settings():
                 'keyword_alert': data.get('keyword_alert', False)
             }
 
-            # 설정 파일 저장
-            with open('data/settings.json', 'w', encoding='utf-8') as f:
-                json.dump(settings, f, ensure_ascii=False, indent=2)
-            # 파일을 직접 썼으므로 settings_manager 의 메모리 사본을 맞춘다.
-            # 안 맞추면 다음 설정 저장 때 이 변경이 되돌려진다.
-            settings_manager.load_settings()
+            settings_manager.set('email_notification', email_cfg)
 
             # EmailNotifier 설정 업데이트
-            if settings['email_notification']['enabled']:
+            if email_cfg['enabled']:
                 email_notifier.configure(
-                    settings['email_notification']['sender_email'],
-                    settings['email_notification']['sender_password'],
-                    settings['email_notification']['recipient_email'],
-                    settings['email_notification']['email_service']
+                    email_cfg['sender_email'],
+                    email_cfg['sender_password'],
+                    email_cfg['recipient_email'],
+                    email_cfg['email_service']
                 )
             else:
                 email_notifier.enabled = False

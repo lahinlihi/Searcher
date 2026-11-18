@@ -7,6 +7,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
 import json
+import git_sync
 
 from crawlers.generic_crawler import GenericCrawler
 from crawlers.g2b_api_crawler import G2BApiCrawler
@@ -515,7 +516,7 @@ class CrawlScheduler:
         크롤링 없이 원격 API를 호출하여 로컬 DB를 최신 상태로 유지.
         """
         print(f"\n[RemoteSync] 동기화 시작: {datetime.now()}")
-        self._git_pull()  # 최신 코드도 반영
+        git_sync.pull()  # 최신 코드도 반영
 
         with self.app.app_context():
             try:
@@ -530,94 +531,6 @@ class CrawlScheduler:
                 )
             except Exception as e:
                 print(f"[RemoteSync] 실패: {e}")
-
-    def _git_pull(self):
-        """
-        Git pull 실행 — 최신 코드 반영
-        실패해도 크롤링은 계속 진행
-        """
-        import subprocess, os  # noqa: E401
-        try:
-            repo_dir = os.path.dirname(os.path.abspath(__file__))
-            result = subprocess.run(
-                ['git', 'pull', '--ff-only'],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                timeout=30
-            )
-            if result.returncode == 0:
-                msg = result.stdout.strip()
-                if 'Already up to date' in msg:
-                    print("[스케줄러] git pull: 이미 최신 버전")
-                else:
-                    print(f"[스케줄러] git pull: 업데이트됨\n{msg}")
-            else:
-                print(f"[스케줄러] git pull 실패 (무시하고 계속): {result.stderr.strip()}")
-        except Exception as e:
-            print(f"[스케줄러] git pull 오류 (무시하고 계속): {e}")
-
-    def _git_push(self):
-        """
-        Claude Code 등으로 수정된 코드를 자동 commit + push
-        - data/ 는 .gitignore 로 제외되므로 API 키·DB는 절대 올라가지 않음
-        - 변경사항이 없으면 아무것도 하지 않음
-        - 실패해도 크롤링 결과에 영향 없음
-        """
-        import subprocess, os  # noqa: E401
-        try:
-            repo_dir = os.path.dirname(os.path.abspath(__file__))
-
-            # 변경된 추적 파일 확인 (data/ 제외는 .gitignore 가 보장)
-            status = subprocess.run(
-                ['git', 'status', '--porcelain'],
-                cwd=repo_dir, capture_output=True, text=True,
-                encoding='utf-8', errors='replace', timeout=15
-            )
-            changed = status.stdout.strip()
-            if not changed:
-                print("[스케줄러] git push: 변경사항 없음 — 스킵")
-                return
-
-            # 변경 파일 목록 출력
-            lines = changed.splitlines()
-            print(f"[스케줄러] git push: 변경파일 {len(lines)}개 감지")
-            for line in lines[:10]:
-                print(f"  {line}")
-
-            # add → commit → push
-            subprocess.run(
-                ['git', 'add', '-A'], cwd=repo_dir, timeout=15,
-                capture_output=True, text=True, encoding='utf-8', errors='replace'
-            )
-
-            commit_msg = (
-                f"auto: Claude Code 수정 반영 "
-                f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}]"
-            )
-            commit_result = subprocess.run(
-                ['git', 'commit', '-m', commit_msg],
-                cwd=repo_dir, capture_output=True, text=True,
-                encoding='utf-8', errors='replace', timeout=15
-            )
-            if commit_result.returncode != 0:
-                print(f"[스케줄러] git commit 실패: {commit_result.stderr.strip()}")
-                return
-
-            push_result = subprocess.run(
-                ['git', 'push'],
-                cwd=repo_dir, capture_output=True, text=True,
-                encoding='utf-8', errors='replace', timeout=60
-            )
-            if push_result.returncode == 0:
-                print("[스케줄러] git push: GitHub 업로드 완료")
-            else:
-                print(f"[스케줄러] git push 실패 (무시하고 계속): {push_result.stderr.strip()}")
-
-        except Exception as e:
-            print(f"[스케줄러] git push 오류 (무시하고 계속): {e}")
 
     def _run_crawler_with_timeout(self, site_name, crawler, timeout_sec=200):
         """
@@ -707,9 +620,11 @@ class CrawlScheduler:
             print(f"[스케줄러] 다른 크롤링이 진행 중 — 이번 예약 실행은 건너뜁니다: {datetime.now()}")
             return
         try:
+            git_sync.pull()          # 크롤 전: 최신 코드 받기 (크롤 자체와는 무관)
             self._run_crawl_job_locked()
         finally:
             self._crawl_lock.release()
+        git_sync.push()              # 크롤 후: 코드 변경 자동 커밋·업로드. 크롤 성패와 무관하게 돈다
 
     def run_manual_crawl(self, sites=None):
         """수동 크롤 진입점. 이미 크롤이 돌고 있으면 시작하지 않는다."""
@@ -960,9 +875,6 @@ class CrawlScheduler:
 
         print(f"\n[스케줄러] 자동 크롤링 시작: {datetime.now()}")
 
-        # 크롤링 전 최신 코드 반영
-        self._git_pull()
-
         with self.app.app_context():
             # 크롤링 로그 생성
             crawl_log = CrawlLog(
@@ -981,9 +893,6 @@ class CrawlScheduler:
 
                 crawlers_to_run = self._enabled_crawlers(sites_config)
                 self._crawl_and_save(crawlers_to_run, crawl_log, '스케줄러')
-
-                # 크롤링 후 코드 변경사항 자동 push (data/는 .gitignore 제외)
-                self._git_push()
 
             except Exception as e:
                 # 크롤링 실패

@@ -1,12 +1,13 @@
 from flask import Blueprint, request, jsonify, g, current_app
 from database import db, Tender, CrawlLog, TenderMemo, DismissedTender, Filter
 from decorators import login_required, admin_required
-from scoring import (load_user_prefs, load_interest_keywords,
-                     smart_sort_tenders_by_keyword_count,
-                     _score_and_type, get_last_workday, compute_embed_sims)
+from scoring import (load_user_prefs, load_interest_keywords, smart_sort_tenders_by_keyword_count,
+                     _score_and_type, compute_embed_sims)
+from sqlalchemy import func as sql_func
 from config import Config
 from datetime import datetime, timedelta
 import json
+import re
 import threading
 
 bp = Blueprint('tenders', __name__)
@@ -23,11 +24,10 @@ _TITLE_SEARCH_STRIP_CHARS = [' ', '·', '/', '-', '~', '(', ')', '[', ']']
 def _title_contains(keyword):
     """제목과 검색어 양쪽에서 공백·가운뎃점 등 구두점을 제거한 뒤 부분일치 비교하는
     SQLAlchemy 필터 조건을 반환한다."""
-    from sqlalchemy import func as _sql_func
     norm_title = Tender.title
     norm_kw = keyword
     for ch in _TITLE_SEARCH_STRIP_CHARS:
-        norm_title = _sql_func.replace(norm_title, ch, '')
+        norm_title = sql_func.replace(norm_title, ch, '')
         norm_kw = norm_kw.replace(ch, '')
     return norm_title.contains(norm_kw)
 
@@ -114,6 +114,47 @@ def api_tender_related(tender_id):
     return jsonify(result)
 
 
+def _agency_weights(uid):
+    """사용자가 정한 기관별 가중치 {기관명: 가중치}"""
+    from database import AgencyWeight
+    try:
+        rows = AgencyWeight.query.filter_by(user_id=uid).all() if uid else []
+        return {r.agency_name: r.weight for r in rows}
+    except Exception:
+        return {}
+
+
+def _apply_interest_filters(query, prefs):
+    """
+    사용자 관심 설정으로 거른다: 제외 키워드 → 관심 키워드(하나라도 포함) → 금액 범위.
+    금액이 비어 있는 공고는 금액 조건을 통과시킨다.
+    """
+    for keyword in prefs['exclude_keywords']:
+        query = query.filter(~_title_contains(keyword))
+    if prefs['interest_keywords']:
+        query = query.filter(db.or_(*[_title_contains(kw) for kw in prefs['interest_keywords']]))
+    budget = prefs['budget_range']
+    if budget.get('min'):
+        query = query.filter(
+            db.or_(Tender.estimated_price == None, Tender.estimated_price >= budget['min']))
+    if budget.get('max'):
+        query = query.filter(
+            db.or_(Tender.estimated_price == None, Tender.estimated_price <= budget['max']))
+    return query
+
+
+def _scored_dict(tender, prefs, agency_weights):
+    """공고를 화면용 dict 로 바꾸고 관심도 점수를 붙인다."""
+    keywords = prefs['interest_keywords']
+    d = tender.to_dict(interest_keywords=keywords)
+    score, btype, kw_s, type_s, agency_s = _score_and_type(
+        tender, keywords, prefs['type_weights'], agency_weights, prefs.get('core_keywords', []))
+    d['relevance_score'] = score
+    d['business_type'] = btype
+    d['score_breakdown'] = {'keyword': kw_s, 'type': type_s, 'agency': agency_s}
+    return d
+
+
 @bp.route('/api/dashboard')
 @login_required
 def api_dashboard():
@@ -122,181 +163,76 @@ def api_dashboard():
         now = datetime.now()
         # 어제 자정(00:00:00) 기준 — timedelta(1)은 현재 시각 기준이므로 00:00 공고가 탈락하는 버그 방지
         yesterday = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-
-        # 월요일이면 금요일부터, 아니면 어제 자정부터
-        if now.weekday() == 0:  # 월요일
-            start_date = get_last_workday(now)  # 금요일
-        else:
-            start_date = yesterday
-
-        # 포함/제외 키워드 및 금액 범위 로드 (사용자별, 단일 DB 조회)
-        uid = g.user.id if g.user else None
-        _uprefs = load_user_prefs(uid)
-        include_keywords = _uprefs['interest_keywords']
-        exclude_keywords = _uprefs['exclude_keywords']
-        budget_range = _uprefs['budget_range']
-        user_type_weights = _uprefs['type_weights']
-        user_core_keywords = _uprefs.get('core_keywords', [])
-
-        # 관심없음 처리된 공고 ID 목록
-        dismissed_ids = [d.tender_id for d in DismissedTender.query.filter_by(user_id=uid).all()] if uid else []
-
-        from database import AgencyWeight
-        try:
-            _aw_rows = AgencyWeight.query.filter_by(user_id=uid).all() if uid else []
-            user_agency_weights = {r.agency_name: r.weight for r in _aw_rows}
-        except Exception:
-            user_agency_weights = {}
-
-        # 공통 필터 준비
-        kw_filter = db.or_(*[_title_contains(kw) for kw in include_keywords]) if include_keywords else None
-        br_min = budget_range.get('min')
-        br_max = budget_range.get('max')
-
-        # 1. 신규공고: announced_date 기준 1일전~당일 (수의계약 제외)
-        new_today = Tender.query.filter(
-            Tender.announced_date >= yesterday,
-            Tender.announced_date <= now,
-            ~Tender.bid_method.contains('수의계약')
-        ).count()
-
-        # 2. 사전규격: 마감일이 지나지 않은 모든 공고
-        pre_announcement = Tender.query.filter(
-            Tender.status == '사전규격',
-            Tender.deadline_date >= now
-        ).count()
-
-        # 3. 마감 임박 (3일 이내): 수의계약 제외, 마감일 안 지난 공고
-        deadline_soon = Tender.query.filter(
-            Tender.deadline_date >= now,
-            Tender.deadline_date <= now + timedelta(days=3),
-            ~Tender.bid_method.contains('수의계약')
-        ).count()
-
-        # 4. 총 공고: DB에 누적된 전체 공고 수 (중복 없이)
-        total_tenders = Tender.query.count()
-
-        # 5. 사전규격: 나라장터 사전규격 중 마감 안 지난 것, 키워드 매칭 순, 20개
-        pre_new_query = Tender.query.filter(
-            Tender.deadline_date >= now,
-            Tender.status == '사전규격',
-            db.or_(
-                Tender.source_site.contains('나라장터'),
-                Tender.source_site.contains('g2b')
-            )
-        )
-        # 제외 키워드 + 관심 키워드 + 금액 범위 필터
-        for keyword in exclude_keywords:
-            pre_new_query = pre_new_query.filter(~_title_contains(keyword))
-        if kw_filter is not None:
-            pre_new_query = pre_new_query.filter(kw_filter)
-        if br_min:
-            pre_new_query = pre_new_query.filter(
-                db.or_(Tender.estimated_price == None, Tender.estimated_price >= br_min))
-        if br_max:
-            pre_new_query = pre_new_query.filter(
-                db.or_(Tender.estimated_price == None, Tender.estimated_price <= br_max))
-
-        all_pre_new = pre_new_query.all()
-        if dismissed_ids:
-            all_pre_new = [t for t in all_pre_new if t.id not in dismissed_ids]
-
-        # 6. 신규공고(기타 채널): 7일 이내, 나라장터 제외, 수의계약 제외, 마감 안 지난 것
-        # (나라장터와 동일한 7일 창 사용 — 기타채널도 주중 공고 누락 방지)
-        seven_days_ago_midnight = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
-        new_query = Tender.query.filter(
-            Tender.announced_date >= seven_days_ago_midnight,
-            Tender.announced_date <= now,
-            Tender.status != '사전규격',
-            Tender.status != '결과공고',
-            Tender.deadline_date >= now,           # 마감일 지난 공고 제외
-            ~Tender.bid_method.contains('수의계약'),  # 수의계약 제외
-            ~Tender.source_site.contains('나라장터'),
-            ~Tender.source_site.like('%g2b%')
-        )
-        # 제외 키워드 + 관심 키워드 + 금액 범위 필터
-        for keyword in exclude_keywords:
-            new_query = new_query.filter(~_title_contains(keyword))
-        if kw_filter is not None:
-            new_query = new_query.filter(kw_filter)
-        if br_min:
-            new_query = new_query.filter(
-                db.or_(Tender.estimated_price == None, Tender.estimated_price >= br_min))
-        if br_max:
-            new_query = new_query.filter(
-                db.or_(Tender.estimated_price == None, Tender.estimated_price <= br_max))
-
-        all_new = new_query.all()
-        if dismissed_ids:
-            all_new = [t for t in all_new if t.id not in dismissed_ids]
-
         seven_days_ago = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # 7. 신규공고(나라장터 API): 최근 7일, 수의계약 제외, 마감 안 지난 것 + 3중 필터
-        urgent_query = Tender.query.filter(
+        uid = g.user.id if g.user else None
+        prefs = load_user_prefs(uid)
+        include_keywords = prefs['interest_keywords']
+        agency_weights = _agency_weights(uid)
+        # 관심없음 처리된 공고
+        dismissed = {d.tender_id for d in DismissedTender.query.filter_by(user_id=uid).all()} if uid else set()
+
+        not_private = ~Tender.bid_method.contains('수의계약')
+
+        # ── 상단 요약 숫자 (전체 공고 기준, 관심 설정과 무관) ────────────────────
+        summary = {
+            # 신규공고: 공고일이 어제~오늘 (수의계약 제외)
+            'new_today': Tender.query.filter(
+                Tender.announced_date >= yesterday, Tender.announced_date <= now, not_private).count(),
+            # 사전규격: 마감일이 지나지 않은 것
+            'pre_announcement': Tender.query.filter(
+                Tender.status == '사전규격', Tender.deadline_date >= now).count(),
+            # 마감 임박: 3일 이내 (수의계약 제외)
+            'deadline_soon': Tender.query.filter(
+                Tender.deadline_date >= now, Tender.deadline_date <= now + timedelta(days=3),
+                not_private).count(),
+            'total': Tender.query.count(),
+        }
+
+        # ── 목록 3개: 조건만 다르고, 관심 설정 필터와 정렬은 같다 ──────────────
+        # 최근 7일 안에 공고되고 아직 마감 전인 일반 공고 (나라장터·기타 채널 공통 조건)
+        recent_open = [
             Tender.announced_date >= seven_days_ago,
             Tender.announced_date <= now,
             Tender.status != '사전규격',
             Tender.status != '결과공고',
             Tender.deadline_date >= now,
-            ~Tender.bid_method.contains('수의계약'),
-            db.or_(
-                Tender.source_site.contains('나라장터 API'),
-                Tender.source_site.like('%g2b_api%')
-            )
-        )
-        for keyword in exclude_keywords:
-            urgent_query = urgent_query.filter(~_title_contains(keyword))
-        if kw_filter is not None:
-            urgent_query = urgent_query.filter(kw_filter)
-        if br_min:
-            urgent_query = urgent_query.filter(
-                db.or_(Tender.estimated_price == None, Tender.estimated_price >= br_min))
-        if br_max:
-            urgent_query = urgent_query.filter(
-                db.or_(Tender.estimated_price == None, Tender.estimated_price <= br_max))
+            not_private,
+        ]
+        sections = {
+            # 사전규격: 나라장터 사전규격 중 마감 전
+            'pre_tenders': Tender.query.filter(
+                Tender.deadline_date >= now,
+                Tender.status == '사전규격',
+                db.or_(Tender.source_site.contains('나라장터'), Tender.source_site.contains('g2b')),
+            ),
+            # 신규공고(나라장터 API)
+            'urgent_tenders': Tender.query.filter(
+                *recent_open,
+                db.or_(Tender.source_site.contains('나라장터 API'), Tender.source_site.like('%g2b_api%')),
+            ),
+            # 신규공고(기타 채널): 나라장터 제외
+            'recent_tenders': Tender.query.filter(
+                *recent_open,
+                ~Tender.source_site.contains('나라장터'),
+                ~Tender.source_site.like('%g2b%'),
+            ),
+        }
 
-        all_urgent = urgent_query.all()
-        if dismissed_ids:
-            all_urgent = [t for t in all_urgent if t.id not in dismissed_ids]
+        response_data = {'summary': summary}
+        matched = 0
+        for name, query in sections.items():
+            tenders = [t for t in _apply_interest_filters(query, prefs).all() if t.id not in dismissed]
+            matched += len(tenders)
+            # 규칙 점수 기반 정렬만 수행 — 임베딩은 /api/embed-scores 에서 on-demand 처리
+            top = smart_sort_tenders_by_keyword_count(
+                tenders, include_keywords, prefs['type_weights'], agency_weights,
+                prefs.get('core_keywords', []))[:24]
+            response_data[name] = [_scored_dict(t, prefs, agency_weights) for t in top]
 
-        # 규칙 점수 기반 정렬만 수행 — 임베딩은 /api/embed-scores 에서 on-demand 처리
-        sorted_pre_new = smart_sort_tenders_by_keyword_count(
-            all_pre_new, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
-        pre_tenders = sorted_pre_new[:24]
-
-        sorted_new = smart_sort_tenders_by_keyword_count(
-            all_new, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
-        recent_tenders = sorted_new[:24]
-
-        sorted_urgent = smart_sort_tenders_by_keyword_count(
-            all_urgent, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
-        urgent_tenders = sorted_urgent[:24]
-
-        # 전체 필터 적용 후 총 건수 (배지용)
-        keyword_match_count = len(all_pre_new) + len(all_urgent) + len(all_new)
-
-        def _td(t):
-            d = t.to_dict(interest_keywords=include_keywords)
-            r = _score_and_type(t, include_keywords, user_type_weights, user_agency_weights, user_core_keywords)
-            d['relevance_score'] = r[0]
-            d['business_type'] = r[1]
-            d['score_breakdown'] = {'keyword': r[2], 'type': r[3], 'agency': r[4]}
-            return d
-
-        response_data = {
-            'summary': {
-                'new_today': new_today,
-                'pre_announcement': pre_announcement,
-                'deadline_soon': deadline_soon,
-                'total': total_tenders,
-                'keyword_match': keyword_match_count},
-            'pre_tenders':    [_td(t) for t in pre_tenders],
-            'urgent_tenders': [_td(t) for t in urgent_tenders],
-            'recent_tenders': [_td(t) for t in recent_tenders],
-            'include_keywords': include_keywords,
-            'exclude_keywords': exclude_keywords}
-
+        summary['keyword_match'] = matched   # 관심 설정에 걸린 전체 건수 (배지용)
+        response_data['include_keywords'] = include_keywords
+        response_data['exclude_keywords'] = prefs['exclude_keywords']
         return jsonify(response_data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -312,21 +248,18 @@ def api_embed_scores():
             return jsonify({'scores': {}})
 
         uid = g.user.id if g.user else None
-        _uprefs = load_user_prefs(uid)
-        kws = _uprefs['interest_keywords']
-        tw  = _uprefs['type_weights']
-        ck  = _uprefs.get('core_keywords', [])
-
-        from database import AgencyWeight
-        aw_rows = AgencyWeight.query.filter_by(user_id=uid).all() if uid else []
-        aw = {r.agency_name: r.weight for r in aw_rows}
+        prefs = load_user_prefs(uid)
+        kws = prefs['interest_keywords']
+        ck = prefs.get('core_keywords', [])
+        aw = _agency_weights(uid)
 
         tenders = Tender.query.filter(Tender.id.in_(tender_ids)).all()
         sims = compute_embed_sims(tenders, kws, ck)
 
         scores = {}
         for t in tenders:
-            s, btype, ks, ts, as_ = _score_and_type(t, kws, tw, aw, ck, embed_sim=sims.get(t.id))
+            s, btype, ks, ts, as_ = _score_and_type(
+                t, kws, prefs['type_weights'], aw, ck, embed_sim=sims.get(t.id))
             scores[str(t.id)] = {
                 'score': s,
                 'keyword': ks,
@@ -339,292 +272,198 @@ def api_embed_scores():
         return jsonify({'error': str(e)}), 500
 
 
+# ════════════════════════════════════════════════════════════ 검색 (/api/tenders)
+
+def _csv_arg(name):
+    """쉼표로 구분된 요청 파라미터 → 빈 값을 뺀 목록"""
+    return [v.strip() for v in request.args.get(name, '').split(',') if v.strip()]
+
+
+def _keyword_expression(expr):
+    """
+    검색창 키워드 식을 조건으로 바꾼다. 쉼표는 OR, + 는 AND.
+    예: "AI+교육, 시스템" → (AI AND 교육) OR 시스템.  조건이 없으면 None.
+    """
+    or_conditions = []
+    for group in expr.split(','):
+        and_keywords = [k.strip() for k in group.split('+') if k.strip()]
+        if and_keywords:
+            or_conditions.append(db.and_(*[_title_contains(k) for k in and_keywords]))
+    return db.or_(*or_conditions) if or_conditions else None
+
+
+def _apply_preset(query, filter_id):
+    """저장된 필터(Filter)의 조건을 적용한다. 포함 키워드는 모두 포함(AND)."""
+    preset = Filter.query.get(filter_id) if filter_id else None
+    if not preset:
+        return query
+    for keyword in (json.loads(preset.include_keywords) if preset.include_keywords else []):
+        query = query.filter(_title_contains(keyword))
+    for keyword in (json.loads(preset.exclude_keywords) if preset.exclude_keywords else []):
+        query = query.filter(~_title_contains(keyword))
+    if preset.min_price:
+        query = query.filter(Tender.estimated_price >= preset.min_price)
+    if preset.max_price:
+        query = query.filter(Tender.estimated_price <= preset.max_price)
+    if preset.days_before_deadline:
+        query = query.filter(
+            Tender.deadline_date <= datetime.now() + timedelta(days=preset.days_before_deadline))
+    return query
+
+
+def _apply_date_range(query, column, date_from, date_to):
+    """YYYY-MM-DD 문자열 범위를 적용한다. 끝 날짜는 그날 23:59:59 까지. 형식이 틀리면 무시."""
+    if date_from:
+        try:
+            query = query.filter(column >= datetime.strptime(date_from, '%Y-%m-%d'))
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            end = datetime.strptime(date_to, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+            query = query.filter(column <= end)
+        except ValueError:
+            pass
+    return query
+
+
+def _apply_agency_and_region(query, regions, agency_include, agency_exclude):
+    """지역(제목·기관명에서 찾음)과 수요기관 포함/제외 조건"""
+    if regions:
+        # 광역시도를 고르면 하위 시/군/구 이름도 함께 찾는다
+        terms = []
+        for r in regions:
+            terms.append(r)
+            terms.extend(_REGION_ALIASES.get(r, []))
+        conditions = []
+        for term in terms:
+            conditions.append(Tender.title.ilike(f'%{term}%'))
+            conditions.append(Tender.agency.ilike(f'%{term}%'))
+            conditions.append(Tender.demand_agency.ilike(f'%{term}%'))
+        query = query.filter(db.or_(*conditions))
+
+    if agency_include:      # 하나라도 포함
+        conditions = []
+        for term in agency_include:
+            conditions.append(Tender.demand_agency.ilike(f'%{term}%'))
+            conditions.append(Tender.agency.ilike(f'%{term}%'))
+        query = query.filter(db.or_(*conditions))
+
+    # 제외: demand_agency 가 NULL 이면 NOT ILIKE 가 NULL 로 평가돼 공고가 통째로 빠진다.
+    # → NULL 은 "해당 없음"으로 보고 통과시킨다
+    for term in agency_exclude:
+        query = query.filter(
+            db.or_(Tender.demand_agency.is_(None),
+                   ~Tender.demand_agency.ilike(f'%{term}%')),
+            ~Tender.agency.ilike(f'%{term}%'),
+        )
+    return query
+
+
+_REVISION_PREFIX = re.compile(
+    r'^[\s\(（\[「『【]*(?:수정공고|재공고|재입찰|정정공고|취소공고)[\s\)）\]」』】,·\s]*', re.IGNORECASE)
+
+
+def _dedupe_same_project(tenders):
+    """
+    같은 사업의 수정공고·재공고를 하나로 줄인다. 정렬된 목록에서 먼저 나온 것을 대표로 남긴다.
+    상태(사전규격/일반)가 다르면 제목이 같아도 따로 보여준다.
+    """
+    seen = set()
+    result = []
+    for tender in tenders:
+        title = re.sub(r'[「」『』【】\[\]]', '', _REVISION_PREFIX.sub('', tender.title)).strip()
+        key = (title, tender.status)
+        if key not in seen:
+            seen.add(key)
+            result.append(tender)
+    return result
+
+
 @bp.route('/api/tenders')
 @login_required
 def api_tenders():
     """공고 목록 조회 (필터링, 페이징)"""
     try:
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get(
-            'per_page', Config.ITEMS_PER_PAGE, type=int)
+        args = request.args
+        page = args.get('page', 1, type=int)
+        per_page = args.get('per_page', Config.ITEMS_PER_PAGE, type=int)
 
-        # 필터 파라미터
-        filter_id = request.args.get('filter_id', type=int)
-        include_keywords = request.args.get('include_keywords', '')
-        exclude_keywords = request.args.get('exclude_keywords', '')
-        status = request.args.get('status', '')
-        # keyword_logic는 현재 사용하지 않음 (하드코딩된 로직 사용)
-        # keyword_logic = request.args.get('keyword_logic', 'OR')
-
-        # 날짜 필터 파라미터
-        announced_date_from = request.args.get('announced_date_from', '')
-        announced_date_to = request.args.get('announced_date_to', '')
-        deadline_date_from = request.args.get('deadline_date_from', '')
-        deadline_date_to = request.args.get('deadline_date_to', '')
-        include_expired = request.args.get('include_expired', '0') == '1'
-
-        # 신규 필터 파라미터
-        min_price = request.args.get('min_price', type=int)   # 원 단위
-        max_price = request.args.get('max_price', type=int)   # 원 단위
-        regions   = [r.strip() for r in request.args.get('regions', '').split(',') if r.strip()]
-        demand_agency_include = [t.strip() for t in request.args.get('demand_agency_include', '').split(',') if t.strip()]
-        demand_agency_exclude = [t.strip() for t in request.args.get('demand_agency_exclude', '').split(',') if t.strip()]
-
-        # 결과공고 표시 여부 (기본: 제외)
-        show_result_notices = request.args.get('show_result', '0') == '1'
-
-        # 수의계약은 검색 결과에서 기본 제외
+        # 수의계약은 항상 제외, 결과공고(선정결과·낙찰결과 등)는 show_result=1 일 때만 포함
         query = Tender.query.filter(~Tender.bid_method.contains('수의계약'))
-        # 결과공고(선정결과·낙찰결과 등)는 기본 제외
-        if not show_result_notices:
+        if args.get('show_result', '0') != '1':
             query = query.filter(Tender.status != '결과공고')
 
-        # 필터 적용
-        if filter_id:
-            filter_preset = Filter.query.get(filter_id)
-            if filter_preset:
-                # 키워드 필터링
-                include_kw = json.loads(
-                    filter_preset.include_keywords) if filter_preset.include_keywords else []
-                exclude_kw = json.loads(
-                    filter_preset.exclude_keywords) if filter_preset.exclude_keywords else []
+        # ── 키워드 ──────────────────────────────────────────────────────────
+        query = _apply_preset(query, args.get('filter_id', type=int))
+        keyword_condition = _keyword_expression(args.get('include_keywords', ''))
+        if keyword_condition is not None:
+            query = query.filter(keyword_condition)
+        for keyword in _csv_arg('exclude_keywords'):
+            query = query.filter(~_title_contains(keyword))
 
-                for keyword in include_kw:
-                    query = query.filter(_title_contains(keyword))
+        if args.get('status', ''):
+            query = query.filter_by(status=args.get('status'))
 
-                for keyword in exclude_kw:
-                    query = query.filter(~_title_contains(keyword))
+        # ── 날짜 ────────────────────────────────────────────────────────────
+        date_args = {k: args.get(k, '') for k in (
+            'announced_date_from', 'announced_date_to', 'deadline_date_from', 'deadline_date_to')}
+        # 날짜를 하나도 지정하지 않으면 마감 전 공고만 보여준다 (include_expired=1 이면 마감된 것도)
+        if not any(date_args.values()) and args.get('include_expired', '0') != '1':
+            query = query.filter(Tender.deadline_date >= datetime.now())
+        query = _apply_date_range(query, Tender.announced_date,
+                                  date_args['announced_date_from'], date_args['announced_date_to'])
+        query = _apply_date_range(query, Tender.deadline_date,
+                                  date_args['deadline_date_from'], date_args['deadline_date_to'])
 
-                # 가격 필터
-                if filter_preset.min_price:
-                    query = query.filter(
-                        Tender.estimated_price >= filter_preset.min_price)
-                if filter_preset.max_price:
-                    query = query.filter(
-                        Tender.estimated_price <= filter_preset.max_price)
-
-                # 마감일 필터
-                if filter_preset.days_before_deadline:
-                    deadline = datetime.now() + timedelta(days=filter_preset.days_before_deadline)
-                    query = query.filter(Tender.deadline_date <= deadline)
-
-        # 직접 키워드 필터 (특수문자로 AND/OR 구분)
-        # 예: "AI+교육, 시스템" → (AI AND 교육) OR 시스템
-        if include_keywords:
-            # 쉼표로 split → OR 그룹들
-            or_groups = [g.strip()
-                         for g in include_keywords.split(',') if g.strip()]
-
-            if or_groups:
-                or_conditions = []
-
-                for group in or_groups:
-                    # + 기호로 split → AND 키워드들
-                    and_keywords = [k.strip()
-                                    for k in group.split('+') if k.strip()]
-
-                    if len(and_keywords) == 1:
-                        # 단일 키워드: 그냥 포함 조건
-                        or_conditions.append(
-                            _title_contains(and_keywords[0]))
-                    else:
-                        # 여러 키워드: 모두 포함해야 함 (AND)
-                        and_conditions = [
-                            _title_contains(k) for k in and_keywords]
-                        or_conditions.append(db.and_(*and_conditions))
-
-                # 모든 OR 조건들을 OR로 묶음
-                if len(or_conditions) == 1:
-                    query = query.filter(or_conditions[0])
-                else:
-                    query = query.filter(db.or_(*or_conditions))
-
-        if exclude_keywords:
-            # 제외 키워드는 각각 제외 (하나라도 포함되면 제외)
-            for keyword in exclude_keywords.split(','):
-                if keyword.strip():
-                    query = query.filter(~_title_contains(keyword.strip()))
-
-        # 상태 필터
-        if status:
-            query = query.filter_by(status=status)
-
-        # 기본 날짜 범위 설정 (마감일 기준 오늘부터 1달)
-        # 사용자가 날짜 필터를 하나도 지정하지 않은 경우에만 적용
-        # include_expired=True이면 기본 날짜 필터를 적용하지 않음 (마감된 공고 포함)
-        if not (
-                announced_date_from or announced_date_to or deadline_date_from or deadline_date_to):
-            if not include_expired:
-                today = datetime.now()
-                query = query.filter(Tender.deadline_date >= today)
-
-        # 날짜 필터 적용
-        if announced_date_from:
-            try:
-                from_date = datetime.strptime(announced_date_from, '%Y-%m-%d')
-                query = query.filter(Tender.announced_date >= from_date)
-            except ValueError:
-                pass
-
-        if announced_date_to:
-            try:
-                to_date = datetime.strptime(announced_date_to, '%Y-%m-%d')
-                # 해당 날짜의 끝까지 포함
-                to_date = to_date.replace(hour=23, minute=59, second=59)
-                query = query.filter(Tender.announced_date <= to_date)
-            except ValueError:
-                pass
-
-        if deadline_date_from:
-            try:
-                from_date = datetime.strptime(deadline_date_from, '%Y-%m-%d')
-                query = query.filter(Tender.deadline_date >= from_date)
-            except ValueError:
-                pass
-
-        if deadline_date_to:
-            try:
-                to_date = datetime.strptime(deadline_date_to, '%Y-%m-%d')
-                # 해당 날짜의 끝까지 포함
-                to_date = to_date.replace(hour=23, minute=59, second=59)
-                query = query.filter(Tender.deadline_date <= to_date)
-            except ValueError:
-                pass
-
-        # ── 금액 범위 필터 ──────────────────────────────────────────────────────
+        # ── 금액 (원 단위) · 지역 · 수요기관 ─────────────────────────────────
+        min_price = args.get('min_price', type=int)
+        max_price = args.get('max_price', type=int)
         if min_price is not None:
             query = query.filter(Tender.estimated_price >= min_price)
         if max_price is not None:
             query = query.filter(Tender.estimated_price <= max_price)
+        query = _apply_agency_and_region(
+            query, _csv_arg('regions'), _csv_arg('demand_agency_include'), _csv_arg('demand_agency_exclude'))
 
-        # ── 지역 필터 (광역시도 → 하위 시/군/구 포함) ───────────────────────────
-        if regions:
-            region_terms = []
-            for r in regions:
-                region_terms.append(r)
-                region_terms.extend(_REGION_ALIASES.get(r, []))
-            region_conditions = []
-            for term in region_terms:
-                region_conditions.append(Tender.title.ilike(f'%{term}%'))
-                region_conditions.append(Tender.agency.ilike(f'%{term}%'))
-                region_conditions.append(Tender.demand_agency.ilike(f'%{term}%'))
-            query = query.filter(db.or_(*region_conditions))
-
-        # ── 수요기관 포함 필터 (OR) ──────────────────────────────────────────────
-        if demand_agency_include:
-            inc_conditions = []
-            for term in demand_agency_include:
-                inc_conditions.append(Tender.demand_agency.ilike(f'%{term}%'))
-                inc_conditions.append(Tender.agency.ilike(f'%{term}%'))
-            query = query.filter(db.or_(*inc_conditions))
-
-        # ── 수요기관 제외 필터 (AND NOT) ─────────────────────────────────────────
-        # 주의: demand_agency=NULL 인 일반공고는 NOT ILIKE가 NULL로 평가되어 제외됨
-        # → NULL이면 "해당 없음(대학 아님)"으로 간주하여 통과시켜야 함
-        for term in demand_agency_exclude:
-            query = query.filter(
-                db.or_(Tender.demand_agency.is_(None),
-                       ~Tender.demand_agency.ilike(f'%{term}%')),
-                ~Tender.agency.ilike(f'%{term}%'),
-            )
-
-        # 모든 결과 가져오기 (스마트 정렬을 위해)
-        all_tenders = query.all()
-
-        # 사용자 설정 단일 조회 (정렬 + 점수 계산 공통)
+        # ── 정렬 · 중복 제거 · 페이징 ────────────────────────────────────────
+        # 점수/정렬은 항상 필터관리에 저장된 관심 키워드 기준 — 검색창 키워드와 무관.
+        # 점수를 파이썬에서 계산하므로 조건에 맞는 공고를 전부 읽어 온 뒤 정렬한다.
         uid = g.user.id if g.user else None
-        _uprefs = load_user_prefs(uid)
-        interest_keywords = _uprefs['interest_keywords']
-        user_type_weights = _uprefs['type_weights']
-        user_core_keywords2 = _uprefs.get('core_keywords', [])
+        prefs = load_user_prefs(uid)
+        interest_keywords = prefs['interest_keywords']
+        agency_weights = _agency_weights(uid)
 
-        # 스마트 정렬 적용 (사용자 관심 키워드 기반)
-        from database import AgencyWeight as _AgencyWeight
-        try:
-            _aw_rows2 = _AgencyWeight.query.filter_by(user_id=uid).all() if uid else []
-            user_agency_weights2 = {r.agency_name: r.weight for r in _aw_rows2}
-        except Exception:
-            user_agency_weights2 = {}
+        tenders = _dedupe_same_project(smart_sort_tenders_by_keyword_count(
+            query.all(), interest_keywords, prefs['type_weights'], agency_weights,
+            prefs.get('core_keywords', [])))
 
-        # 점수/정렬은 항상 필터관리에 저장된 관심 키워드 기준 — 검색창 키워드와 무관
-        sort_keywords = interest_keywords
+        total = len(tenders)
+        page_items = tenders[(page - 1) * per_page:page * per_page]
 
-        sorted_tenders = smart_sort_tenders_by_keyword_count(
-            all_tenders, sort_keywords, user_type_weights, user_agency_weights2, user_core_keywords2
-        )
+        memo_counts = {}
+        if page_items:
+            memo_counts = dict(db.session.query(
+                TenderMemo.tender_id, sql_func.count(TenderMemo.id)
+            ).filter(TenderMemo.tender_id.in_([t.id for t in page_items])
+                     ).group_by(TenderMemo.tender_id).all())
 
-        # 동일 사업명 중복 제거 — smart_sort 이후 첫 번째(최신) 공고만 대표로 유지
-        import re as _re
-
-        def _norm_title(t):
-            """(수정공고)·(재공고) 등 접두어와 「」 괄호를 제거한 정규화 제목"""
-            t = _re.sub(
-                r'^[\s\(（\[「『【]*(?:수정공고|재공고|재입찰|정정공고|취소공고)[\s\)）\]」』】,·\s]*',
-                '', t, flags=_re.IGNORECASE,
-            )
-            t = _re.sub(r'[「」『』【】\[\]]', '', t)
-            return t.strip()
-
-        seen_titles: dict = {}
-        deduped: list = []
-        for tender in sorted_tenders:
-            # 상태(사전규격/일반)를 키에 포함 — 같은 제목이어도 상태가 다르면 별도 표시
-            key = (_norm_title(tender.title), tender.status)
-            if key not in seen_titles:
-                seen_titles[key] = True
-                deduped.append(tender)
-        sorted_tenders = deduped
-
-        # 수동 페이징
-        total = len(sorted_tenders)
-        start = (page - 1) * per_page
-        end = start + per_page
-        items = sorted_tenders[start:end]
-
-        # 페이징 객체와 유사한 구조 생성
-        class ManualPagination:
-            def __init__(self, items, page, per_page, total):
-                self.items = items
-                self.page = page
-                self.per_page = per_page
-                self.total = total
-                self.pages = (total + per_page - 1) // per_page
-                self.has_prev = page > 1
-                self.has_next = page < self.pages
-
-        pagination = ManualPagination(items, page, per_page, total)
-
-        # memo_count 배치 조회
-        from sqlalchemy import func as _sql_func
-        _page_ids = [t.id for t in pagination.items]
-        _memo_counts = {}
-        if _page_ids:
-            _mcrows = db.session.query(
-                TenderMemo.tender_id, _sql_func.count(TenderMemo.id).label('cnt')
-            ).filter(TenderMemo.tender_id.in_(_page_ids)).group_by(TenderMemo.tender_id).all()
-            _memo_counts = {r[0]: r[1] for r in _mcrows}
-
-        # 점수 계산용 키워드 (sort_keywords와 동일한 소스에서 이미 파싱됨)
-        score_keywords = sort_keywords
-
-        _tenders_data = []
-        for t in pagination.items:
-            d = t.to_dict(interest_keywords=interest_keywords)
-            d['memo_count'] = _memo_counts.get(t.id, 0)
-            if score_keywords:
-                score, btype, kw_s, t_s, a_s = _score_and_type(
-                    t, score_keywords, user_type_weights, user_agency_weights2, user_core_keywords2)
+        result = []
+        for t in page_items:
+            if interest_keywords:
+                d = _scored_dict(t, prefs, agency_weights)
             else:
-                score, btype, kw_s, t_s, a_s = 0, '기타', 0.0, 0.0, 0.0
-            d['relevance_score'] = score
-            d['business_type'] = btype
-            d['score_breakdown'] = {'keyword': kw_s, 'type': t_s, 'agency': a_s}
-            _tenders_data.append(d)
+                d = t.to_dict(interest_keywords=interest_keywords)
+                d['relevance_score'] = 0
+                d['business_type'] = '기타'
+                d['score_breakdown'] = {'keyword': 0.0, 'type': 0.0, 'agency': 0.0}
+            d['memo_count'] = memo_counts.get(t.id, 0)
+            result.append(d)
 
         return jsonify({
-            'tenders': _tenders_data,
-            'total': pagination.total,
-            'pages': pagination.pages,
+            'tenders': result,
+            'total': total,
+            'pages': (total + per_page - 1) // per_page,
             'current_page': page,
             'interest_keywords': interest_keywords
         })
@@ -793,699 +632,6 @@ _REGION_ALIASES: dict = {
              '함양군','합천군'],
     '제주': ['제주시','서귀포시'],
 }
-
-_history_cache: dict = {}           # {tender_id: (epoch, result_dict)}
-_HISTORY_CACHE_TTL = 3600           # 1시간
-# '다시 조회'(force)도 이 시간 안에는 캐시를 돌려준다. 조회 한 번이 나라장터 API 를
-# 최대 216회 부르므로(질의 3 × API 2 × 36개월), 버튼을 연달아 누르면 키가 차단된다.
-_HISTORY_FORCE_MIN_INTERVAL = 300
-_HISTORY_CACHE_MAX = 500            # 이보다 많아지면 만료된 항목을 비운다
-# 이력 조회는 한 번에 하나만. 두 사람이 동시에 누르면 호출이 그대로 두 배가 된다.
-import threading as _threading
-_history_lock = _threading.Lock()
-
-
-@bp.route('/api/tenders/<int:tender_id>/history')
-@login_required
-def api_tender_history(tender_id):
-    """공고 수행이력 조회
-
-    조회 흐름:
-    1단계. 개찰결과 + 낙찰결과 (최근 2년, 공고명 유사검색) — 순차 소량 요청
-    2단계. 유찰/상세정보없음 건에 대해 계약현황 확인
-
-    최종 상태:
-    - 낙찰     : 낙찰결과 또는 개찰결과에서 낙찰 확인
-    - 단독응찰  : 개찰결과 유찰, 참가 1건
-    - 무응찰   : 개찰결과 유찰, 참가 0건
-    - 계약     : 낙찰/개찰 없으나 계약현황에서 확인
-    - 상세없음  : 공고는 검색됐으나 개찰/낙찰/계약 데이터 없음
-    """
-    import requests as _req
-    import re as _re
-    import time as _time
-    from datetime import datetime as _dt
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    import calendar as _cal
-    from urllib.parse import unquote as _unquote
-    from settings_manager import settings_manager
-
-    # ── 캐시 확인 (1시간 TTL) ────────────────────────────────────────────────
-    _force = request.args.get('force', '0') == '1'
-    _now_ts = _time.time()
-    def _from_cache():
-        _c = _history_cache.get(tender_id)
-        if not _c:
-            return None
-        _ts, _result = _c
-        _age = _time.time() - _ts
-        if _age < (_HISTORY_FORCE_MIN_INTERVAL if _force else _HISTORY_CACHE_TTL):
-            return jsonify({**_result, 'cached': True})
-        return None
-
-    _hit = _from_cache()
-    if _hit is not None:
-        return _hit
-
-    tender = Tender.query.get_or_404(tender_id)
-
-    # 앞선 조회가 끝나기를 기다렸다가, 그 사이 같은 공고가 조회됐으면 그 결과를 쓴다.
-    with _history_lock:
-        _hit = _from_cache()
-        if _hit is not None:
-            return _hit
-        return _tender_history_uncached(tender, tender_id)
-
-
-def _tender_history_uncached(tender, tender_id):
-    """api_tender_history 의 본문 — 캐시에 없을 때 나라장터 API 를 실제로 조회한다."""
-    import requests as _req
-    import re as _re
-    import time as _time
-    from datetime import datetime as _dt
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    import calendar as _cal
-    from urllib.parse import unquote as _unquote
-    from settings_manager import settings_manager
-
-    _raw_key = settings_manager.get('crawl.sites.g2b_api.service_key', '')
-    if not _raw_key:
-        return jsonify({'error': 'API 키가 설정되지 않았습니다.'}), 500
-    service_key = _unquote(_raw_key)  # 이중 인코딩 방지
-
-    # ── 공고명 정제: 메타정보 제거 ────────────────────────────────────────────
-    title = tender.title or ''
-    clean = title
-    clean = _re.sub(r'\[[^\]]+\]', '', clean)
-    clean = _re.sub(r'「[^」]*」', '', clean)  # 홑낫표(「」) 부제 제거 (예: 「메타버스...」)
-    clean = _re.sub(
-        r'\(\s*(?:입찰재공고|입찰공고|입찰|재공고|재입찰|긴급|사전규격공개|사전규격'
-        r'|일반용역|추가공고|정정공고|공고|변경)\s*\)',
-        '', clean, flags=_re.IGNORECASE,
-    )
-    clean = _re.sub(r'\d{4}년도?', '', clean)
-    clean = _re.sub(r"'\d{2}년도?", '', clean)
-    clean = _re.sub(r'\(\s*20\d{2}\s*\)', '', clean)
-    clean = _re.sub(r'\b(?:19|20)\d{2}\b', '', clean)   # 단독 연도 숫자 제거 (2026 등)
-    clean = _re.sub(r'제\s*\d+\s*회차?', '', clean)
-    clean = _re.sub(r'\d+\s*차년도', '', clean)
-    clean = _re.sub(r'\d+\s*차\b', '', clean)
-    clean = _re.sub(r'^\(?\s*(?:입찰재공고|입찰공고|재공고|재입찰)\s*\)?[\s-]*', '', clean)
-    # 상·하반기 / 학기 표현 제거: 매년 동일 사업이 "상반기"/"하반기"로 나뉘어 공고될 때
-    # 쿼리에 "하반기"가 포함되면 "상반기" 공고가 조회되지 않으므로 제거
-    clean = _re.sub(r'[상하]반기', '', clean)
-    clean = _re.sub(r'[1-4]학기', '', clean)
-    clean = _re.sub(r'\s+', ' ', clean).strip()
-
-    # ── API 검색어 빌딩 ───────────────────────────────────────────────────────
-    # 나라장터 bidNtceNm 파라미터는 "완전한 연속 부분문자열"만 매칭한다
-    # (여러 단어를 AND로 찾아주는 게 아니라, 제출한 문자열이 실제 공고명 안에
-    #  그 순서·간격 그대로 붙어 있어야만 매칭됨 — 실측으로 확인).
-    # 그래서 서로 떨어져 있는 단어(예: "인천"...."SW미래채움")를 이어붙여 검색하면
-    # 원문과 글자가 안 맞아 항상 0건이 된다. → 여러 단어 조합 대신 단일 토큰만 사용.
-    #
-    # 문제는 프로그램명 앞에 붙는 수식어가 해마다 바뀐다는 것:
-    #   "SW미래채움" / "AI·SW미래채움" / "소프트웨어(SW)미래채움" / "인천SW미래채움"
-    # → 앞에 붙은 영문·괄호 수식어(SW/AI/소프트웨어 등)만 다르고, 핵심 한글 어근
-    #   ("미래채움")은 항상 그대로 붙어서 등장한다.
-    # → 가장 긴 단어(주 쿼리)뿐 아니라, 그 단어의 "끝부분 연속 한글" 만 추출한
-    #   보조 쿼리도 함께 검색해서 수식어가 바뀌어도 걸리도록 한다.
-    _QUERY_STOPWORDS = {'사업', '용역', '운영', '관리', '지원', '추진', '수행'}
-
-    _search_clean = _re.sub(r'[·/~\-+·]', ' ', clean)
-    _search_clean = _re.sub(r'\s+', ' ', _search_clean).strip()
-    _clean_words = _search_clean.split()
-
-    def _trailing_hangul(word):
-        """단어 끝부분의 연속 한글 어근만 추출 (영문/괄호 수식어 접두 제거)
-        예: "SW미래채움" → "미래채움" / "(SW)미래채움" → "미래채움"
-        """
-        m = _re.search(r'[가-힣]+$', word)
-        return m.group(0) if m else ''
-
-    _meaningful = [w for w in _clean_words if w not in _QUERY_STOPWORDS] or _clean_words
-    _sorted_by_len = sorted(set(_meaningful), key=len, reverse=True)
-
-    query_nm = (_sorted_by_len[0] if _sorted_by_len else '')[:60]   # 주 쿼리: 가장 긴 단어(그대로)
-
-    # 병행 쿼리(1차안): 상위 후보 단어들 각각에서 "수식어 뗀 한글 어근"을 뽑아
-    # 최대 2개까지 추가 검색어로 병행 실행. 주 쿼리로 뽑힌 단어가 아니어도 상관없음
-    # (예: 주 쿼리가 "교육페스티벌"이어도, "SW미래채움"에서 뽑은 "미래채움"을 별도로 병행)
-    _core_candidates = sorted(
-        {
-            core
-            for w in _sorted_by_len
-            for core in [_trailing_hangul(w)]
-            if core and core != w and len(core) >= 2
-        },
-        key=len, reverse=True,
-    )
-
-    # 어근 후보가 부족하면(수식어-핵심어 패턴이 없는 제목) 기존 방식대로
-    # 두 번째·세 번째로 긴 단어를 보조 쿼리로 채워 넣는다
-    _fallback_words = [w[:60] for w in _sorted_by_len[1:3]]
-
-    _queries = []
-    for q in [query_nm, *_core_candidates, *_fallback_words]:
-        if q and q not in _queries:
-            _queries.append(q)
-        if len(_queries) >= 3:   # API 호출량 관리를 위해 최대 3개 쿼리로 제한
-            break
-
-    # ── 유사도·기관 매칭 유틸 ─────────────────────────────────────────────────
-    import difflib as _difflib
-
-    def _norm_title(s):
-        """공고명 정규화: 연도·괄호접두어·차수 등 제거"""
-        s = _re.sub(r'\[[^\]]+\]', '', s)
-        s = _re.sub(r'「[^」]*」', '', s)  # 홑낫표(「」) 부제 제거
-        s = _re.sub(
-            r'\(\s*(?:입찰재공고|입찰공고|입찰|재공고|재입찰|긴급|사전규격공개|사전규격'
-            r'|일반용역|추가공고|정정공고|공고|변경)\s*\)',
-            '', s, flags=_re.IGNORECASE,
-        )
-        s = _re.sub(r'\d{4}년도?', '', s)
-        s = _re.sub(r"'\d{2}년도?", '', s)
-        s = _re.sub(r'\(\s*20\d{2}\s*\)', '', s)
-        s = _re.sub(r'\b(?:19|20)\d{2}\b', '', s)
-        s = _re.sub(r'제\s*\d+\s*회차?', '', s)
-        s = _re.sub(r'\d+\s*차년도', '', s)
-        s = _re.sub(r'\d+\s*차\b', '', s)
-        s = _re.sub(r'^\(?\s*(?:입찰재공고|입찰공고|재공고|재입찰)\s*\)?[\s-]*', '', s)
-        return _re.sub(r'\s+', ' ', s).strip()
-
-    def _name_similarity(a, b):
-        """정규화된 공고명 간 유사도 (0.0~1.0)"""
-        a2, b2 = _norm_title(a), _norm_title(b)
-        if not a2 or not b2:
-            return 0.0
-        return _difflib.SequenceMatcher(None, a2, b2).ratio()
-
-    def _agency_match(tender_ag, tender_demand_ag, item):
-        """발주처(수요기관) 매칭.
-        API 응답에 기관 정보가 없으면 True (미필터) — false negative 방지.
-        개찰결과: ntceInsttNm / 낙찰결과: dminsttNm 사용.
-        """
-        item_ags = [
-            (item.get('ntceInsttNm') or '').strip(),   # 개찰결과 공고기관
-            (item.get('demandOrgNm') or '').strip(),   # (일부 API)
-            (item.get('dminsttNm')   or '').strip(),   # 낙찰결과 수요기관
-        ]
-        item_ags = [a for a in item_ags if a]
-        if not item_ags:
-            return True   # 기관 정보 없음 → 이름 유사도만으로 판단
-
-        def _pair(a, b):
-            if not a or not b:
-                return False
-            a, b = a.strip(), b.strip()
-            if a == b:
-                return True
-            shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
-            return len(shorter) >= 4 and shorter in longer
-
-        for item_ag in item_ags:
-            if _pair(tender_ag, item_ag) or _pair(tender_demand_ag, item_ag):
-                return True
-        return False
-
-    _tender_agency        = tender.agency        or ''
-    _tender_demand_agency = tender.demand_agency or ''
-    _title_norm           = _norm_title(title)   # 현재 공고 정규화명
-
-    # ── 조회 기간: 최근 3년 × 월별 목록 ─────────────────────────────────────
-    # G2B API 제약: 1개월 초과 범위(07 오류) → 월별 분할 필수
-    # 3년(36개월) × 2 API × 10 workers = 검색당 최대 72 호출
-    # (기존 5년 × 40 workers = 120 호출 → 429 재시도 × 3 = 360 호출)
-    now = _dt.now()
-    periods = []
-    for offset in range(36):   # 3년 = 36개월
-        y, m = now.year, now.month - offset
-        while m <= 0:
-            m += 12; y -= 1
-        last_day = _cal.monthrange(y, m)[1]
-        periods.append((f'{y}{m:02d}010000', f'{y}{m:02d}{last_day:02d}2359'))
-
-    RESULT_BASE = 'https://apis.data.go.kr/1230000/as/ScsbidInfoService'
-    CNTRCT_BASE = 'https://apis.data.go.kr/1230000/ao/CntrctInfoService'
-
-    # ── 공통 파서 ─────────────────────────────────────────────────────────────
-    def _parse_items(data):
-        body = data.get('response', {}).get('body', {})
-        raw  = body.get('items')
-        if isinstance(raw, list):
-            return raw
-        if isinstance(raw, dict):
-            inner = raw.get('item', [])
-            return [inner] if isinstance(inner, dict) else (inner or [])
-        return []
-
-    def _safe_get(url, params, timeout=25):
-        """GET 요청 → (items, error_str).
-        - 429(할당량 초과): 즉시 포기 — 재시도해도 quota는 회복 안 됨
-        - 502/503(일시 오류): 최대 2회 재시도
-        """
-        for attempt in range(3):
-            try:
-                r = _req.get(url, params=params, timeout=timeout)
-                if r.status_code == 429:
-                    return [], '할당량초과(429)'   # 재시도 없이 즉시 반환
-                if r.status_code in (502, 503):
-                    _time.sleep(2 + attempt * 2)
-                    continue
-                if r.status_code != 200:
-                    return [], f'HTTP {r.status_code}'
-                text = r.text.strip()
-                if not text or text.startswith('<'):
-                    return [], None
-                data = r.json()
-                # G2B 비표준 오류 응답 처리
-                if 'nkoneps.com.response.ResponseError' in data:
-                    err_code = data['nkoneps.com.response.ResponseError'].get('header', {}).get('resultCode', '')
-                    err_msg  = data['nkoneps.com.response.ResponseError'].get('header', {}).get('resultMsg', '')
-                    return [], f'{err_code}:{err_msg}'
-                hdr  = data.get('response', {}).get('header', {})
-                code = str(hdr.get('resultCode', '') or '')
-                msg  = str(hdr.get('resultMsg',  '') or '')
-                if code and code not in ('00', '000'):
-                    return [], f'{code}:{msg}'
-                return _parse_items(data), None
-            except Exception as e:
-                if attempt < 2:
-                    _time.sleep(1)
-                    continue
-                return [], str(e)
-        return [], '재시도 초과'
-
-    # ── 1단계: 개찰결과 + 낙찰결과 — 월별 병렬 조회 ─────────────────────────
-    ops = [
-        ('openg', RESULT_BASE, 'getOpengResultListInfoServcPPSSrch'),
-        ('award', RESULT_BASE, 'getScsbidListSttusServcPPSSrch'),
-    ]
-
-    def fetch_period(kind, base, ep, bdt, edt, qnm):
-        items, err = _safe_get(
-            f'{base}/{ep}',
-            {'ServiceKey': service_key, 'type': 'json',
-             'inqryDiv': '1', 'inqryBgnDt': bdt, 'inqryEndDt': edt,
-             'bidNtceNm': qnm, 'pageNo': '1', 'numOfRows': '100'},
-        )
-        return kind, items, err
-
-    openg_by_no: dict = {}
-    award_by_no: dict = {}
-    errors = []
-
-    # 병행 검색: _queries(최대 3개)를 쿼리마다 따로 72콜씩 "순차" 실행하면
-    # 프록시(Cloudflare 등)의 요청 타임아웃(보통 100초 안팎)을 넘기기 쉽다
-    # (실측: 순차 실행 시 8분 이상 소요 → 타임아웃으로 HTML 에러 페이지 반환 →
-    #  프론트엔드가 이를 JSON으로 파싱하려다 실패하는 문제로 이어짐).
-    # 그래서 쿼리×기간×API 조합을 전부 "하나의" 스레드풀에 한꺼번에 제출해
-    # 병행 처리하고, 전체 소요 시간이 쿼리 1개일 때와 비슷한 수준을 유지하게 한다.
-    _quota_exceeded = False
-    with ThreadPoolExecutor(max_workers=30) as ex:
-        futures = [
-            ex.submit(fetch_period, kind, base, ep, bdt, edt, qnm)
-            for qnm in _queries
-            for kind, base, ep in ops
-            for bdt, edt in periods
-        ]
-        for fut in as_completed(futures):
-            if fut.cancelled():
-                continue
-            kind, items, err = fut.result()
-            if err:
-                if '429' in str(err) or '할당량' in str(err):
-                    if not _quota_exceeded:
-                        # 한도 초과가 확인되면 아직 시작하지 않은 요청을 취소한다.
-                        # 그대로 두면 차단된 키로 남은 요청 수백 건이 모두 나간다.
-                        for _f in futures:
-                            _f.cancel()
-                    _quota_exceeded = True
-                errors.append(f'{kind}: {err}')
-                continue
-            for item in items:
-                bid_no = item.get('bidNtceNo', '')
-                if not bid_no:
-                    continue
-                if kind == 'openg':
-                    openg_by_no.setdefault(bid_no, []).append(item)
-                elif kind == 'award':
-                    award_by_no.setdefault(bid_no, []).append(item)
-            if _quota_exceeded:
-                break
-
-    # 모든 공고번호 통합
-    all_bid_nos = set(openg_by_no) | set(award_by_no)
-
-    # ── 2단계: 공고별 상태 결정 ──────────────────────────────────────────────
-    def _parse_openg_corp(corp_raw):
-        if not corp_raw:
-            return {}
-        parts = corp_raw.split('^')
-        return {
-            'name':   (parts[0] if len(parts) > 0 else '').strip(),
-            'amount': int(parts[3]) if len(parts) > 3 and parts[3].strip().isdigit() else 0,
-            'rate':   (parts[4] if len(parts) > 4 else '').strip(),
-        }
-
-    def _winner_from_openg(ol):
-        for rec in ol:
-            if rec.get('sucsfBidYn') == 'Y':
-                b = _parse_openg_corp(rec.get('opengCorpInfo', ''))
-                if b.get('name'):
-                    return b['name']
-        for rec in ol:
-            nm = rec.get('bidwinnrNm', '')
-            if nm:
-                return nm
-        if ol:
-            b = _parse_openg_corp(ol[0].get('opengCorpInfo', ''))
-            return b.get('name', '')
-        return ''
-
-    final_items = []
-    needs_contract_check = []
-
-    for bid_no in all_bid_nos:
-        award_list = award_by_no.get(bid_no, [])
-        openg_list = openg_by_no.get(bid_no, [])
-
-        # 낙찰결과 대표 레코드
-        award = next((r for r in award_list if r.get('bidwinnrNm')), None)
-        if award is None and award_list:
-            award = award_list[0]
-
-        openg = openg_list[0] if openg_list else None
-
-        # 공고 URL / 추정가격은 결과 레코드에서 추출
-        base_rec = award or openg or {}
-        _ann_url     = base_rec.get('bidNtceUrl') or base_rec.get('bidNtceDtlUrl') or ''
-        _presmptPrce = base_rec.get('presmptPrce', '') or base_rec.get('asignBdgtAmt', '')
-        _openg_corp  = openg.get('opengCorpInfo', '') if openg else ''
-        _prtcpt_cnt  = int(openg.get('prtcptCnum') or 0) if openg else 0
-
-        if award:
-            item = dict(award)
-            item['_status']      = '낙찰'
-            item['_presmptPrce'] = _presmptPrce
-            _actual_winner  = award.get('bidwinnrNm', '') or _winner_from_openg(openg_list)
-            _openg_1st      = _winner_from_openg(openg_list)   # 개찰 시 1순위(sucsfBidYn=Y)
-            item['_winner_nm']   = _actual_winner
-            item['_prtcpt_cnt']  = _prtcpt_cnt
-            # 개찰 1순위와 실제 낙찰자가 다를 때 (적격심사 탈락 후 차순위 낙찰)
-            if _openg_1st and _actual_winner and _openg_1st != _actual_winner:
-                item['_openg_candidate'] = _openg_1st
-            if not item.get('bidNtceUrl'):
-                item['bidNtceUrl'] = _ann_url
-            final_items.append(item)
-
-        elif openg:
-            progrs = openg.get('progrsDivCdNm', '')
-            if progrs == '유찰':
-                item = dict(openg)
-                item['_status']     = 'fail'
-                item['_fail_type']  = (
-                    'no_bidder'   if _prtcpt_cnt == 0 else
-                    'sole_bidder' if _prtcpt_cnt == 1 else
-                    'unknown'
-                )
-                item['_presmptPrce'] = _presmptPrce
-                item['_prtcpt_cnt']  = _prtcpt_cnt
-                if not item.get('bidNtceUrl'):
-                    item['bidNtceUrl'] = _ann_url
-                needs_contract_check.append(item)
-                final_items.append(item)
-            else:
-                item = dict(openg)
-                item['_status']      = '낙찰'
-                item['_presmptPrce'] = _presmptPrce
-                item['_winner_nm']   = _winner_from_openg(openg_list)
-                item['_prtcpt_cnt']  = _prtcpt_cnt
-                if not item.get('bidNtceUrl'):
-                    item['bidNtceUrl'] = _ann_url
-                final_items.append(item)
-
-        else:
-            # 공고번호는 있는데 openg/award 모두 없는 경우 → 상세없음
-            item = dict(base_rec)
-            item['bidNtceNo']    = bid_no
-            item['_status']      = '상세없음'
-            item['_presmptPrce'] = _presmptPrce
-            item['_prtcpt_cnt']  = 0
-            needs_contract_check.append(item)
-            final_items.append(item)
-
-    # ── 3단계: 계약현황 확인 (유찰·상세없음 대상) ─────────────────────────────
-    _today_str = datetime.now().strftime('%Y%m%d')
-
-    def _parse_corp_list(corp_raw):
-        if not corp_raw:
-            return ''
-        try:
-            parts = corp_raw.strip('[]').split('^')
-            return parts[3] if len(parts) > 3 else ''
-        except Exception:
-            return ''
-
-    def _names_match(bid_nm, cntrct_nm):
-        stopwords = {'및', '의', '을', '를', '이', '가', '에', '에서', '으로', '로',
-                     '용역', '사업', '위탁', '운영', '관리', '지원', '추진', '수행'}
-        def kw(nm):
-            return {w for w in nm.split() if len(w) >= 2 and w not in stopwords}
-        b, c = kw(bid_nm), kw(cntrct_nm)
-        if not b or not c:
-            return False
-        common = len(b & c)
-        # 고유명사 1개라도 일치하면 매칭 (짧은 공고명 대응)
-        return common >= 1 if len(b) <= 2 else common >= min(2, len(b))
-
-    _NM_PREFIX = _re.compile(
-        r'^\s*[\(\[（【]?\s*(입찰공고|재공고|입찰재공고|재입찰|긴급공고|수정공고)\s*[\)\]）】]?\s*'
-    )
-
-    def fetch_contract(item):
-        ntce_nm = item.get('bidNtceNm', '')
-        if not ntce_nm:
-            return item, None
-        clean_nm  = _NM_PREFIX.sub('', ntce_nm).strip()
-        words     = clean_nm.split()
-        search_kw = ' '.join(words[:4]) if len(words) >= 4 else clean_nm
-        if len(search_kw) < 4:
-            return item, None
-        raw_dt = (item.get('bidNtceDt') or item.get('opengDt') or item.get('rlOpengDt') or '')
-        search_from = _re.sub(r'[^0-9]', '', raw_dt)[:8] if raw_dt else ''
-        if not search_from or search_from > _today_str:
-            # 날짜 없는 경우 최근 3년치 전체 검색
-            search_from = str(now.year - 3) + '0101'
-        try:
-            # 낙찰 후 계약까지 최대 2년 소요 가능 → 2년 범위로 확장
-            search_to = min(str(int(search_from[:4]) + 2) + search_from[4:], _today_str)
-        except Exception:
-            search_to = _today_str
-        cntrct_items, _ = _safe_get(
-            f'{CNTRCT_BASE}/getCntrctInfoListServcPPSSrch',
-            {'ServiceKey': service_key, 'type': 'json',
-             'inqryDiv': '1', 'inqryBgnDate': search_from, 'inqryEndDate': search_to,
-             'cntrctNm': search_kw, 'pageNo': '1', 'numOfRows': '10'},
-            timeout=20,
-        )
-        for r0 in cntrct_items:
-            c_nm = r0.get('cntrctNm', '')
-            if not _names_match(ntce_nm, c_nm):
-                continue
-            winner = _parse_corp_list(r0.get('corpList', ''))
-            amount = r0.get('thtmCntrctAmt', '') or r0.get('totCntrctAmt', '')
-            if winner or amount:
-                return item, {
-                    'winner': winner, 'amount': amount,
-                    'date': r0.get('cntrctDate', ''),
-                }
-        return item, None
-
-    # ── 후처리 필터: 수요기관 일치 + 사업명 유사도 70% 이상 ─────────────────────
-    # G2B API는 공고명 키워드 검색이라 관련 없는 결과가 섞일 수 있음
-    # → 발주처(수요기관)가 같고, 정규화 공고명 유사도 ≥ 70% 인 것만 유지
-    #
-    # 중요: 이 필터를 "계약현황 확인(3단계)" 전에 먼저 적용해서 needs_contract_check를
-    # 좁혀야 한다. 넓은 검색어(예: 병행검색으로 추가된 "미래채움" 같은 일반적인 어근)는
-    # 전국의 관련 없는 후보를 많이 끌어오는데, 계약현황 API는 동시 3개로만 처리되는
-    # 무거운 호출이라 필터링 전 후보 전체에 대해 돌리면 (필터로 어차피 버려질 것까지
-    # 포함해서) 조회 시간이 크게 늘어난다. 실측: 이 순서 문제로 특정 공고에서
-    # 3분 이상 소요됨을 확인.
-    SIMILARITY_THRESHOLD = 0.70
-    needs_contract_check = [
-        it for it in needs_contract_check
-        if _name_similarity(_title_norm, it.get('bidNtceNm', '')) >= SIMILARITY_THRESHOLD
-        and _agency_match(_tender_agency, _tender_demand_agency, it)
-    ]
-
-    if needs_contract_check:
-        with ThreadPoolExecutor(max_workers=3) as ex2:
-            for fut in as_completed([ex2.submit(fetch_contract, it) for it in needs_contract_check]):
-                item, contract = fut.result()
-                if contract:
-                    item['_status']            = '계약'
-                    item['_followup_contract'] = contract
-    filtered_items = []
-    for _it in final_items:
-        _item_nm = _it.get('bidNtceNm', '')
-        _sim = _name_similarity(_title_norm, _item_nm)
-        _ag  = _agency_match(_tender_agency, _tender_demand_agency, _it)
-        if _sim >= SIMILARITY_THRESHOLD and _ag:
-            _it['_similarity'] = round(_sim, 2)
-            filtered_items.append(_it)
-    final_items = filtered_items
-
-    # ── 정렬: 개찰일/공고일 최신순 ──────────────────────────────────────────
-    def _sort_key(x):
-        return x.get('rlOpengDt') or x.get('opengDt') or x.get('fnlSucsfDate') or x.get('bidNtceDt') or ''
-
-    final_items.sort(key=_sort_key, reverse=True)
-
-    _result_data = {
-        'items':          final_items,
-        'query':          query_nm,
-        'queries':        _queries,
-        'original_title': title,
-        'errors':         list(set(errors))[:5],
-        'pblnc_api_ok':   True,
-    }
-    if len(_history_cache) >= _HISTORY_CACHE_MAX:
-        _cut = _time.time() - _HISTORY_CACHE_TTL
-        for _k in [k for k, (ts, _) in _history_cache.items() if ts < _cut]:
-            _history_cache.pop(_k, None)
-    _history_cache[tender_id] = (_time.time(), _result_data)
-
-    return jsonify({
-        'items':          final_items,
-        'query':          query_nm,
-        'queries':        _queries,
-        'original_title': title,
-        'errors':         list(set(errors))[:5],
-        'pblnc_api_ok':   True,
-    })
-
-
-@bp.route('/api/history/bidders')
-@login_required
-def api_history_bidders():
-    """특정 입찰 공고의 투찰업체 상세 목록 조회
-    나라장터 낙찰정보서비스 — getOpnBidResultList (개찰결과목록조회)
-    """
-    import requests as _req
-    from urllib.parse import unquote as _unquote
-    from settings_manager import settings_manager
-
-    bid_no  = request.args.get('bid_no', '').strip()
-    bid_seq = request.args.get('bid_seq', '000').strip().zfill(3)
-    if not bid_no:
-        return jsonify({'error': '입찰번호가 필요합니다.'}), 400
-
-    service_key = settings_manager.get('crawl.sites.g2b_api.service_key', '')
-    if not service_key:
-        return jsonify({'error': 'API 키가 설정되지 않았습니다.'}), 500
-
-    # 서비스 키 이중 인코딩 방지 (requests가 한 번만 인코딩하도록 unquote)
-    decoded_key = _unquote(service_key)
-
-    def _parse_items(data):
-        body = data.get('response', {}).get('body', {})
-        total = body.get('totalCount', 0)
-        raw = body.get('items')
-        if isinstance(raw, list):
-            return raw, total
-        if isinstance(raw, dict):
-            inner = raw.get('item', [])
-            items = [inner] if isinstance(inner, dict) else (inner if isinstance(inner, list) else [])
-            return items, total
-        return [], 0
-
-    def _try_endpoint(url):
-        params = {
-            'ServiceKey': decoded_key,
-            'type': 'json',
-            'bidNtceNo': bid_no,
-            'bidNtceOrd': bid_seq,
-            'pageNo': '1',
-            'numOfRows': '200',
-        }
-        r = _req.get(url, params=params, timeout=15)
-        data = r.json()
-        # 에러 코드 확인
-        hdr = data.get('response', {}).get('header', {})
-        code = str(hdr.get('resultCode', '') or data.get('resultCode', ''))
-        msg  = hdr.get('resultMsg', '') or data.get('resultMsg', '')
-        if code and code != '00':
-            return None, code, msg
-        items, total = _parse_items(data)
-        return items, '00', msg
-
-    # 기존에 사용 중인 ScsbidInfoService의 getOpnBidResultList 오퍼레이션
-    ENDPOINTS = [
-        'http://apis.data.go.kr/1230000/as/ScsbidInfoService/getOpnBidResultList',
-        'http://apis.data.go.kr/1230000/BidResultService/getOpnBidResultList',
-    ]
-
-    try:
-        items = None
-        last_code, last_msg = '', ''
-        for url in ENDPOINTS:
-            items, last_code, last_msg = _try_endpoint(url)
-            if items is not None:
-                break
-
-        if items is None:
-            return jsonify({'error': f'API 오류 ({last_code}): {last_msg}'}), 502
-
-        bidders = []
-        winner_nm = ''
-        for it in items:
-            name = (it.get('corpNm') or it.get('bidcorpNm') or
-                    it.get('corNm') or '').strip()
-            if not name:
-                continue
-            rank_raw = (it.get('rnk') or it.get('bidprcRank') or
-                        it.get('rank') or '')
-            biz_no = (it.get('bizno') or it.get('corpRegNo') or
-                      it.get('brno') or '').strip()
-            amt_raw = (it.get('bidprcAmt') or it.get('bidAmt') or
-                       it.get('bidprcPrice') or 0)
-            try:
-                amt = int(str(amt_raw).replace(',', ''))
-            except (ValueError, TypeError):
-                amt = 0
-            rate = str(it.get('bidprcRate') or it.get('bidRate') or '').strip()
-            is_win = str(it.get('sucsfBidYn') or it.get('bidwinnrYn') or '').upper() == 'Y'
-
-            if is_win and not winner_nm:
-                winner_nm = name
-
-            bidders.append({
-                'name': name,
-                'rank': rank_raw,
-                'bizNo': biz_no,
-                'amount': amt,
-                'rate': rate,
-                'is_winner': is_win,
-            })
-
-        # 순위 기준 정렬
-        def _rank_key(b):
-            try:
-                return int(b['rank'])
-            except (ValueError, TypeError):
-                return 9999
-        bidders.sort(key=_rank_key)
-
-        return jsonify({
-            'bidders':   bidders,
-            'winner_nm': winner_nm,
-            'count':     len(bidders),
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 
 @bp.route('/api/search', methods=['POST'])
 @admin_required

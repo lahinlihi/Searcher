@@ -270,6 +270,7 @@ from routes.auth import bp as auth_bp
 from routes.admin import bp as admin_bp
 from routes.pages import bp as pages_bp
 from routes.tenders import bp as tenders_bp
+from routes.history import bp as history_bp
 from routes.bookmarks import bp as bookmarks_bp
 from routes.filters import bp as filters_bp
 from routes.settings import bp as settings_bp
@@ -281,6 +282,7 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(pages_bp)
 app.register_blueprint(tenders_bp)
+app.register_blueprint(history_bp)
 app.register_blueprint(bookmarks_bp)
 app.register_blueprint(filters_bp)
 app.register_blueprint(settings_bp)

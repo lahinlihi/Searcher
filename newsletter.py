@@ -870,32 +870,22 @@ if __name__ == '__main__':
 # ════════════════════════════════════════════════════════════ 계정 설정
 
 def _save_settings(patch):
-    """settings.json 의 newsletter 항목을 부분 갱신한다."""
-    try:
-        with open(SETTINGS_PATH, encoding='utf-8') as f:
-            d = json.load(f)
-    except Exception:
-        d = {}
-    nl = d.get('newsletter') or {}
-    smtp = nl.get('smtp') or {}
-    for k in ('from_name', 'base_url'):
-        if k in patch and patch[k] is not None:
-            nl[k] = patch[k]
-    for k in ('service', 'user', 'password', 'server', 'port', 'ssl'):
-        if k in patch and patch[k] is not None:
-            smtp[k] = patch[k]
-    nl['smtp'] = smtp
-    d['newsletter'] = nl
-    tmp = SETTINGS_PATH + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(d, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, SETTINGS_PATH)       # 쓰는 도중 깨지지 않도록 원자적 교체
-    # 서버 안에서는 settings_manager 가 기동 때 읽은 사본을 들고 있다가
-    # set() 한 번에 파일 전체를 그 사본으로 다시 쓴다. 사본을 맞춰 두지 않으면
-    # 방금 저장한 발송 계정이 다른 설정을 저장하는 순간 되돌려진다.
-    sm = sys.modules.get('settings_manager')
-    if sm is not None:
-        sm.settings_manager.load_settings()
+    """settings.json 의 newsletter 항목을 부분 갱신한다. (쓰기는 settings_manager 가 맡는다)"""
+    from settings_manager import settings_manager
+
+    def _apply(d):
+        nl = d.get('newsletter') or {}
+        smtp = nl.get('smtp') or {}
+        for k in ('from_name', 'base_url'):
+            if k in patch and patch[k] is not None:
+                nl[k] = patch[k]
+        for k in ('service', 'user', 'password', 'server', 'port', 'ssl'):
+            if k in patch and patch[k] is not None:
+                smtp[k] = patch[k]
+        nl['smtp'] = smtp
+        d['newsletter'] = nl
+
+    settings_manager.modify(_apply)
     return True
 
 
