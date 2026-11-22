@@ -464,6 +464,55 @@ class AgencyWeight(db.Model):
         }
 
 
+# ── 사례로 배우는 점수 (docs/product-contract.md) ─────────────────────────────
+# 저장·조회는 case_store.py 를 거친다.
+
+class CaseExample(db.Model):
+    """좋은 사례로 넣은 공고 (사용자별). 북마크는 여기 넣지 않고 bookmarks 에서 바로 읽는다."""
+    __tablename__ = 'case_examples'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    tender_id = db.Column(db.Integer, db.ForeignKey('tenders.id'), nullable=False)
+    source = db.Column(db.String(20), nullable=False)   # report(신고) / similar(비슷한 공고 구역의 [좋음])
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+    __table_args__ = (db.UniqueConstraint('user_id', 'tender_id'),)
+
+
+class MissedReport(db.Model):
+    """놓친 공고 신고와 그때의 진단 결과"""
+    __tablename__ = 'missed_reports'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    query = db.Column(db.String(500), nullable=False)
+    tender_id = db.Column(db.Integer, nullable=True)     # 찾지 못했으면 NULL
+    verdict = db.Column(db.String(20), nullable=False)
+    detail = db.Column(db.Text, nullable=False, default='{}')   # JSON
+    source_note = db.Column(db.String(500), nullable=True)      # 수집 안 됨: 어디서 본 공고인지
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+
+class CaseEvalRun(db.Model):
+    """채점 결과 이력"""
+    __tablename__ = 'case_eval_runs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    run_at = db.Column(db.DateTime, default=datetime.now)
+    metrics = db.Column(db.Text, nullable=False)   # JSON
+
+
+class CaseSortSetting(db.Model):
+    """대시보드를 사례 점수로 정렬할지 (사용자별)"""
+    __tablename__ = 'case_sort_settings'
+
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), primary_key=True)
+    enabled = db.Column(db.Boolean, nullable=False, default=False)
+    changed_at = db.Column(db.DateTime, default=datetime.now)
+
+
 def init_db(app):
     """데이터베이스 초기화"""
     db.init_app(app)

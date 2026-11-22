@@ -118,6 +118,19 @@ def job_runs_on(job, run_date):
         return None
 
 
+def _store_new_vectors():
+    """크롤 뒤 벡터가 없는 공고의 제목 벡터를 저장한다 (사례 점수용, 최대 5분).
+    저장한 건수를 돌려준다. 실패하면 로그만 남기고 None — 크롤 성패·로그 상태는 바꾸지 않는다."""
+    try:
+        import tender_vectors
+        n = tender_vectors.encode_missing(max_seconds=300, newest_first=True)
+        print(f"  - [벡터] 새 공고 {n}건 저장")
+        return n
+    except Exception as e:
+        print(f"  - [벡터] 저장 실패 (크롤 결과에는 영향 없음): {type(e).__name__}: {e}")
+        return None
+
+
 class CrawlScheduler:
     """크롤링 스케줄러"""
 
@@ -853,6 +866,9 @@ class CrawlScheduler:
         nia_dup_count = mark_nia_procurement_duplicates(self.app)
         if nia_dup_count:
             print(f"  - NIA 조달입찰공고 중복처리: {nia_dup_count}건")
+
+        # 새 공고 제목 벡터 저장 (사례 점수용). 실패해도 크롤 결과에는 영향이 없다
+        _store_new_vectors()
 
         return {
             'total_found': len(all_tenders),

@@ -70,6 +70,7 @@
                 <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">메인화면</a>
                 <a href="/search" class="nav-link {% if request.path == '/search' %}active{% endif %}">상세검색</a>
                 <a href="/bookmarks" class="nav-link {% if request.path == '/bookmarks' %}active{% endif %}">관심공고</a>
+                <a href="/cases" class="nav-link {% if request.path == '/cases' %}active{% endif %}">놓친 공고</a>
                 <a href="/review-tenders" class="nav-link {% if request.path == '/review-tenders' %}active{% endif %}">검토공고<span id="memo-badge" class="hidden ml-1 text-xs font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full align-middle"></span></a>
                 {% if g.user %}
                 <a href="/filters" class="nav-link {% if request.path == '/filters' %}active{% endif %}">필터관리</a>
@@ -101,6 +102,7 @@
                         <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">메인화면</a>
                         <a href="/search" class="nav-link {% if request.path == '/search' %}active{% endif %}">상세검색</a>
                         <a href="/bookmarks" class="nav-link {% if request.path == '/bookmarks' %}active{% endif %}">관심공고</a>
+                <a href="/cases" class="nav-link {% if request.path == '/cases' %}active{% endif %}">놓친 공고</a>
                         <a href="/review-tenders" class="nav-link {% if request.path == '/review-tenders' %}active{% endif %}">검토공고<span id="memo-badge" class="hidden ml-1 text-xs font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full align-middle"></span></a>
                         {% if g.user %}
                         <a href="/filters" class="nav-link {% if request.path == '/filters' %}active{% endif %}">필터관리</a>
@@ -149,6 +151,7 @@
                 <a href="/" class="mobile-nav-link {% if request.path == '/' %}active{% endif %}">메인화면</a>
                 <a href="/search" class="mobile-nav-link {% if request.path == '/search' %}active{% endif %}">상세검색</a>
                 <a href="/bookmarks" class="mobile-nav-link {% if request.path == '/bookmarks' %}active{% endif %}">관심공고</a>
+                <a href="/cases" class="mobile-nav-link {% if request.path == '/cases' %}active{% endif %}">놓친 공고</a>
                 <a href="/review-tenders" class="mobile-nav-link {% if request.path == '/review-tenders' %}active{% endif %}">검토공고<span id="memo-badge-mobile" class="hidden ml-1 text-xs font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full align-middle"></span></a>
                 {% if g.user %}
                 <a href="/filters" class="mobile-nav-link {% if request.path == '/filters' %}active{% endif %}">필터관리</a>

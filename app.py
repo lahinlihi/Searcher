@@ -277,6 +277,7 @@ from routes.settings import bp as settings_bp
 from routes.data import bp as data_bp
 from routes.analysis import bp as analysis_bp
 from routes.newsletter import bp as newsletter_bp
+from routes.cases import bp as cases_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
@@ -289,6 +290,7 @@ app.register_blueprint(settings_bp)
 app.register_blueprint(data_bp)
 app.register_blueprint(analysis_bp)
 app.register_blueprint(newsletter_bp)
+app.register_blueprint(cases_bp)
 
 
 def _free_port(port: int) -> None:

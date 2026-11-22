@@ -4,6 +4,21 @@
 
 ---
 
+## 주요 기능
+
+| 기능 | 화면 | 설명 |
+|------|------|------|
+| 대시보드 | `/` | 사전규격·신규공고(나라장터·기타 채널)를 관심 키워드로 거르고 점수순으로 구역마다 24건 |
+| 키워드엔 없지만 비슷한 공고 | `/` 맨 아래 구역 | 관심 키워드에는 안 걸렸지만 고른 공고(사례)와 비슷한 공고. [좋음]은 사례로 추가, [아님]은 관심없음 |
+| 놓친 공고 신고 | `/cases` | 공고번호·주소·제목을 넣으면 그 공고가 수집 시점의 대시보드 어디에서 빠졌는지(수집 안 됨 / 묶임 / 걸러짐 / 순위 낮음) 답하고, 정답 목록에 넣을 수 있다 |
+| 채점 | `/cases` | 정답 목록(북마크 + 신고 공고)이 현재 점수와 사례 점수에서 각각 몇 등인지 잰다 |
+| 사례 점수로 정렬 | `/cases` | 채점에서 사례 방식이 더 좋을 때만 켤 수 있다. 관심 키워드 조건은 그대로, 순서만 바뀐다 |
+| 상세검색·관심공고·검토공고 | `/search`, `/bookmarks`, `/review-tenders` | |
+
+사례 점수의 설계와 근거: `docs/product-contract.md`, 구현 계획: `docs/superpowers/plans/2026-11-20-case-based-scoring.md`
+
+---
+
 ## 팀원 배포 가이드
 
 ### 사전 준비 (한 번만)
@@ -69,9 +84,17 @@ docker_update.bat 더블클릭
 Searcher/
 ├── data/                   ← Git 제외 (개인 데이터)
 │   ├── settings.json       ← API 키 + 개인 설정 (관리자에게 받기)
-│   └── tenders.db          ← 크롤링 데이터 (자동 생성)
+│   ├── tenders.db          ← 크롤링 데이터 (자동 생성)
+│   └── vectors.db          ← 공고 제목 벡터 (사례 점수용, 크롤 뒤 자동 저장)
 ├── crawlers/               ← 크롤러 코드 (Git 공유)
+├── routes/                 ← API·페이지 (cases.py = 놓친 공고·사례·채점)
 ├── templates/              ← 화면 템플릿 (Git 공유)
+├── case_store.py           ← 사례·신고·채점 이력·정렬 설정 저장
+├── case_scoring.py         ← 사례 점수 (비슷한 사례 3건 평균 유사도)
+├── case_eval.py            ← 채점
+├── missed_diagnosis.py     ← 놓친 공고 진단
+├── tender_vectors.py       ← 제목 벡터 저장소 (일괄 채우기: python -u tender_vectors.py --backfill)
+├── tests/                  ← pytest (python -m pytest tests)
 ├── setup.bat               ← 최초 설치
 ├── docker_update.bat       ← 업데이트
 └── docker-compose.yml

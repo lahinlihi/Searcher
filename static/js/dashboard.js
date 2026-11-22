@@ -102,6 +102,7 @@ let _lastFetchTime = 0;
 function _reloadDashboard() {
     Promise.all([loadBookmarkedIds(), loadDismissedIds()]).then(() => {
         loadDashboardData();
+        loadSimilar();
     });
 }
 
@@ -520,6 +521,65 @@ async function fetchEmbedScores(tenderIds, section) {
     } catch (_) { /* 실패 시 규칙 점수 순서 그대로 유지 */ }
 }
 
+// ── 사례 점수 (docs/product-contract.md) ─────────────────────────────────────
+// 서버가 case_score 를 보낼 때만(좋은 사례 5건 이상) 배지를 붙인다.
+function caseBadge(tender) {
+    if (tender.case_score === undefined || tender.case_score === null) return '';
+    const near = tender.nearest_case ? `비슷한 사례: ${tender.nearest_case.title}` : '';
+    return `<span class="dc-type" style="background:#EDE9FE;color:#5B21B6;" title="${safeHtml(near)}">사례 ${Number(tender.case_score).toFixed(0)}</span>`;
+}
+
+// "키워드엔 없지만 비슷한 공고" 구역
+async function loadSimilar() {
+    const box = document.getElementById('similar-list');
+    const note = document.getElementById('similar-note');
+    if (!box || !note) return;
+    try {
+        const res = await fetch('/api/cases/similar');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.status);
+        if (!data.enabled) {
+            box.innerHTML = '';
+            note.innerHTML = `사례를 ${data.min_cases}건 이상 모으면 켜집니다 (지금 ${data.cases}건). 북마크하거나 <a href="/cases" class="text-blue-600 underline">놓친 공고</a>를 신고하면 사례가 됩니다.`;
+            return;
+        }
+        if (!data.items.length) {
+            box.innerHTML = '';
+            note.textContent = `지금은 사례와 충분히 비슷한 공고가 없습니다 (사례 ${data.cases}건).`;
+            return;
+        }
+        note.textContent = `관심 키워드에는 걸리지 않았지만, 고르신 공고(사례 ${data.cases}건)와 비슷한 공고입니다.`;
+        box.innerHTML = data.items.map(t => `
+            <div class="similar-item flex flex-col gap-1">
+                ${renderTenderCard(t)}
+                <div class="flex items-center gap-2 text-xs px-1">
+                    <span class="flex-1 min-w-0 truncate text-gray-500" title="${safeHtml(t.nearest_case.title)}">비슷한 사례: ${safeHtml(t.nearest_case.title)}</span>
+                    <button onclick="markSimilarGood(${t.id}, this)" class="shrink-0 border border-green-300 text-green-700 rounded px-2 py-0.5 hover:bg-green-50">좋음</button>
+                    <button onclick="dismissTender(${t.id}, this)" class="shrink-0 border border-gray-300 text-gray-600 rounded px-2 py-0.5 hover:bg-gray-50">아님</button>
+                </div>
+            </div>`).join('');
+    } catch (e) {
+        box.innerHTML = '';
+        note.textContent = '비슷한 공고를 불러오지 못했습니다.';
+    }
+}
+
+async function markSimilarGood(tenderId, btn) {
+    const item = btn.closest('.similar-item');
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/cases', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({tender_id: tenderId, source: 'similar'}),
+        });
+        if (!res.ok) throw new Error((await res.json()).error || res.status);
+        if (item) item.remove();
+    } catch (e) {
+        btn.disabled = false;
+        alert('사례로 넣지 못했습니다: ' + e.message);
+    }
+}
+
 // 공고 카드 렌더링
 function renderTenderCard(tender) {
     const cleanedTitle = cleanNoticeTitle(tender.title);
@@ -571,6 +631,7 @@ function renderTenderCard(tender) {
             <div class="dc-top">
                 <span class="dc-score" id="score-${tender.id}" style="${scoreCls}">${score.toFixed(1)}</span>
                 <span class="dc-type">유형: ${bizType}</span>
+                ${caseBadge(tender)}
                 <div class="dc-actions">
                     ${starButton(tender.id)}
                     ${dismissButton(tender.id)}
