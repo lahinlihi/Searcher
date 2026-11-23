@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}놓친 공고 - HIGH-SEARCH{% endblock %}
+
+{% block content %}
+<div class="space-y-5">
+
+    <!-- ════════ 놓친 공고 신고 ════════ -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">놓친 공고 신고</h3>
+            <p class="text-xs text-gray-500 mt-1">대시보드에 안 나왔던 공고의 공고번호·주소·제목을 넣으면, 그 공고가 처음 들어왔을 때 대시보드 어디에서 빠졌는지 알려 드립니다.</p>
+        </div>
+        <div class="card-body space-y-3">
+            <form id="missed-form" class="flex gap-2" onsubmit="lookupMissed(event)">
+                <input id="missed-q" type="text" placeholder="예: 2026년도 IT역량교육과정 위탁운영"
+                       class="flex-1 min-w-0 text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400">
+                <button type="submit" class="shrink-0 text-sm bg-blue-600 text-white rounded-lg px-4 py-2 hover:bg-blue-700">찾기</button>
+            </form>
+            <div id="missed-candidates" class="space-y-1"></div>
+            <div id="missed-result"></div>
+        </div>
+    </div>
+
+    <!-- ════════ 채점 ════════ -->
+    <div class="card">
+        <div class="card-header">
+            <div class="flex justify-between items-center flex-wrap gap-2">
+                <h3 class="card-title">채점</h3>
+                <button id="eval-run" onclick="runEval()" class="text-sm border border-blue-300 text-blue-700 rounded-lg px-3 py-1.5 hover:bg-blue-50">지금 채점</button>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">고르신 공고(북마크 + 신고해 정답에 넣은 공고)가, 그 공고가 들어온 날 앞뒤 7일 동안의 공고 중 몇 등이었는지를 잽니다. 등수는 낮을수록 좋습니다.</p>
+        </div>
+        <div class="card-body space-y-4">
+            <div id="eval-latest" class="text-sm text-gray-500">불러오는 중…</div>
+            <div id="eval-history"></div>
+            <div id="report-counts"></div>
+        </div>
+    </div>
+
+    <!-- ════════ 사례 점수로 정렬 ════════ -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">사례 점수로 정렬</h3>
+            <p class="text-xs text-gray-500 mt-1">켜면 대시보드 목록을 사례 점수 순으로 보여 줍니다. 관심 키워드 조건은 그대로이고 순서만 바뀝니다. 채점에서 사례 방식이 더 좋게 나왔을 때만 켤 수 있습니다.</p>
+        </div>
+        <div class="card-body">
+            <label class="inline-flex items-center gap-2 text-sm">
+                <input id="sort-toggle" type="checkbox" class="w-4 h-4" onchange="toggleSort(this)">
+                <span>대시보드를 사례 점수 순으로</span>
+            </label>
+            <p id="sort-reason" class="text-xs text-gray-500 mt-2"></p>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/cases.js') }}"></script>
+{% endblock %}

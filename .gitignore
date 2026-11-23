@@ -140,6 +140,7 @@ test_*.ps1
 # ============================================================
 check_*.py
 test_*.py
+!tests/test_*.py
 debug_*.py
 analyze_*.py
 deep_analyze_*.py

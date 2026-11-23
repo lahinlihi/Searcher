@@ -4,6 +4,8 @@ from decorators import login_required, admin_required
 from scoring import (load_user_prefs, load_interest_keywords, smart_sort_tenders_by_keyword_count,
                      _score_and_type, compute_embed_sims)
 from sqlalchemy import func as sql_func
+import case_scoring
+import case_store
 from config import Config
 from datetime import datetime, timedelta
 import json
@@ -155,6 +157,62 @@ def _scored_dict(tender, prefs, agency_weights):
     return d
 
 
+DASHBOARD_TOP_N = 24   # 대시보드 구역마다 보여 주는 건수
+
+
+def dashboard_section_conditions(now):
+    """대시보드 구역 3개의 조건. {구역: [(설명, 조건, 구역을 가르는 조건인가)]}
+
+    '구역을 가르는 조건'(출처·사전규격 여부)은 공고가 어느 구역 소속인지를 정하고,
+    나머지(기간·상태·수의계약)는 그 구역 안에서 거르는 조건이다. 놓친 공고 진단이 이 구분을 쓴다.
+    순서는 예전 api_dashboard 의 filter() 인자 순서 그대로다.
+    """
+    seven_days_ago = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+    recent_open = [
+        ('공고일이 최근 7일 밖 (또는 공고일 없음)', Tender.announced_date >= seven_days_ago, False),
+        ('공고일이 적재 시점보다 뒤', Tender.announced_date <= now, False),
+        ('사전규격 아님', Tender.status != '사전규격', True),
+        ('결과공고', Tender.status != '결과공고', False),
+        ('마감이 지남 (또는 마감일 없음)', Tender.deadline_date >= now, False),
+        ('수의계약 (또는 입찰방식 없음)', ~Tender.bid_method.contains('수의계약'), False),
+    ]
+    return {
+        # 사전규격: 나라장터 사전규격 중 마감 전
+        'pre_tenders': [
+            ('마감이 지남 (또는 마감일 없음)', Tender.deadline_date >= now, False),
+            ('사전규격', Tender.status == '사전규격', True),
+            ('나라장터', db.or_(Tender.source_site.contains('나라장터'), Tender.source_site.contains('g2b')), True),
+        ],
+        # 신규공고(나라장터 API)
+        'urgent_tenders': recent_open + [
+            ('나라장터 API', db.or_(Tender.source_site.contains('나라장터 API'),
+                                    Tender.source_site.like('%g2b_api%')), True),
+        ],
+        # 신규공고(기타 채널): 나라장터 제외
+        'recent_tenders': recent_open + [
+            ('나라장터 아님', ~Tender.source_site.contains('나라장터'), True),
+            ('g2b 아님', ~Tender.source_site.like('%g2b%'), True),
+        ],
+    }
+
+
+def dashboard_section_queries(now):
+    """대시보드 구역 3개의 쿼리 (관심 설정 필터 적용 전)."""
+    return {name: Tender.query.filter(*[c for _, c, _ in conds])
+            for name, conds in dashboard_section_conditions(now).items()}
+
+
+def _case_scores(uid, tenders):
+    """사례 점수 {id: {...}} 또는 None. 실패해도 대시보드는 기존대로 보여 준다."""
+    if not uid:
+        return None
+    try:
+        return case_scoring.score_tenders(uid, tenders)
+    except Exception as e:
+        print(f'[사례 점수] 계산 실패 — 기존 점수만 표시: {e}')
+        return None
+
+
 @bp.route('/api/dashboard')
 @login_required
 def api_dashboard():
@@ -163,7 +221,6 @@ def api_dashboard():
         now = datetime.now()
         # 어제 자정(00:00:00) 기준 — timedelta(1)은 현재 시각 기준이므로 00:00 공고가 탈락하는 버그 방지
         yesterday = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-        seven_days_ago = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
 
         uid = g.user.id if g.user else None
         prefs = load_user_prefs(uid)
@@ -190,45 +247,27 @@ def api_dashboard():
         }
 
         # ── 목록 3개: 조건만 다르고, 관심 설정 필터와 정렬은 같다 ──────────────
-        # 최근 7일 안에 공고되고 아직 마감 전인 일반 공고 (나라장터·기타 채널 공통 조건)
-        recent_open = [
-            Tender.announced_date >= seven_days_ago,
-            Tender.announced_date <= now,
-            Tender.status != '사전규격',
-            Tender.status != '결과공고',
-            Tender.deadline_date >= now,
-            not_private,
-        ]
-        sections = {
-            # 사전규격: 나라장터 사전규격 중 마감 전
-            'pre_tenders': Tender.query.filter(
-                Tender.deadline_date >= now,
-                Tender.status == '사전규격',
-                db.or_(Tender.source_site.contains('나라장터'), Tender.source_site.contains('g2b')),
-            ),
-            # 신규공고(나라장터 API)
-            'urgent_tenders': Tender.query.filter(
-                *recent_open,
-                db.or_(Tender.source_site.contains('나라장터 API'), Tender.source_site.like('%g2b_api%')),
-            ),
-            # 신규공고(기타 채널): 나라장터 제외
-            'recent_tenders': Tender.query.filter(
-                *recent_open,
-                ~Tender.source_site.contains('나라장터'),
-                ~Tender.source_site.like('%g2b%'),
-            ),
-        }
-
         response_data = {'summary': summary}
         matched = 0
-        for name, query in sections.items():
-            tenders = [t for t in _apply_interest_filters(query, prefs).all() if t.id not in dismissed]
+        filtered = {name: [t for t in _apply_interest_filters(query, prefs).all() if t.id not in dismissed]
+                    for name, query in dashboard_section_queries(now).items()}
+        # 사례 점수: 좋은 사례가 5건 미만이거나 모델이 없으면 None → 아래는 예전과 똑같이 돈다
+        case_scores = _case_scores(uid, [t for ts in filtered.values() for t in ts])
+        # 점수를 못 구한 공고가 하나라도 있으면(모델 장애 등) 이번 요청은 정렬하지 않는다 — 새 공고가 맨 뒤로 밀리지 않게
+        sort_by_case = (case_scores is not None and case_store.get_sort_enabled(uid)
+                        and all(t.id in case_scores for ts in filtered.values() for t in ts))
+        for name, tenders in filtered.items():
             matched += len(tenders)
             # 규칙 점수 기반 정렬만 수행 — 임베딩은 /api/embed-scores 에서 on-demand 처리
-            top = smart_sort_tenders_by_keyword_count(
+            ordered = smart_sort_tenders_by_keyword_count(
                 tenders, include_keywords, prefs['type_weights'], agency_weights,
-                prefs.get('core_keywords', []))[:24]
-            response_data[name] = [_scored_dict(t, prefs, agency_weights) for t in top]
+                prefs.get('core_keywords', []))
+            if sort_by_case:   # 사례 점수 순 (같으면 기존 순서). 관심 키워드 필터는 그대로다
+                ordered = sorted(ordered, key=lambda t: -case_scores.get(t.id, {}).get('case_score', -1.0))
+            response_data[name] = [_scored_dict(t, prefs, agency_weights) for t in ordered[:DASHBOARD_TOP_N]]
+            if case_scores is not None:
+                for d in response_data[name]:
+                    d.update(case_scores.get(d['id'], {}))
 
         summary['keyword_match'] = matched   # 관심 설정에 걸린 전체 건수 (배지용)
         response_data['include_keywords'] = include_keywords

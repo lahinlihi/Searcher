@@ -19,6 +19,13 @@ def index():
     return render_template('dashboard.html')
 
 
+@bp.route('/cases')
+@login_required
+def cases_page():
+    """놓친 공고 신고 · 채점 · 사례 점수 정렬"""
+    return render_template('cases.html')
+
+
 @bp.route('/search')
 @login_required
 def search_page():

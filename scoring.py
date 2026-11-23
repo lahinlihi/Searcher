@@ -8,24 +8,34 @@ import threading as _threading
 _embed_model = None
 _embed_model_lock = _threading.Lock()
 _embed_model_ready = False       # 로딩 완료 후 True — 폴백 판단에 사용
+# 모델의 encode() 를 한 번에 한 스레드만 부르게 한다. waitress 는 여러 스레드로 요청을 처리하고,
+# HuggingFace fast tokenizer 는 동시에 쓰면 'Already borrowed' 오류가 날 수 있다.
+embed_encode_lock = _threading.Lock()
 _profile_cache: dict = {}        # kw_hash → np.ndarray (사용자 프로필 벡터)
 
 
-def _get_embed_model():
-    """스레드 안전 lazy 로딩. 로딩 중이면 블록 없이 None 반환 → 폴백."""
+def _get_embed_model(block=False):
+    """스레드 안전 lazy 로딩. 로딩 중이면 블록 없이 None 반환 → 폴백.
+    block=True 면 다른 스레드의 로딩이 끝나기를 기다린다 (벡터 저장용). 로딩 실패 시 None."""
     global _embed_model, _embed_model_ready
     if _embed_model_ready:
         return _embed_model
-    acquired = _embed_model_lock.acquire(blocking=False)
+    acquired = _embed_model_lock.acquire(blocking=block)
     if not acquired:
         return None   # 다른 스레드가 로딩 중 → 호출자가 폴백 처리
     try:
         if not _embed_model_ready:
-            from sentence_transformers import SentenceTransformer
-            print('[임베딩] 모델 로딩 중 (jhgan/ko-sroberta-multitask)...')
-            _embed_model = SentenceTransformer('jhgan/ko-sroberta-multitask')
-            _embed_model_ready = True
-            print('[임베딩] 완료')
+            try:
+                from sentence_transformers import SentenceTransformer
+                print('[임베딩] 모델 로딩 중 (jhgan/ko-sroberta-multitask)...')
+                _embed_model = SentenceTransformer('jhgan/ko-sroberta-multitask')
+                _embed_model_ready = True
+                print('[임베딩] 완료')
+            except Exception as e:
+                if not block:
+                    raise          # 기존 호출자의 동작 그대로
+                print(f'[임베딩] 모델 로딩 실패: {e}')
+                return None
         return _embed_model
     finally:
         _embed_model_lock.release()
@@ -38,9 +48,10 @@ def _get_profile_vec(kws: list):
         model = _get_embed_model()
         if model is None:
             return None
-        _profile_cache[key] = model.encode(
-            [' '.join(kws)], show_progress_bar=False
-        )[0]
+        with embed_encode_lock:
+            _profile_cache[key] = model.encode(
+                [' '.join(kws)], show_progress_bar=False
+            )[0]
     return _profile_cache.get(key)
 
 
@@ -62,7 +73,8 @@ def compute_embed_sims(tenders, kws, ck=None):
 
     pv = _get_profile_vec(kws)
     titles = [t.title for t in tenders]
-    title_vecs = model.encode(titles, batch_size=64, show_progress_bar=False)
+    with embed_encode_lock:
+        title_vecs = model.encode(titles, batch_size=64, show_progress_bar=False)
     sims = _cos(title_vecs, [pv]).flatten()
 
     ck_lower = set(c.lower() for c in (ck or []))
