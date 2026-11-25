@@ -26,8 +26,8 @@ def test_lowering_one_type_does_not_raise_other_tenders(app, make_user, make_ten
 
 # ── 관심 키워드가 없는 계정은 모든 점수가 0 ─────────────────────────────────────
 
-def test_no_keywords_account_scores_zero(app, make_user, make_tender, add_mark, vec_db):
-    u = make_user()
+def test_no_keywords_account_scores_zero(app, make_user, make_tender, make_prefs, add_mark, vec_db):
+    u = make_user(); make_prefs(u)   # 빈 설정 행 (설정 행이 없으면 data/settings.json 의 키워드로 떨어진다)
     add_mark(u, '테스트기관', 'key')
     r = R.Scorer(u.id, vec_conn=vec_db).score([make_tender(title='AI 교육 운영 용역')])
     r = next(iter(r.values()))

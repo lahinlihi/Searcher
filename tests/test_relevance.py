@@ -69,8 +69,9 @@ def test_scorer_without_cases_uses_base_only(app, make_user, make_tender, make_p
     assert r['nearest_case'] is None
 
 
-def test_scorer_no_keywords_gives_zero(app, make_user, make_tender, vec_db):
-    u = make_user(); t = make_tender(title='AI 교육 운영 용역')
+def test_scorer_no_keywords_gives_zero(app, make_user, make_tender, make_prefs, vec_db):
+    u = make_user(); make_prefs(u)   # 빈 설정 행 (설정 행이 없으면 data/settings.json 의 키워드로 떨어진다)
+    t = make_tender(title='AI 교육 운영 용역')
     assert R.Scorer(u.id, vec_conn=vec_db).score([t])[t.id]['total'] == 0.0
 
 

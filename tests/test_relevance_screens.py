@@ -129,10 +129,12 @@ def test_bookmark_label_bonus_capped(site, make_tender, monkeypatch):
     assert item['relevance_score'] == 100.0 and item['label_bonus'] == bonus
 
 
-def test_search_without_interest_keywords_scores_zero(app, client, login, make_user, make_tender, fake_model):
+def test_search_without_interest_keywords_scores_zero(app, client, login, make_user, make_tender, make_prefs,
+                                                      fake_model):
     from routes.tenders import bp
     app.register_blueprint(bp)
-    login(make_user())
+    u = make_user(); make_prefs(u)   # 빈 설정 행 (설정 행이 없으면 data/settings.json 의 키워드로 떨어진다)
+    login(u)
     t = make_tender(title='AI 교육 운영 용역')
     item = next(i for i in client.get('/api/tenders').get_json()['tenders'] if i['id'] == t.id)
     assert item['relevance_score'] == 0
