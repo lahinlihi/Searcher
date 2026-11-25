@@ -179,6 +179,9 @@ def add_agency_weight():
     agency_name = (data.get('agency_name') or '').strip()
     if not agency_name:
         return jsonify({'error': '기관명을 입력해주세요.'}), 400
+    if len(agency_name) < 2:
+        # 이름은 부분 일치로 찾는다 — 한 글자('시', '구')는 거의 모든 공고에 걸린다
+        return jsonify({'error': '기관명은 두 글자 이상으로 입력해주세요.'}), 400
     adjust, err = _parse_adjust(data.get('adjust'))
     if err:
         return jsonify({'error': err}), 400

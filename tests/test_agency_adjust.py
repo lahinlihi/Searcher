@@ -44,6 +44,20 @@ def test_post_requires_name(api):
     assert client.post('/api/agency-weights', json={'agency_name': '  ', 'adjust': 10}).status_code == 400
 
 
+@pytest.mark.parametrize('name', ['시', ' 구 ', 'A'])
+def test_post_rejects_one_character_name(api, name):
+    """한 글자 이름은 거의 모든 공고에 걸린다 — 등록을 막는다 (2026-11-25 사용자 결정)."""
+    client, u = api
+    r = client.post('/api/agency-weights', json={'agency_name': name, 'adjust': 10})
+    assert r.status_code == 400 and '두 글자' in r.get_json()['error']
+    assert AgencyWeight.query.filter_by(user_id=u.id).count() == 0
+
+
+def test_post_accepts_two_character_name(api):
+    client, _ = api
+    assert client.post('/api/agency-weights', json={'agency_name': '서울', 'adjust': 10}).status_code == 200
+
+
 def test_put_updates_adjust(api):
     client, u = api
     rid = client.post('/api/agency-weights', json={'agency_name': '가나기관', 'adjust': 10}).get_json()['id']
