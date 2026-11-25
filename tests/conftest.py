@@ -89,6 +89,14 @@ def tenders_app(app):
     return app
 
 
+@pytest.fixture
+def reasons_app(tenders_app):
+    """이유 칩·자격 확인 규칙 API 까지 있는 앱."""
+    from routes.reasons import bp
+    tenders_app.register_blueprint(bp)
+    return tenders_app
+
+
 class FakeEncoder:
     """실제 모델 대신 쓰는 인코더: 제목에 든 주제어로 축을 고른다 (같은 주제면 거의 같은 벡터)."""
     TOPICS = ('교육', '공공앱', '청소', '건설')
