@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>소셜 계정 연결 — HIGH-SEARCH</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/hs-theme.css') }}">
 </head>
 <body class="bg-gray-50 min-h-screen flex items-center justify-center">
     <div class="w-full max-w-sm">
@@ -58,7 +61,7 @@
 
             <!-- 옵션 1: 기존 계정에 연결 -->
             <a href="/login"
-               class="flex items-center justify-between w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-3.5 rounded-lg mb-3 transition-colors">
+               class="flex items-center justify-between w-full bg-[color:var(--hs-brand)] hover:bg-[#E84E0B] text-white px-4 py-3.5 rounded-lg mb-3 transition-colors">
                 <div class="text-left">
                     <div class="text-sm font-semibold">기존 계정에 연결하기</div>
                     <div class="text-xs text-blue-100 mt-0.5">로그인 후 이 {{ provider_name }} 계정이 자동으로 연결됩니다</div>

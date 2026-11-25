@@ -180,7 +180,6 @@
             <div class="flex justify-between items-center gap-2">
                 <div class="min-w-0">
                     <h3 class="card-title">검색 결과 (<span id="result-count">0</span>건)</h3>
-                    <span class="text-xs text-gray-400 hidden sm:inline">열 제목 클릭으로 정렬</span>
                 </div>
                 <button onclick="exportExcel()" class="hidden sm:inline-flex btn-success shrink-0 text-sm px-3 py-1.5">
                     Excel 다운로드
@@ -190,7 +189,7 @@
         </div>
 
         <!-- 모바일 결과 도구: 정렬 + 결과 내 검색 -->
-        <div id="mobile-results-tools" class="sm:hidden hidden border-b bg-gray-50 px-3 py-2.5 space-y-2">
+        <div id="mobile-results-tools" class="hidden border-b px-4 py-2.5 hs-search-tools">
             <!-- 정렬 -->
             <div class="flex items-center gap-2">
                 <span class="text-xs text-gray-500 shrink-0 font-medium">정렬</span>
@@ -199,8 +198,11 @@
                         class="flex-1 text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
                     <option value="announced">공고일</option>
                     <option value="days">마감일</option>
-                    <option value="score">점수</option>
+                    <option value="score">적합도</option>
                     <option value="budget">금액</option>
+                    <option value="title">공고명</option>
+                    <option value="agency">기관</option>
+                    <option value="memo">메모 수</option>
                 </select>
                 <button id="mobile-sort-dir-btn"
                         onclick="toggleMobileSortDir()"
@@ -257,6 +259,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='js/tender-row.js') }}"></script>
 <script src="{{ url_for('static', filename='js/search.js') }}"></script>
 <script>
 // 상세 검색 옵션 토글 (PC 전용)

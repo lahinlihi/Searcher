@@ -438,6 +438,8 @@ class TenderView(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     tender_id = db.Column(db.Integer, db.ForeignKey('tenders.id'), nullable=False)
     viewed_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    # 대시보드 '읽은 공고'에서 지운 시각. 지워도 열람 기록은 남는다(다시 대시보드 목록으로 돌아오지 않게). 다시 열어 보면 None 으로 되돌린다
+    cleared_at = db.Column(db.DateTime, nullable=True)
 
     __table_args__ = (db.UniqueConstraint('user_id', 'tender_id'),)
 
@@ -529,6 +531,7 @@ def init_db(app):
             ('ALTER TABLE user_preferences ADD COLUMN type_weights TEXT DEFAULT "{}"', '[DB] user_preferences.type_weights 추가'),
             ('ALTER TABLE tenders ADD COLUMN business_number TEXT',                 '[DB] tenders.business_number 추가'),
             ('ALTER TABLE users ADD COLUMN nickname TEXT',                          '[DB] users.nickname 추가'),
+            ('ALTER TABLE tender_views ADD COLUMN cleared_at DATETIME',             '[DB] tender_views.cleared_at 추가'),
         ]
         # 중소벤처 24 공고 중 기관명이 '기타'인 것은 '중소벤처 24'로 정정
         data_fixes = [

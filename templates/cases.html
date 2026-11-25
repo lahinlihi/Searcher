@@ -14,8 +14,8 @@
         <div class="card-body space-y-3">
             <form id="missed-form" class="flex gap-2" onsubmit="lookupMissed(event)">
                 <input id="missed-q" type="text" placeholder="예: 2026년도 IT역량교육과정 위탁운영"
-                       class="flex-1 min-w-0 text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400">
-                <button type="submit" class="shrink-0 text-sm bg-blue-600 text-white rounded-lg px-4 py-2 hover:bg-blue-700">찾기</button>
+                       class="flex-1 min-w-0 text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-orange-200">
+                <button type="submit" class="shrink-0 text-sm bg-[color:var(--hs-brand)] text-white rounded-lg px-4 py-2 hover:bg-[#E84E0B]">찾기</button>
             </form>
             <div id="missed-candidates" class="space-y-1"></div>
             <div id="missed-result"></div>
@@ -27,7 +27,7 @@
         <div class="card-header">
             <div class="flex justify-between items-center flex-wrap gap-2">
                 <h3 class="card-title">채점</h3>
-                <button id="eval-run" onclick="runEval()" class="text-sm border border-blue-300 text-blue-700 rounded-lg px-3 py-1.5 hover:bg-blue-50">지금 채점</button>
+                <button id="eval-run" onclick="runEval()" class="text-sm border border-orange-300 text-orange-700 rounded-lg px-3 py-1.5 hover:bg-orange-50">지금 채점</button>
             </div>
             <p class="text-xs text-gray-500 mt-1">고르신 공고(북마크 + 신고해 정답에 넣은 공고)가, 그 공고가 들어온 날 앞뒤 7일 동안의 공고 중 몇 등이었는지를 잽니다. 등수는 낮을수록 좋습니다.</p>
         </div>

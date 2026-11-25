@@ -46,6 +46,7 @@ def test_dashboard_no_cases_unchanged(user, client, make_tender, fake_model):
     r = client.get('/api/dashboard')
     assert r.status_code == 200
     assert 'case_score' not in r.get_data(as_text=True)
+    assert 'case_sort' not in r.get_json()
 
 
 def test_dashboard_with_cases_adds_fields(user, client, make_tender, fake_model):
@@ -91,6 +92,15 @@ def test_sort_on_reorders_only_filtered(user, client, make_tender, fake_model):
     after = _order(client)
     assert after[0] == '공공앱 개선'
     assert '건설 공사 감리' not in after and sorted(after) == sorted(before)
+
+
+def test_dashboard_tells_screen_when_sorted_by_case(user, client, make_tender, fake_model):
+    """사례 점수로 정렬했으면 화면이 임베딩 점수로 다시 정렬하지 않도록 알려 준다."""
+    _cases(user, make_tender)
+    _fresh(make_tender, '공공앱 개선')
+    assert 'case_sort' not in client.get('/api/dashboard').get_json()
+    case_store.set_sort_enabled(user.id, True)
+    assert client.get('/api/dashboard').get_json()['case_sort'] is True
 
 
 def test_sort_skipped_when_some_scores_missing(user, client, make_tender, fake_model, monkeypatch):

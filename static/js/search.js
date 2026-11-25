@@ -30,39 +30,15 @@ async function fetchEmbedScores(tenderIds) {
         if (!resp.ok) return;
         const data = await resp.json();
         for (const [id, info] of Object.entries(data.scores || {})) {
-            const el = document.getElementById(`score-${id}`);
-            if (!el) continue;
-            const score = info.score;
-            let bg;
-            if (score >= 70)      bg = 'bg-green-100 text-green-800 border border-green-300';
-            else if (score >= 40) bg = 'bg-yellow-100 text-yellow-800 border border-yellow-300';
-            else                  bg = 'bg-gray-100 text-gray-600 border border-gray-300';
-            el.className = `inline-flex items-center text-xs font-bold px-2 py-0.5 rounded ${bg}`;
-            el.textContent = score.toFixed(1);
+            const el = document.querySelector(`[data-score="${id}"]`);
+            if (el) {
+                el.textContent = Number(info.score).toFixed(1);
+                if (el.parentElement) el.parentElement.style.cssText = hsScoreStyle(info.score);   // 숫자가 바뀌면 색도 따라간다
+            }
+            const t = currentResults.find(x => String(x.id) === String(id));
+            if (t) t.relevance_score = info.score;
         }
     } catch (_) { /* 실패 시 규칙 점수 그대로 유지 */ }
-}
-
-// ── 매칭 점수 배지 (dashboard와 동일 형식) ──────────────────────────────────
-function buildScoreBadge(score, businessType, breakdown, tenderId) {
-    if (!score) return '<span class="text-xs text-gray-300">-</span>';
-    let bg;
-    if (score >= 70)      bg = 'bg-green-100 text-green-800 border border-green-300';
-    else if (score >= 40) bg = 'bg-yellow-100 text-yellow-800 border border-yellow-300';
-    else                  bg = 'bg-gray-100 text-gray-600 border border-gray-300';
-    const displayScore = score.toFixed(1);
-    let tooltip;
-    if (breakdown) {
-        tooltip = `${displayScore}점 = 키워드 ${breakdown.keyword.toFixed(1)} + 사업유형 ${breakdown.type.toFixed(1)} + 기관가중치 ${breakdown.agency.toFixed(1)}`;
-    } else {
-        const typeText = businessType && businessType !== '기타' ? ` · ${businessType}` : '';
-        tooltip = `적합도 점수: ${displayScore}점${typeText}`;
-    }
-    const idAttr = tenderId ? ` id="score-${tenderId}"` : '';
-    return `<span class="inline-flex items-center text-xs font-bold px-2 py-0.5 rounded ${bg}"${idAttr}
-                  title="${tooltip}">
-        ${displayScore}
-    </span>`;
 }
 
 let currentPage = 1;
@@ -199,6 +175,8 @@ function sortItems(items) {
 
 // 정렬 헤더 클릭
 function setSearchSort(field) {
+    const sel = document.getElementById('mobile-sort-field');
+    if (sel) sel.value = field;
     if (searchSortField === field) {
         searchSortDir = searchSortDir === 'asc' ? 'desc' : 'asc';
     } else {
@@ -327,38 +305,6 @@ async function loadBookmarkedIds() {
         const res = await fetch('/api/bookmarks/ids');
         bookmarkedIds = new Set(await res.json());
     } catch (e) {}
-}
-
-async function toggleBookmark(tenderId, btn) {
-    try {
-        const res = await fetch('/api/bookmarks/toggle', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tender_id: tenderId })
-        });
-        const data = await res.json();
-        if (data.bookmarked) {
-            bookmarkedIds.add(tenderId);
-            btn.textContent = '★';
-            btn.classList.replace('text-gray-300', 'text-yellow-500');
-            btn.title = '관심공고 해제';
-        } else {
-            bookmarkedIds.delete(tenderId);
-            btn.textContent = '☆';
-            btn.classList.replace('text-yellow-500', 'text-gray-300');
-            btn.title = '관심공고 추가';
-        }
-    } catch (e) { console.error(e); }
-}
-
-function starButton(tenderId) {
-    const isBookmarked = bookmarkedIds.has(tenderId);
-    const cls = isBookmarked ? 'text-yellow-500' : 'text-gray-300';
-    const icon = isBookmarked ? '★' : '☆';
-    const title = isBookmarked ? '관심공고 해제' : '관심공고 추가';
-    return `<button onclick="toggleBookmark(${tenderId}, this)"
-                class="${cls} hover:text-yellow-500 transition-colors text-base"
-                title="${title}">${icon}</button>`;
 }
 
 // 검색 실행
@@ -527,283 +473,31 @@ function updateFilterCountBadge() {
     }
 }
 
-// 키워드 강조 함수
-function highlightKeywords(text) {
-    // 반환값은 이스케이프된 HTML 이다 (강조 태그만 포함). innerHTML 에 그대로 넣는다.
-    return highlightSafe(text, currentKeywords, 'bg-yellow-200 font-semibold px-1 rounded');
-}
-
-// 정렬 화살표 반환
-function sortArrow(field) {
-    if (searchSortField !== field) return '<span style="opacity:0.25;font-size:0.7em;">↕</span>';
-    return `<span style="color:#2563EB;font-size:0.8em;">${searchSortDir === 'asc' ? '↑' : '↓'}</span>`;
-}
-
-// 결과 렌더링 (모바일/데스크톱 분기)
+// 결과 렌더링 — 공고 한 줄(tender-row.js). 진행중 → 마감된 사전규격 → 마감된 일반공고 순으로 묶는다
 function renderResults(tenders) {
-    if (isMobile()) {
-        renderResultsMobile(tenders);
-        return;
-    }
-    renderResultsDesktop(tenders);
-}
-
-// ── 모바일 카드 레이아웃 ─────────────────────────────────────────────────
-function renderResultsMobile(tenders) {
     const container = document.getElementById('results-container');
-
     if (!tenders || tenders.length === 0) {
-        container.className = 'p-4';
-        container.innerHTML = '<p class="text-gray-500 text-sm">검색 결과가 없습니다.</p>';
+        container.className = 'p-4 sm:p-6';
+        container.innerHTML = '<p class="hs-empty">검색 결과가 없습니다.</p>';
         return;
     }
+    container.className = 'px-4 sm:px-5';
 
-    container.className = 'p-3 space-y-2';
+    const isExpired = t => t.days_left !== null && t.days_left < 0;
+    const rowOf = t => renderTenderRow(t, { keywords: currentKeywords, bookmarked: bookmarkedIds, announced: true, origin: true });
+    const label = (text, n) => `<li class="hs-list-label">${text} ${n}건</li>`;
 
-    const isExpiredTender = t => t.days_left !== null && t.days_left < 0;
-
-    const makeCard = (tender) => {
-        const isPre = tender.status === '사전규격';
-        const isExpired = isExpiredTender(tender);
-
-        let rowClass = '';
-        if (isExpired && isPre) rowClass = 'expired-pre-row';
-        else if (isExpired) rowClass = 'expired-row';
-        else if (isPre) rowClass = 'pre-row';
-
-        let statusBadge;
-        if (isExpired && isPre) statusBadge = '<span class="badge-expired-pre">사전↓</span>';
-        else if (isExpired) statusBadge = '<span class="badge-expired">마감</span>';
-        else if (isPre) statusBadge = '<span class="badge-pre">사전</span>';
-        else statusBadge = '<span class="badge-normal">일반</span>';
-
-        const daysLeft = tender.days_left;
-        let deadlineHtml;
-        if (isExpired) {
-            deadlineHtml = `<span style="color:#9CA3AF;font-size:0.7rem;">D+${Math.abs(daysLeft)}</span>`;
-        } else if (daysLeft != null) {
-            const cls = daysLeft <= 2 ? 'deadline-urgent' : daysLeft <= 5 ? 'deadline-soon' : 'deadline-normal';
-            deadlineHtml = `<span class="${cls} font-semibold text-xs">D-${daysLeft}</span>`;
-        } else {
-            deadlineHtml = '<span class="text-xs text-gray-400">-</span>';
-        }
-
-        const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
-        const highlightedTitle = highlightKeywords(cleanNoticeTitle(tender.title));
-        const noticeBadges = getNoticeBadgesHtml(tender.title);
-        const announcedDate = tender.announced_date ? tender.announced_date.substring(5, 10) : '-';
-
-        const isJodal = tender.agency && tender.agency.includes('조달청');
-        let displayAgency;
-        if (tender.source_site === '중소벤처 24') {
-            displayAgency = tender.demand_agency || tender.agency;
-        } else {
-            displayAgency = (isJodal && tender.demand_agency) ? tender.demand_agency : tender.agency;
-        }
-
-        const scoreBadge = buildScoreBadge(tender.relevance_score ?? null, tender.business_type || '기타', tender.score_breakdown || null, tender.id);
-        const starBtn = starButton(tender.id);
-        const titleStyle = isExpired ? ' style="color:#9CA3AF;"' : '';
-
-        return `
-        <div class="tender-card ${rowClass}">
-            <div class="flex items-start justify-between gap-2 mb-1.5">
-                <div class="flex items-center gap-1.5 flex-wrap">
-                    ${statusBadge}
-                    ${scoreBadge}
-                    ${noticeBadges}
-                </div>
-                <div class="flex items-center gap-2 shrink-0">
-                    ${starBtn}
-                    ${deadlineHtml}
-                </div>
-            </div>
-            <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="card-title-link block mb-1.5"${titleStyle}>${highlightedTitle}</a>
-            <div class="flex items-center justify-between gap-2">
-                <div>
-                    <div class="card-agency truncate max-w-[200px]" title="${safeHtml(displayAgency || '')}">${safeHtml(displayAgency || '-')}</div>
-                    <div class="card-meta mt-0.5">${price} · ${announcedDate}</div>
-                </div>
-                <div class="shrink-0">
-                    ${tender.url ? `<a href="${safeUrl(tender.url)}" target="_blank" class="origin-link text-xs border border-gray-200 rounded px-2 py-1">원본</a>` : ''}
-                </div>
-            </div>
-        </div>`;
-    };
-
-    const sectionLabel = (label, count) =>
-        `<div class="card-section-label">🔖 ${label} (${count}건)</div>`;
-
-    const activeTenders  = tenders.filter(t => !isExpiredTender(t));
-    const expiredPre     = tenders.filter(t => isExpiredTender(t) && t.status === '사전규격');
-    const expiredGeneral = tenders.filter(t => isExpiredTender(t) && t.status !== '사전규격');
-    const hasExpired     = expiredPre.length > 0 || expiredGeneral.length > 0;
+    const active = tenders.filter(t => !isExpired(t));
+    const expiredPre = tenders.filter(t => isExpired(t) && t.status === '사전규격');
+    const expiredGeneral = tenders.filter(t => isExpired(t) && t.status !== '사전규격');
+    const hasExpired = expiredPre.length > 0 || expiredGeneral.length > 0;
 
     let html = '';
-    if (activeTenders.length > 0) {
-        if (hasExpired) html += sectionLabel('진행중', activeTenders.length);
-        html += activeTenders.map(makeCard).join('');
-    }
-    if (expiredPre.length > 0) {
-        html += sectionLabel('마감된 사전규격', expiredPre.length);
-        html += expiredPre.map(makeCard).join('');
-    }
-    if (expiredGeneral.length > 0) {
-        html += sectionLabel('마감된 일반공고', expiredGeneral.length);
-        html += expiredGeneral.map(makeCard).join('');
-    }
+    if (active.length) html += (hasExpired ? label('진행중', active.length) : '') + active.map(rowOf).join('');
+    if (expiredPre.length) html += label('마감된 사전규격', expiredPre.length) + expiredPre.map(rowOf).join('');
+    if (expiredGeneral.length) html += label('마감된 일반공고', expiredGeneral.length) + expiredGeneral.map(rowOf).join('');
 
-    container.innerHTML = html;
-    fetchEmbedScores(tenders.map(t => t.id));
-}
-
-// ── 데스크톱 테이블 레이아웃 ─────────────────────────────────────────────
-function renderResultsDesktop(tenders) {
-    const container = document.getElementById('results-container');
-
-    if (!tenders || tenders.length === 0) {
-        container.className = 'p-6';
-        container.innerHTML = '<p class="text-gray-500 text-sm">검색 결과가 없습니다.</p>';
-        return;
-    }
-
-    container.className = '';  // 패딩 제거 (sticky header)
-
-    const th = (field, label, width) => {
-        const active = searchSortField === field ? ' sort-active' : '';
-        return `<th class="sortable${active}" onclick="setSearchSort('${field}')" style="width:${width};">${label} ${sortArrow(field)}</th>`;
-    };
-
-    // 만료 여부 판단: days_left < 0 이면 마감된 공고
-    const isExpiredTender = t => t.days_left !== null && t.days_left < 0;
-
-    const makeRow = (tender) => {
-        const isPre    = tender.status === '사전규격';
-        const isExpired = isExpiredTender(tender);
-
-        let rowClass, statusBadge;
-        if (isExpired && isPre) {
-            rowClass    = 'expired-pre-row';
-            statusBadge = '<span class="badge-expired-pre">사전↓</span>';
-        } else if (isExpired) {
-            rowClass    = 'expired-row';
-            statusBadge = '<span class="badge-expired">마감</span>';
-        } else if (isPre) {
-            rowClass    = 'pre-row';
-            statusBadge = '<span class="badge-pre">사전</span>';
-        } else {
-            rowClass    = '';
-            statusBadge = '<span class="badge-normal">일반</span>';
-        }
-
-        const daysLeft = tender.days_left;
-        let deadlineClass = 'deadline-normal';
-        let deadlineText;
-        if (isExpired) {
-            deadlineClass = '';
-            deadlineText = `<span style="color:#9CA3AF;font-size:0.7rem;">D+${Math.abs(daysLeft)}</span>`;
-        } else {
-            deadlineText = daysLeft != null ? `D-${daysLeft}` : '-';
-            if (daysLeft != null && daysLeft <= 2)      deadlineClass = 'deadline-urgent';
-            else if (daysLeft != null && daysLeft <= 5) deadlineClass = 'deadline-soon';
-        }
-
-        const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
-        const highlightedTitle = highlightKeywords(cleanNoticeTitle(tender.title));
-        const noticeBadges = getNoticeBadgesHtml(tender.title);
-        const announcedDate = tender.announced_date ? tender.announced_date.substring(5, 10) : '-';
-
-        let displayAgency, agencyTooltip;
-        if (tender.source_site === '중소벤처 24') {
-            displayAgency = tender.demand_agency || tender.agency;
-            agencyTooltip = `사업수행기관: ${displayAgency}`;
-        } else {
-            const isJodal = tender.agency && tender.agency.includes('조달청');
-            displayAgency = (isJodal && tender.demand_agency) ? tender.demand_agency : tender.agency;
-            agencyTooltip = (isJodal && tender.demand_agency)
-                ? `수요기관: ${tender.demand_agency} (발주: ${tender.agency})`
-                : (tender.agency || '');
-        }
-
-        const titleStyle = isExpired ? ' style="color:#9CA3AF;"' : '';
-
-        const memoBadge = (tender.memo_count > 0)
-            ? `<span style="font-size:0.6rem;color:#7C3AED;font-weight:700;line-height:1;" title="메모 ${tender.memo_count}개">✎${tender.memo_count}</span>`
-            : '';
-
-        const scoreBadge = buildScoreBadge(tender.relevance_score ?? null, tender.business_type || '기타', tender.score_breakdown || null, tender.id);
-
-        return `
-            <tr class="${rowClass}">
-                <td style="text-align:center;width:36px;">
-                    <div style="display:flex;flex-direction:column;align-items:center;gap:1px;">
-                        ${starButton(tender.id)}
-                        ${memoBadge}
-                    </div>
-                </td>
-                <td style="text-align:center;width:46px;">${statusBadge}</td>
-                <td style="text-align:center;width:72px;">${scoreBadge}</td>
-                <td class="title-col">
-                    <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="title-link"${titleStyle} title="${safeHtml(cleanNoticeTitle(tender.title))}">${noticeBadges}${highlightedTitle}</a>
-                </td>
-                <td class="agency-col" title="${safeHtml(agencyTooltip)}">${safeHtml(displayAgency)}</td>
-                <td style="text-align:right;">${price}</td>
-                <td style="text-align:center;font-size:0.75rem;color:#6B7280;">${announcedDate}</td>
-                <td style="text-align:center;" class="${deadlineClass}">${deadlineText}</td>
-                <td style="text-align:center;">
-                    ${tender.url ? `<a href="${safeUrl(tender.url)}" target="_blank" class="origin-link">원본</a>` : '-'}
-                </td>
-            </tr>`;
-    };
-
-    const sectionDivider = (label, count) =>
-        `<tr class="section-divider"><td colspan="8">🔖 ${label} (${count}건)</td></tr>`;
-
-    // 그룹 분류
-    const activeTenders  = tenders.filter(t => !isExpiredTender(t));
-    const expiredPre     = tenders.filter(t => isExpiredTender(t) && t.status === '사전규격');
-    const expiredGeneral = tenders.filter(t => isExpiredTender(t) && t.status !== '사전규격');
-    const hasExpired     = expiredPre.length > 0 || expiredGeneral.length > 0;
-
-    let rows = '';
-
-    // 진행중 공고
-    if (activeTenders.length > 0) {
-        if (hasExpired) rows += sectionDivider('진행중', activeTenders.length);
-        rows += activeTenders.map(makeRow).join('');
-    }
-
-    // 마감된 사전규격
-    if (expiredPre.length > 0) {
-        rows += sectionDivider('마감된 사전규격', expiredPre.length);
-        rows += expiredPre.map(makeRow).join('');
-    }
-
-    // 마감된 일반공고
-    if (expiredGeneral.length > 0) {
-        rows += sectionDivider('마감된 일반공고', expiredGeneral.length);
-        rows += expiredGeneral.map(makeRow).join('');
-    }
-
-    const html = `
-        <table class="table table-compact">
-            <thead>
-                <tr>
-                    ${th('memo', '✎', '36px')}
-                    <th style="width:46px;">상태</th>
-                    ${th('score',    '점수',     '72px')}
-                    ${th('title',    '공고명',   'auto')}
-                    ${th('agency',   '수요기관', '150px')}
-                    ${th('budget',   '금액',     '100px')}
-                    ${th('announced','발주일',   '72px')}
-                    ${th('days',     '마감',     '66px')}
-                    <th style="width:56px;">원본</th>
-                </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-        </table>`;
-
-    container.innerHTML = html;
+    container.innerHTML = `<ul class="hs-list">${html}</ul>`;
     fetchEmbedScores(tenders.map(t => t.id));
 }
 

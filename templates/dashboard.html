@@ -1,230 +1,86 @@
 {% extends "base.html" %}
 
-{% block title %}메인화면 - HIGH-SEARCH{% endblock %}
+{% block title %}대시보드 - HIGH-SEARCH{% endblock %}
 
 {% block content %}
-<div class="space-y-5">
-    <!-- 오늘의 요약 -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div class="stat-card stat-green" onclick="gotoSearch('new')" title="신규공고 목록 보기">
-            <div class="stat-icon bg-green-400 text-white">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
-                </svg>
-            </div>
-            <div>
-                <p class="stat-label stat-label-colored">신규 공고</p>
-                <p class="stat-value stat-value-colored" id="new-today">0</p>
-            </div>
-        </div>
-        <div class="stat-card stat-blue" onclick="gotoSearch('pre')" title="사전규격 목록 보기">
-            <div class="stat-icon bg-blue-400 text-white">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                </svg>
-            </div>
-            <div>
-                <p class="stat-label stat-label-colored">사전규격</p>
-                <p class="stat-value stat-value-colored" id="pre-announcement">0</p>
-            </div>
-        </div>
-        <div class="stat-card stat-orange" onclick="gotoSearch('deadline')" title="마감임박 목록 보기 (3일 이내)">
-            <div class="stat-icon bg-orange-400 text-white">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                </svg>
-            </div>
-            <div>
-                <p class="stat-label stat-label-colored">마감 임박</p>
-                <p class="stat-value stat-value-colored" id="deadline-soon">0</p>
-            </div>
-        </div>
-        <div class="stat-card stat-purple" onclick="gotoSearch('all')" title="전체 공고 목록 보기">
-            <div class="stat-icon bg-purple-400 text-white">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                </svg>
-            </div>
-            <div>
-                <p class="stat-label stat-label-colored">총 공고</p>
-                <p class="stat-value stat-value-colored" id="total-tenders">0</p>
-            </div>
-        </div>
-    </div>
+<div class="hs-dash">
 
-    <!-- PC: 관심 키워드 탭 스트립 -->
-    <div class="hidden sm:flex items-center gap-3 bg-white rounded-lg px-4 py-2.5 border border-gray-100 shadow-sm">
-        <span class="text-xs font-semibold text-gray-400 shrink-0 uppercase tracking-wide">키워드</span>
-        <div id="active-keywords" class="flex-1 min-w-0 flex gap-1.5 items-center overflow-hidden flex-nowrap">
-            <!-- JavaScript로 동적 생성 -->
-        </div>
-        <a href="/filters" class="text-xs text-blue-500 hover:text-blue-700 hover:underline shrink-0 whitespace-nowrap ml-1">수정하기 →</a>
-    </div>
-
-    <!-- 모바일: 관심 키워드 (한 줄, 클릭 → /filters) -->
-    <a href="/filters" class="sm:hidden flex items-center gap-2 bg-blue-50 rounded-lg px-3 py-2.5 border border-blue-200 shadow-sm">
-        <span class="text-xs font-semibold text-blue-900 shrink-0">키워드</span>
-        <div id="active-keywords-mobile" class="flex-1 flex gap-1.5 items-center overflow-hidden flex-nowrap min-w-0">
-            <!-- JavaScript로 동적 생성 -->
-        </div>
-        <svg class="w-4 h-4 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-        </svg>
-    </a>
-
-    <!-- ════════ 사전규격 섹션 ════════ -->
-
-    <!-- PC: 카드 캐러셀 -->
-    <div class="hidden sm:block card section-pre">
-        <div class="card-header">
-            <div class="flex justify-between items-center">
-                <h3 class="card-title">사전규격 (나라장터)</h3>
-                <div class="flex items-center gap-2">
-                    <button class="carousel-nav-btn" id="pre-prev" onclick="prevPage('pre')" disabled>←</button>
-                    <span class="text-xs text-gray-400" id="pre-page-indicator">1 / 1</span>
-                    <button class="carousel-nav-btn" id="pre-next" onclick="nextPage('pre')">→</button>
-                </div>
+    <aside class="hs-dash-side" aria-label="요약과 필터">
+        <div class="hs-kpis">
+            <button type="button" class="hs-kpi hs-kpi-btn" onclick="gotoSearch('new')" title="신규공고 목록 보기">
+                <div class="hs-kpi-label">신규 공고</div>
+                <div class="hs-kpi-value" id="new-today">-</div>
+            </button>
+            <div class="hs-kpi" title="최근 7일 동안 관심 키워드에 걸린 공고">
+                <div class="hs-kpi-label">키워드 매칭</div>
+                <div class="hs-kpi-value" id="keyword-match" style="color: var(--hs-brand)">-</div>
             </div>
+            <button type="button" class="hs-kpi hs-kpi-btn" onclick="gotoSearch('pre')" title="사전규격 목록 보기">
+                <div class="hs-kpi-label">사전규격</div>
+                <div class="hs-kpi-value" id="pre-announcement">-</div>
+            </button>
+            <button type="button" class="hs-kpi hs-kpi-btn" onclick="gotoSearch('deadline')" title="마감임박 목록 보기 (3일 이내)">
+                <div class="hs-kpi-label">마감 임박</div>
+                <div class="hs-kpi-value" id="deadline-soon">-</div>
+            </button>
         </div>
-        <div class="card-body">
-            <div id="pre-tenders-list" class="tender-card-grid"></div>
-        </div>
-    </div>
 
-    <!-- 모바일: 리스트 뷰 -->
-    <div class="sm:hidden card">
-        <div class="card-header">
-            <h3 class="card-title">사전규격 (나라장터)</h3>
+        <details id="side-more" class="hs-side-more" open>
+        <summary class="hs-side-more-btn">관심 키워드 · 필터</summary>
+        <div>
+            <div class="hs-side-title">관심 키워드 <a href="/filters" class="hs-link">수정</a></div>
+            <div id="active-keywords" style="display: flex; flex-wrap: wrap; gap: 6px"></div>
         </div>
-        <div class="flex items-center gap-2 px-4 py-2 border-b bg-gray-50">
-            <span class="text-xs text-gray-500 shrink-0 font-medium">정렬</span>
-            <select id="dash-mobile-sort-pre" onchange="onDashMobileSortChange('pre', this.value)"
-                    class="flex-1 text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
-                <option value="score">점수</option>
-                <option value="title">사업명</option>
-                <option value="agency">기관</option>
-                <option value="announced">공고일</option>
-                <option value="days">마감일</option>
-                <option value="budget">금액</option>
+
+        <div>
+            <div class="hs-side-title">필터</div>
+            <label class="hs-check"><input type="checkbox" id="f-week" onchange="resetPageAndRender()"> 7일 안에 마감</label>
+            <label class="hs-check"><input type="checkbox" id="f-big" onchange="resetPageAndRender()"> 1억 이상</label>
+            <label class="hs-check"><input type="checkbox" id="f-noprice" onchange="resetPageAndRender()"> 금액 미정 빼기</label>
+        </div>
+        </details>
+
+        <button type="button" class="hs-link" onclick="gotoSearch('all')" style="border: 0; background: none; padding: 0; text-align: left; font-size: 13px; cursor: pointer">전체 공고 <span id="total-tenders">-</span>건 보기 →</button>
+    </aside>
+
+    <section class="hs-dash-main" aria-label="공고 목록">
+        <div class="hs-tabs" role="tablist" id="dash-tabs">
+            <button type="button" class="hs-tab active" role="tab" aria-selected="true" data-tab="all" onclick="setTab('all')">전체<span id="cnt-all"></span></button>
+            <button type="button" class="hs-tab" role="tab" aria-selected="false" data-tab="pre" onclick="setTab('pre')">사전규격<span id="cnt-pre"></span></button>
+            <button type="button" class="hs-tab" role="tab" aria-selected="false" data-tab="urgent" onclick="setTab('urgent')">나라장터 입찰<span id="cnt-urgent"></span></button>
+            <button type="button" class="hs-tab" role="tab" aria-selected="false" data-tab="recent" onclick="setTab('recent')">기타 채널<span id="cnt-recent"></span></button>
+            <button type="button" class="hs-tab" role="tab" aria-selected="false" data-tab="similar" onclick="setTab('similar')">비슷한 공고<span id="cnt-similar"></span></button>
+            <button type="button" class="hs-tab hs-tab-aside" role="tab" aria-selected="false" data-tab="recent_viewed" onclick="setTab('recent_viewed')">읽은 공고<span id="cnt-recent_viewed"></span></button>
+        </div>
+
+        <div id="hs-read-shelf" class="hs-read-shelf" aria-label="읽은 공고" hidden></div>
+
+        <div id="hs-today" class="hs-today" hidden></div>
+
+        <div class="hs-toolbar">
+            <span id="list-caption">불러오는 중…</span>
+            <label for="dash-sort" class="hs-sr">정렬</label>
+            <select id="dash-sort" onchange="resetPageAndRender()">
+                <option value="rec">적합도순</option>
+                <option value="new">신규 먼저</option>
+                <option value="days">마감 임박순</option>
+                <option value="price">금액 큰 순</option>
             </select>
-            <button id="dash-mobile-dir-pre" onclick="toggleDashMobileSortDir('pre')"
-                    class="shrink-0 w-9 h-9 flex items-center justify-center border border-gray-300 rounded-lg bg-white text-gray-700 hover:bg-gray-100 transition-colors text-lg font-bold select-none">↓</button>
         </div>
-        <div class="card-body">
-            <div id="pre-tenders-list-mobile" class="scrollable-list space-y-3"></div>
-        </div>
-    </div>
 
-    <!-- ════════ 신규공고 (나라장터 API) ════════ -->
-
-    <!-- PC: 카드 캐러셀 -->
-    <div class="hidden sm:block card section-urgent">
-        <div class="card-header">
-            <div class="flex justify-between items-center">
-                <h3 class="card-title">신규공고 (나라장터 API)</h3>
-                <div class="flex items-center gap-2">
-                    <button class="carousel-nav-btn" id="urgent-prev" onclick="prevPage('urgent')" disabled>←</button>
-                    <span class="text-xs text-gray-400" id="urgent-page-indicator">1 / 1</span>
-                    <button class="carousel-nav-btn" id="urgent-next" onclick="nextPage('urgent')">→</button>
-                </div>
-            </div>
-        </div>
-        <div class="card-body">
-            <div id="urgent-tenders-list" class="tender-card-grid"></div>
-        </div>
-    </div>
-
-    <!-- 모바일: 리스트 뷰 -->
-    <div class="sm:hidden card">
-        <div class="card-header">
-            <h3 class="card-title">신규공고 (나라장터 API)</h3>
-        </div>
-        <div class="flex items-center gap-2 px-4 py-2 border-b bg-gray-50">
-            <span class="text-xs text-gray-500 shrink-0 font-medium">정렬</span>
-            <select id="dash-mobile-sort-urgent" onchange="onDashMobileSortChange('urgent', this.value)"
-                    class="flex-1 text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
-                <option value="score">점수</option>
-                <option value="title">사업명</option>
-                <option value="agency">기관</option>
-                <option value="announced">공고일</option>
-                <option value="days">마감일</option>
-                <option value="budget">금액</option>
-            </select>
-            <button id="dash-mobile-dir-urgent" onclick="toggleDashMobileSortDir('urgent')"
-                    class="shrink-0 w-9 h-9 flex items-center justify-center border border-gray-300 rounded-lg bg-white text-gray-700 hover:bg-gray-100 transition-colors text-lg font-bold select-none">↓</button>
-        </div>
-        <div class="card-body">
-            <div id="urgent-tenders-list-mobile" class="scrollable-list space-y-3"></div>
-        </div>
-    </div>
-
-    <!-- ════════ 신규공고 (기타 채널) ════════ -->
-
-    <!-- PC: 카드 캐러셀 -->
-    <div class="hidden sm:block card section-recent">
-        <div class="card-header">
-            <div class="flex justify-between items-center">
-                <h3 class="card-title">신규공고 (기타 채널)</h3>
-                <div class="flex items-center gap-2">
-                    <button class="carousel-nav-btn" id="recent-prev" onclick="prevPage('recent')" disabled>←</button>
-                    <span class="text-xs text-gray-400" id="recent-page-indicator">1 / 1</span>
-                    <button class="carousel-nav-btn" id="recent-next" onclick="nextPage('recent')">→</button>
-                </div>
-            </div>
-        </div>
-        <div class="card-body">
-            <div id="recent-tenders-list" class="tender-card-grid"></div>
-        </div>
-    </div>
-
-    <!-- 모바일: 리스트 뷰 -->
-    <div class="sm:hidden card">
-        <div class="card-header">
-            <div class="flex justify-between items-center flex-wrap gap-2">
-                <h3 class="card-title">신규공고 (기타 채널)</h3>
-            </div>
-        </div>
-        <div class="flex items-center gap-2 px-4 py-2 border-b bg-gray-50">
-            <span class="text-xs text-gray-500 shrink-0 font-medium">정렬</span>
-            <select id="dash-mobile-sort-recent" onchange="onDashMobileSortChange('recent', this.value)"
-                    class="flex-1 text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
-                <option value="score">점수</option>
-                <option value="title">사업명</option>
-                <option value="agency">기관</option>
-                <option value="announced">공고일</option>
-                <option value="days">마감일</option>
-                <option value="budget">금액</option>
-            </select>
-            <button id="dash-mobile-dir-recent" onclick="toggleDashMobileSortDir('recent')"
-                    class="shrink-0 w-9 h-9 flex items-center justify-center border border-gray-300 rounded-lg bg-white text-gray-700 hover:bg-gray-100 transition-colors text-lg font-bold select-none">↓</button>
-        </div>
-        <div class="card-body">
-            <div id="recent-tenders-list-mobile" class="scrollable-list space-y-3"></div>
-        </div>
-    </div>
-
-    <!-- ════════ 키워드엔 없지만 비슷한 공고 (사례 점수) ════════ -->
-    <div class="card section-similar">
-        <div class="card-header">
-            <div class="flex justify-between items-center flex-wrap gap-2">
-                <h3 class="card-title">키워드엔 없지만 비슷한 공고</h3>
-                <a href="/cases" class="text-xs text-blue-600 hover:underline">놓친 공고 신고·채점 →</a>
-            </div>
-            <p id="similar-note" class="text-xs text-gray-500 mt-1">불러오는 중…</p>
-        </div>
-        <div class="card-body">
-            <div id="similar-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3"></div>
-        </div>
-    </div>
-
+        <ul id="hs-list" class="hs-list"></ul>
+    </section>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
+// 휴대폰·좁은 화면에서는 키워드·필터를 접어 목록이 먼저 보이게 한다
+if (window.matchMedia('(max-width: 860px)').matches) document.getElementById('side-more').open = false;
 function gotoSearch(filter) {
     window.open('/search?filter=' + filter, '_blank');
 }
 </script>
+<script src="{{ url_for('static', filename='js/tender-row.js') }}"></script>
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 {% endblock %}

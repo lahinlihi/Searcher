@@ -55,7 +55,7 @@ async function lookupMissed(ev) {
         }
         box.innerHTML = `<p class="text-xs text-gray-500">어느 공고인가요? (${candidates.length}건)</p>` +
             candidates.map(c => `
-                <button onclick="diagnose(${c.id})" class="w-full text-left text-sm border border-gray-200 rounded-lg px-3 py-2 hover:bg-blue-50">
+                <button onclick="diagnose(${c.id})" class="w-full text-left text-sm border border-gray-200 rounded-lg px-3 py-2 hover:bg-orange-50">
                     <span class="block truncate">${safeHtml(c.title)}</span>
                     <span class="text-xs text-gray-500">${safeHtml(c.source_site)} · ${safeHtml(c.status || '')} · ${safeHtml(c.created_at.replace('T', ' '))} 수집</span>
                 </button>`).join('');
@@ -95,7 +95,7 @@ function renderVerdict(r) {
     const section = r.section ? SECTION_LABELS[r.section] || r.section : '-';
     let detail = '';
     if (r.rank) {
-        detail = `<p>${safeHtml(section)} 구역, 같은 시점 관심 키워드 통과 공고 ${r.pool}건 중 <b>${r.rank}등</b> (${Number(r.score).toFixed(1)}점, 대시보드에는 24등까지 나옵니다)</p>
+        detail = `<p>${safeHtml(section)} 구역, 같은 시점 관심 키워드 통과 공고 ${r.pool}건 중 <b>${r.rank}등</b> (${Number(r.score).toFixed(1)}점, 대시보드에는 15등까지 나옵니다)</p>
             <table class="text-xs text-gray-600 mt-1"><tbody>
                 <tr><td class="pr-3">키워드</td><td class="text-right">${r.breakdown.keyword}</td></tr>
                 <tr><td class="pr-3">유형</td><td class="text-right">${r.breakdown.type}</td></tr>
@@ -106,7 +106,7 @@ function renderVerdict(r) {
         ? `<ul class="list-disc pl-5 text-sm">${r.reasons.map(x => `<li>${safeHtml(x)}</li>`).join('')}</ul>` : '';
     const addBtn = r.is_case
         ? '<span class="text-xs text-green-700">이미 정답 목록에 있습니다</span>'
-        : `<button onclick="addCase(${r.tender.id}, this)" class="text-sm bg-blue-600 text-white rounded-lg px-3 py-1.5 hover:bg-blue-700">정답 목록에 넣기</button>`;
+        : `<button onclick="addCase(${r.tender.id}, this)" class="text-sm bg-[color:var(--hs-brand)] text-white rounded-lg px-3 py-1.5 hover:bg-[#E84E0B]">정답 목록에 넣기</button>`;
     return `
         <div class="rounded-lg border border-gray-200 p-3 space-y-2 text-sm">
             <p class="font-medium truncate"><a href="/tender/${r.tender.id}" target="_blank" rel="noopener" class="hover:underline">${safeHtml(r.tender.title)}</a></p>

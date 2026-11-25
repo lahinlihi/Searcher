@@ -3,45 +3,29 @@
 {% block title %}관심공고 - HIGH-SEARCH{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <!-- 탭 -->
-    <div class="border-b border-gray-200">
-        <nav class="flex gap-1">
-            <button id="tab-bookmarks"
-                onclick="switchTab('bookmarks')"
-                class="tab-btn tab-active px-5 py-2.5 text-sm font-medium border-b-2 border-blue-600 text-blue-600">
-                ★ 관심공고 <span id="bookmark-count" class="ml-1 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">-</span>
-            </button>
-            <button id="tab-dismissed"
-                onclick="switchTab('dismissed')"
-                class="tab-btn px-5 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">
-                ✕ 관심없음 <span id="dismissed-count" class="ml-1 text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">-</span>
-            </button>
-        </nav>
+<div style="display: flex; flex-direction: column; gap: 14px">
+    <div>
+        <h1 style="margin: 0; font-size: 24px; font-weight: 700">관심공고</h1>
+        <p style="margin: 4px 0 0; font-size: 14px; color: var(--hs-muted)">별표로 담아 둔 공고입니다. 담은 공고는 사례 점수가 배우는 재료가 됩니다.</p>
     </div>
 
-    <!-- 관심공고 목록 -->
-    <div id="panel-bookmarks" class="card">
-        <div class="card-body">
-            <div id="bookmarks-list" class="space-y-3">
-                <p class="text-gray-400 text-sm text-center py-8">불러오는 중...</p>
-            </div>
-        </div>
+    <div class="hs-tabs" role="tablist">
+        <button type="button" id="tab-bookmarks" role="tab" aria-selected="true" onclick="switchTab('bookmarks')" class="hs-tab active">담은 공고<span id="bookmark-count">-</span></button>
+        <button type="button" id="tab-dismissed" role="tab" aria-selected="false" onclick="switchTab('dismissed')" class="hs-tab">관심없음<span id="dismissed-count">-</span></button>
     </div>
 
-    <!-- 관심없음 목록 -->
-    <div id="panel-dismissed" class="card hidden">
-        <div class="card-body">
-            <p class="text-xs text-gray-500 mb-3">✕ 버튼으로 숨긴 공고 목록입니다. 복원하면 다시 대시보드에 표시됩니다.</p>
-            <div id="dismissed-list" class="space-y-3">
-                <p class="text-gray-400 text-sm text-center py-8">불러오는 중...</p>
-            </div>
-        </div>
+    <div id="panel-bookmarks">
+        <ul id="bookmarks-list" class="hs-list"><li class="hs-empty">불러오는 중…</li></ul>
     </div>
 
+    <div id="panel-dismissed" class="hidden">
+        <p style="font-size: 13px; color: var(--hs-muted); margin: 0 0 4px">관심없음으로 숨긴 공고입니다. 복원하면 다시 대시보드에 나옵니다.</p>
+        <ul id="dismissed-list" class="hs-list"><li class="hs-empty">불러오는 중…</li></ul>
+    </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='js/tender-row.js') }}"></script>
 <script src="{{ url_for('static', filename='js/bookmarks.js') }}"></script>
 {% endblock %}

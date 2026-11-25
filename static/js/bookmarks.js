@@ -1,301 +1,129 @@
-// 관심공고 페이지 JavaScript
+// 관심공고 화면 — 담은 공고 / 관심없음. 공고 한 줄은 tender-row.js 가 그린다.
 
 const LABEL_OPTIONS = [
-    { value: '',           text: '라벨 없음',  bonus: 0,  cls: 'text-gray-400' },
-    { value: 'executable', text: '수행 가능',  bonus: 15, cls: 'text-green-700' },
-    { value: 'experienced',text: '경험 있음',  bonus: 10, cls: 'text-blue-700'  },
-    { value: 'interested', text: '관심사',     bonus: 5,  cls: 'text-purple-700'},
-    { value: 'reference',  text: '참고용',     bonus: 0,  cls: 'text-gray-500'  },
+    { value: '',            text: '라벨 없음', bonus: 0 },
+    { value: 'executable',  text: '수행 가능', bonus: 15 },
+    { value: 'experienced', text: '경험 있음', bonus: 10 },
+    { value: 'interested',  text: '관심사',    bonus: 5 },
+    { value: 'reference',   text: '참고용',    bonus: 0 },
 ];
 
-let currentTab = 'bookmarks';
+const EMPTY_BOOKMARKS = '<li class="hs-empty">담은 공고가 없습니다.<br>대시보드나 검색 결과에서 별표를 누르면 여기에 모입니다.</li>';
 
-document.addEventListener('DOMContentLoaded', () => {
-    loadBookmarks();
-    loadDismissed();
-});
+document.addEventListener('DOMContentLoaded', () => { loadBookmarks(); loadDismissed(); });
+window.addEventListener('pageshow', e => { if (e.persisted) { loadBookmarks(); loadDismissed(); } });
 
-// 뒤로가기/앞으로가기(bfcache)로 복원될 때 재조회
-window.addEventListener('pageshow', function(event) {
-    if (event.persisted) {
-        loadBookmarks();
-        loadDismissed();
-    }
-});
-
-// ── 탭 전환 ───────────────────────────────────────────────────────────────────
 function switchTab(tab) {
-    currentTab = tab;
-    const tabs = ['bookmarks', 'dismissed'];
-    tabs.forEach(t => {
+    ['bookmarks', 'dismissed'].forEach(t => {
+        const on = t === tab;
         const btn = document.getElementById(`tab-${t}`);
-        const panel = document.getElementById(`panel-${t}`);
-        if (!btn || !panel) return;
-        if (t === tab) {
-            btn.classList.add('tab-active', 'border-blue-600', 'text-blue-600');
-            btn.classList.remove('border-transparent', 'text-gray-500');
-            panel.classList.remove('hidden');
-        } else {
-            btn.classList.remove('tab-active', 'border-blue-600', 'text-blue-600');
-            btn.classList.add('border-transparent', 'text-gray-500');
-            panel.classList.add('hidden');
-        }
+        btn.classList.toggle('active', on);
+        btn.setAttribute('aria-selected', String(on));
+        document.getElementById(`panel-${t}`).classList.toggle('hidden', !on);
     });
 }
 
+// ── 담은 공고 ───────────────────────────────────────────────────────────────
+
 async function loadBookmarks() {
+    const list = document.getElementById('bookmarks-list');
     try {
         const res = await fetch('/api/bookmarks');
         const tenders = await res.json();
-
-        if (!res.ok) {
-            throw new Error(tenders.error || `서버 오류 (${res.status})`);
-        }
-
-        const countEl = document.getElementById('bookmark-count');
-        const container = document.getElementById('bookmarks-list');
-
-        if (!Array.isArray(tenders) || tenders.length === 0) {
-            countEl.textContent = '0';
-            container.innerHTML = `
-                <div class="text-center py-12">
-                    <p class="text-gray-400 text-sm mb-2">스크랩한 공고가 없습니다.</p>
-                    <p class="text-gray-400 text-xs">대시보드나 검색 결과에서 ★ 버튼을 눌러 관심공고를 추가하세요.</p>
-                </div>`;
-            return;
-        }
-
-        countEl.textContent = tenders.length;
-        container.innerHTML = tenders.map(t => renderBookmarkCard(t)).join('');
+        if (!res.ok) throw new Error(tenders.error || `서버 오류 (${res.status})`);
+        const n = Array.isArray(tenders) ? tenders.length : 0;
+        document.getElementById('bookmark-count').textContent = n;
+        if (!n) { list.innerHTML = EMPTY_BOOKMARKS; return; }
+        // 진행 중 = 지금 들어갈지 고민하는 공고, 지난 공고 = 앞으로 비슷한 사업을 찾을 때 참고할 관심 이력
+        const past = t => t.days_left !== null && t.days_left !== undefined && t.days_left < 0;
+        const open = tenders.filter(t => !past(t)).sort((a, b) => (a.days_left ?? 99999) - (b.days_left ?? 99999));
+        const closed = tenders.filter(past);
+        list.innerHTML =
+            `<li class="hs-list-label">진행 중 ${open.length}건 <span class="hs-list-label-note">지금 참여를 검토할 공고 · 마감이 가까운 순</span></li>`
+            + (open.length ? open.map(renderBookmarkRow).join('')
+                           : '<li class="hs-empty" style="padding: 20px 12px">진행 중인 관심공고가 없습니다.</li>')
+            + (closed.length
+                ? `<li class="hs-list-label" style="margin-top: 18px">지난 공고 ${closed.length}건 <span class="hs-list-label-note">관심을 가졌던 사업 · 다음에 비슷한 공고를 찾는 기준이 됩니다</span></li>`
+                  + closed.map(renderBookmarkRow).join('')
+                : '');
     } catch (e) {
         console.error('관심공고 로드 실패:', e);
-        document.getElementById('bookmarks-list').innerHTML =
-            `<p class="text-red-500 text-sm">불러오기 실패: ${safeHtml(e.message)}</p>`;
+        list.innerHTML = `<li class="hs-empty" style="color: var(--hs-bad)">불러오기 실패: ${safeHtml(e.message)}</li>`;
     }
 }
 
-// ── 관심없음 목록 ─────────────────────────────────────────────────────────────
-async function loadDismissed() {
+function labelDropdown(bookmarkId, currentLabel) {
+    const options = LABEL_OPTIONS.map(o =>
+        `<option value="${o.value}" ${o.value === currentLabel ? 'selected' : ''}>${o.text}${o.bonus > 0 ? ' (+' + o.bonus + ')' : ''}</option>`
+    ).join('');
+    return `<label class="hs-sr" for="label-sel-${bookmarkId}">라벨</label>
+            <select id="label-sel-${bookmarkId}" onchange="saveLabel(${bookmarkId}, this)" class="hs-input hs-label-select"
+                    title="라벨에 따라 적합도에 보너스가 붙습니다">${options}</select>`;
+}
+
+function renderBookmarkRow(t) {
+    const bookmarkedAt = t.bookmarked_at ? t.bookmarked_at.substring(0, 10) : '';
+    const bonus = t.label_bonus > 0 ? `<span>라벨 보너스 <b>+${t.label_bonus}</b></span>` : '';
+    return renderTenderRow(t, {
+        announced: true, origin: true,
+        metaHtml: `${labelDropdown(t.bookmark_id, t.bookmark_label || '')}${bonus}`
+            + (bookmarkedAt ? `<span>담은 날 ${safeHtml(bookmarkedAt.substring(5))}</span>` : ''),
+        actionsHtml: `<button type="button" class="hs-icon-btn hs-star on" aria-pressed="true" aria-label="관심공고에서 빼기" title="관심공고에서 빼기"
+                        onclick="removeBookmark(${t.id})">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"></path></svg>
+            </button>`,
+    });
+}
+
+async function saveLabel(bookmarkId, selectEl) {
     try {
-        const res = await fetch('/api/dismissed');
-        const tenders = await res.json();
-        const countEl = document.getElementById('dismissed-count');
-        const container = document.getElementById('dismissed-list');
+        await fetch(`/api/bookmarks/${bookmarkId}/label`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label: selectEl.value })
+        });
+    } catch (e) { console.error(e); }
+}
 
-        if (!Array.isArray(tenders) || tenders.length === 0) {
-            countEl.textContent = '0';
-            container.innerHTML = `
-                <div class="text-center py-12">
-                    <p class="text-gray-400 text-sm">관심없음으로 숨긴 공고가 없습니다.</p>
-                </div>`;
-            return;
-        }
+async function removeBookmark(tenderId) {
+    try {
+        const res = await fetch('/api/bookmarks/toggle', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tender_id: tenderId })
+        });
+        const data = await res.json();
+        if (data.bookmarked) return;
+        loadBookmarks();          // 묶음별 건수를 다시 센다
+    } catch (e) { console.error(e); }
+}
 
-        countEl.textContent = tenders.length;
-        container.innerHTML = tenders.map(t => renderDismissedCard(t)).join('');
+// ── 관심없음 ───────────────────────────────────────────────────────────────
+
+async function loadDismissed() {
+    const list = document.getElementById('dismissed-list');
+    try {
+        const tenders = await (await fetch('/api/dismissed')).json();
+        const n = Array.isArray(tenders) ? tenders.length : 0;
+        document.getElementById('dismissed-count').textContent = n;
+        list.innerHTML = n ? tenders.map(renderDismissedRow).join('')
+            : '<li class="hs-empty">관심없음으로 숨긴 공고가 없습니다.</li>';
     } catch (e) {
         console.error('관심없음 로드 실패:', e);
-        document.getElementById('dismissed-list').innerHTML =
-            `<p class="text-red-500 text-sm">불러오기 실패: ${safeHtml(e.message)}</p>`;
+        list.innerHTML = `<li class="hs-empty" style="color: var(--hs-bad)">불러오기 실패: ${safeHtml(e.message)}</li>`;
     }
 }
 
-function renderDismissedCard(tender) {
-    const daysLeft = tender.days_left;
-    const isExpired = daysLeft !== null && daysLeft < 0;
-    const deadlineText = daysLeft !== null ? (isExpired ? `마감 (D${daysLeft})` : `D-${daysLeft}`) : '-';
-    const deadlineClass = isExpired ? 'text-gray-400 line-through' : (daysLeft <= 2 ? 'text-red-600 font-semibold' : 'text-gray-600');
-    const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
-    const dismissedAt = tender.dismissed_at ? tender.dismissed_at.substring(0, 10) : '';
-    const statusBadge = tender.status === '사전규격'
-        ? '<span class="tender-status-badge tender-status-pre">사전규격</span>'
-        : '<span class="tender-status-badge tender-status-normal">일반</span>';
-    const agencyName = (tender.agency && tender.agency.includes('조달청') && tender.demand_agency)
-        ? escapeHtml(tender.demand_agency) : escapeHtml(tender.agency);
-
-    return `
-        <div class="tender-item opacity-60 hover:opacity-90 transition-opacity" id="dismissed-card-${tender.id}">
-            <div class="flex justify-between items-start mb-1">
-                <div class="flex flex-wrap items-center gap-1">
-                    ${statusBadge}
-                    ${dismissedAt ? `<span class="text-xs text-gray-400">숨김: ${dismissedAt}</span>` : ''}
-                </div>
-                <div class="flex items-center gap-2 ml-2 shrink-0">
-                    <span class="${deadlineClass} text-sm">${deadlineText}</span>
-                    <button onclick="undismissTender(${tender.id})"
-                            class="text-xs text-blue-600 hover:text-blue-800 border border-blue-200 hover:border-blue-400 rounded px-2 py-0.5 transition-colors"
-                            title="복원 — 다시 대시보드에 표시">복원</button>
-                </div>
-            </div>
-            <h4 class="font-medium text-gray-700 mt-1 line-clamp-1 sm:text-sm">
-                <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="hover:text-blue-600 hover:underline">
-                    ${escapeHtml(tender.title)}
-                </a>
-            </h4>
-            <div class="sm:hidden flex flex-col gap-1 mt-2">
-                <span class="text-sm text-gray-700 font-bold truncate">${agencyName}</span>
-                <span class="text-sm text-blue-600 font-medium">${price}</span>
-            </div>
-            <div class="hidden sm:flex items-center gap-3 mt-1.5 text-sm">
-                <span class="font-medium text-gray-800 truncate">${agencyName}</span>
-                <span class="font-medium text-blue-600">${price}</span>
-            </div>
-        </div>`;
+function renderDismissedRow(t) {
+    const at = t.dismissed_at ? t.dismissed_at.substring(0, 10) : '';
+    return renderTenderRow(t, {
+        metaHtml: at ? `<span>숨긴 날 ${safeHtml(at.substring(5))}</span>` : '',
+        actionsHtml: `<button type="button" class="hs-btn" style="min-height: 36px; padding: 0 12px" title="다시 대시보드에 표시"
+                        onclick="undismissTender(${t.id})">복원</button>`,
+    });
 }
 
 async function undismissTender(tenderId) {
     try {
         const res = await fetch(`/api/tenders/${tenderId}/dismiss`, { method: 'DELETE' });
-        if (res.ok) {
-            const card = document.getElementById(`dismissed-card-${tenderId}`);
-            if (card) {
-                card.style.transition = 'opacity 0.3s';
-                card.style.opacity = '0';
-                setTimeout(() => { card.remove(); loadDismissed(); }, 300);
-            }
-        }
+        if (res.ok) loadDismissed();
     } catch (e) { console.error(e); }
-}
-
-function buildScoreBadge(score, businessType, labelBonus, breakdown) {
-    if (score === 0 && !labelBonus) return '';
-    let bg;
-    if (score >= 70)      bg = 'bg-green-100 text-green-800 border border-green-300';
-    else if (score >= 40) bg = 'bg-yellow-100 text-yellow-800 border border-yellow-300';
-    else                  bg = 'bg-gray-100 text-gray-600 border border-gray-300';
-    const displayScore = score.toFixed(1);
-    const bonusText = labelBonus > 0 ? ` <span class="text-green-600">(+${labelBonus})</span>` : '';
-    let tooltip;
-    if (breakdown) {
-        const bonusPart = labelBonus > 0 ? ` + 라벨 +${labelBonus}` : '';
-        tooltip = `${displayScore}점 = 키워드 ${breakdown.keyword.toFixed(1)} + 사업유형 ${breakdown.type.toFixed(1)} + 기관가중치 ${breakdown.agency.toFixed(1)}${bonusPart}`;
-    } else {
-        tooltip = `적합도 점수: ${displayScore}점`;
-    }
-    return `<span class="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded ${bg}"
-                  title="${tooltip}">
-        <span class="font-bold">${displayScore}점${bonusText}</span>
-    </span>`;
-}
-
-function labelDropdown(bookmarkId, currentLabel) {
-    const cur = LABEL_OPTIONS.find(o => o.value === currentLabel) || LABEL_OPTIONS[0];
-    const options = LABEL_OPTIONS.map(o =>
-        `<option value="${o.value}" ${o.value === currentLabel ? 'selected' : ''}>${o.text}${o.bonus > 0 ? ' (+'+o.bonus+')' : ''}</option>`
-    ).join('');
-    return `<select id="label-sel-${bookmarkId}"
-                    onchange="saveLabel(${bookmarkId}, this)"
-                    class="text-xs border border-gray-200 rounded px-1.5 py-0.5 ${cur.cls} bg-white cursor-pointer focus:outline-none focus:ring-1 focus:ring-blue-300"
-                    title="스크랩 라벨: 라벨에 따라 점수 보너스 부여">
-                ${options}
-            </select>`;
-}
-
-function renderBookmarkCard(tender) {
-    const statusBadge = tender.status === '사전규격'
-        ? '<span class="tender-status-badge tender-status-pre">사전규격</span>'
-        : '<span class="tender-status-badge tender-status-normal">일반</span>';
-
-    const scoreBadge = buildScoreBadge(
-        tender.relevance_score ?? 0,
-        tender.business_type || '기타',
-        tender.label_bonus ?? 0,
-        tender.score_breakdown || null
-    );
-
-    const daysLeft = tender.days_left;
-    let deadlineClass = 'tender-deadline-normal';
-    let deadlineText = daysLeft !== null ? `D-${daysLeft}` : '-';
-    if (daysLeft !== null && daysLeft <= 2) deadlineClass = 'tender-deadline-urgent';
-    else if (daysLeft !== null && daysLeft <= 5) deadlineClass = 'tender-deadline-soon';
-
-    const price = tender.estimated_price ? formatPrice(tender.estimated_price) : '미정';
-    const announcedDate = tender.announced_date ? tender.announced_date.substring(0, 10) : '';
-    const bookmarkedAt = tender.bookmarked_at ? tender.bookmarked_at.substring(0, 10) : '';
-
-    const agencyNameBm = (tender.agency && tender.agency.includes('조달청') && tender.demand_agency)
-        ? escapeHtml(tender.demand_agency) : escapeHtml(tender.agency);
-
-    return `
-        <div class="tender-item" id="bookmark-card-${tender.id}">
-            <div class="flex justify-between items-start mb-1">
-                <div class="flex flex-wrap items-center gap-1">
-                    ${statusBadge}
-                    ${scoreBadge}
-                    ${bookmarkedAt ? `<span class="text-xs text-yellow-600 bg-yellow-50 border border-yellow-200 px-2 py-0.5 rounded">★ ${bookmarkedAt}</span>` : ''}
-                    ${tender.memo_count > 0 ? `<span class="text-xs bg-purple-100 text-purple-700 border border-purple-200 px-2 py-0.5 rounded font-semibold">✎ ${tender.memo_count}</span>` : ''}
-                    ${labelDropdown(tender.bookmark_id, tender.bookmark_label || '')}
-                </div>
-                <div class="flex items-center gap-2 ml-2 shrink-0">
-                    <span class="font-semibold ${deadlineClass}">${deadlineText}</span>
-                    <button onclick="removeBookmark(${tender.id}, ${tender.bookmark_id})"
-                            class="text-yellow-400 hover:text-gray-400 transition-colors text-lg leading-none"
-                            title="관심공고 해제">★</button>
-                </div>
-            </div>
-            <h4 class="font-medium text-gray-900 mt-1 line-clamp-1 sm:text-sm">
-                <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="text-gray-900 hover:text-blue-600 hover:underline">
-                    ${escapeHtml(tender.title)}
-                </a>
-            </h4>
-            <div class="sm:hidden flex flex-col gap-1 mt-2">
-                <span class="text-sm text-gray-700 font-bold truncate">${agencyNameBm}</span>
-                <div class="flex items-center gap-2 text-sm">
-                    <span class="text-blue-600 font-medium">${price}</span>
-                    ${announcedDate ? `<span class="text-gray-400 text-xs">등록: ${announcedDate}</span>` : ''}
-                </div>
-            </div>
-            <div class="hidden sm:flex items-center gap-3 mt-1.5 text-sm flex-wrap">
-                <span class="font-medium text-gray-800 truncate">${agencyNameBm}</span>
-                <span class="font-medium text-blue-600">${price}</span>
-                ${announcedDate ? `<span class="text-gray-400">등록: ${announcedDate}</span>` : ''}
-                <a href="/tender/${tender.id}" target="_blank" rel="noopener" class="text-blue-500 hover:underline">상세보기 →</a>
-                ${tender.url ? `<a href="${safeUrl(tender.url)}" target="_blank" class="text-gray-500 hover:underline">공고 원문 →</a>` : ''}
-            </div>
-        </div>`;
-}
-
-async function saveLabel(bookmarkId, selectEl) {
-    const label = selectEl.value;
-    const opt = LABEL_OPTIONS.find(o => o.value === label) || LABEL_OPTIONS[0];
-    // 색상 업데이트
-    LABEL_OPTIONS.forEach(o => selectEl.classList.remove(o.cls));
-    selectEl.classList.add(opt.cls);
-    try {
-        await fetch(`/api/bookmarks/${bookmarkId}/label`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ label })
-        });
-        // 점수 뱃지는 페이지 재로드 없이 보여주기 위해 조용히 성공 처리
-    } catch (e) { console.error(e); }
-}
-
-async function removeBookmark(tenderId, bookmarkId) {
-    try {
-        const res = await fetch('/api/bookmarks/toggle', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tender_id: tenderId })
-        });
-        const data = await res.json();
-        if (!data.bookmarked) {
-            const card = document.getElementById(`bookmark-card-${tenderId}`);
-            if (card) card.remove();
-            const remaining = document.querySelectorAll('[id^="bookmark-card-"]').length;
-            document.getElementById('bookmark-count').textContent = remaining;
-            if (remaining === 0) {
-                document.getElementById('bookmarks-list').innerHTML = `
-                    <div class="text-center py-12">
-                        <p class="text-gray-400 text-sm mb-2">스크랩한 공고가 없습니다.</p>
-                        <p class="text-gray-400 text-xs">대시보드나 검색 결과에서 ★ 버튼을 눌러 관심공고를 추가하세요.</p>
-                    </div>`;
-            }
-        }
-    } catch (e) { console.error(e); }
-}
-
-function escapeHtml(str) {
-    // 공통 함수(common.js)를 쓴다. 사본마다 바꾸는 글자가 달랐다(따옴표 누락 등).
-    return safeHtml(str);
 }

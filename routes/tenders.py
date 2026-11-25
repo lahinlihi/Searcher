@@ -157,7 +157,7 @@ def _scored_dict(tender, prefs, agency_weights):
     return d
 
 
-DASHBOARD_TOP_N = 24   # 대시보드 구역마다 보여 주는 건수
+DASHBOARD_TOP_N = 15   # 대시보드 탭마다 보여 주는 건수 — 한 번에 볼 '진짜 중요한 것'만 (쪽 넘기기 없음)
 
 
 def dashboard_section_conditions(now):
@@ -223,6 +223,7 @@ def api_dashboard():
         yesterday = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
         uid = g.user.id if g.user else None
+        fresh_only = request.args.get('fresh') == '1'
         prefs = load_user_prefs(uid)
         include_keywords = prefs['interest_keywords']
         agency_weights = _agency_weights(uid)
@@ -249,7 +250,10 @@ def api_dashboard():
         # ── 목록 3개: 조건만 다르고, 관심 설정 필터와 정렬은 같다 ──────────────
         response_data = {'summary': summary}
         matched = 0
-        filtered = {name: [t for t in _apply_interest_filters(query, prefs).all() if t.id not in dismissed]
+        # fresh=1: 15칸을 '아직 처리 안 한 공고'로 채운다 — 열어 본 공고는 바로, 담은 공고는 다음 날 빠지고 다음 순위가 올라온다
+        handled = _handled(uid) if fresh_only else set()
+        filtered = {name: [t for t in _apply_interest_filters(query, prefs).all()
+                           if t.id not in dismissed and t.id not in handled]
                     for name, query in dashboard_section_queries(now).items()}
         # 사례 점수: 좋은 사례가 5건 미만이거나 모델이 없으면 None → 아래는 예전과 똑같이 돈다
         case_scores = _case_scores(uid, [t for ts in filtered.values() for t in ts])
@@ -270,11 +274,97 @@ def api_dashboard():
                     d.update(case_scores.get(d['id'], {}))
 
         summary['keyword_match'] = matched   # 관심 설정에 걸린 전체 건수 (배지용)
+        if sort_by_case:
+            # 화면이 임베딩 점수로 다시 정렬하면 사례 점수 순서가 사라진다 — 이 표시가 있으면 다시 정렬하지 않는다
+            response_data['case_sort'] = True
         response_data['include_keywords'] = include_keywords
         response_data['exclude_keywords'] = prefs['exclude_keywords']
         return jsonify(response_data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+RECENT_VIEW_DAYS = 7    # '읽은 공고'에 남겨 두는 기간
+
+
+def _utc_start_of_local_today():
+    """오늘 0시(서버 현지 시각)를 UTC 로. 열람·북마크 시각은 UTC(datetime.utcnow)로 저장된다."""
+    now = datetime.now()
+    offset = now - datetime.utcnow()
+    return now.replace(hour=0, minute=0, second=0, microsecond=0) - offset
+
+
+def _handled(uid):
+    """이미 처리한 공고 id — 열어 본 공고(바로)와 어제까지 담은 공고. 대시보드 15칸에서 뺀다.
+    오늘 담은 공고는 남긴다 (별표를 누르자마자 사라지면 잘못 누른 것처럼 보인다)."""
+    if not uid:
+        return set()
+    from database import Bookmark, TenderView
+    seen = {r[0] for r in TenderView.query.filter(TenderView.user_id == uid)
+            .with_entities(TenderView.tender_id).all()}
+    kept = {r[0] for r in Bookmark.query.filter(Bookmark.user_id == uid, Bookmark.created_at < _utc_start_of_local_today())
+            .with_entities(Bookmark.tender_id).all()}
+    return seen | kept
+
+
+@bp.route('/api/viewed/recent')
+@login_required
+def api_viewed_recent():
+    """읽은 공고 — 열어 봤지만 담지도 숨기지도 지우지도 않은, 아직 마감 전인 공고. 최근에 본 순, 최대 15건.
+
+    쌓이지 않게 하는 장치: 마감이 지나면 빠지고, 7일이 지나면 빠지고, 담거나 숨기거나 지우면 빠지고, 15건을 넘지 않는다.
+    """
+    from database import Bookmark, TenderView
+    uid = g.user.id
+    try:
+        now = datetime.now()
+        prefs = load_user_prefs(uid)
+        aw = _agency_weights(uid)
+        skip = {d.tender_id for d in DismissedTender.query.filter_by(user_id=uid).all()}
+        skip |= {r[0] for r in Bookmark.query.filter(Bookmark.user_id == uid).with_entities(Bookmark.tender_id).all()}
+        rows = (db.session.query(TenderView, Tender).join(Tender, Tender.id == TenderView.tender_id)
+                .filter(TenderView.user_id == uid, TenderView.cleared_at == None,
+                        TenderView.viewed_at >= datetime.utcnow() - timedelta(days=RECENT_VIEW_DAYS),
+                        db.or_(Tender.deadline_date == None, Tender.deadline_date >= now))
+                .order_by(TenderView.viewed_at.desc()).all())
+        items = []
+        for view, tender in rows:
+            if tender.id in skip:
+                continue
+            d = _scored_dict(tender, prefs, aw)
+            d['viewed_at'] = view.viewed_at.isoformat(timespec='seconds') + 'Z'
+            items.append(d)
+            if len(items) >= DASHBOARD_TOP_N:
+                break
+        return jsonify({'items': items, 'days': RECENT_VIEW_DAYS})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/viewed/<int:tender_id>', methods=['DELETE'])
+@login_required
+def api_viewed_clear(tender_id):
+    """읽은 공고 목록에서 지운다. 열람 기록은 남겨 15칸으로 돌아오지 않게 한다."""
+    from database import TenderView
+    try:
+        view = TenderView.query.filter_by(user_id=g.user.id, tender_id=tender_id).first()
+        if view is None:
+            return jsonify({'cleared': False})
+        view.cleared_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({'cleared': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/viewed/ids')
+@login_required
+def api_viewed_ids():
+    """내가 상세 화면을 열어 본 공고 id 목록 (대시보드가 '안 본 공고'를 앞에 두는 데 쓴다)."""
+    from database import TenderView
+    rows = TenderView.query.filter_by(user_id=g.user.id).with_entities(TenderView.tender_id).all()
+    return jsonify(sorted(r[0] for r in rows))
 
 
 @bp.route('/api/embed-scores', methods=['POST'])

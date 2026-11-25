@@ -116,6 +116,7 @@ def tender_detail(tender_id):
             view = TenderView.query.filter_by(user_id=uid, tender_id=tender_id).first()
             if view:
                 view.viewed_at = datetime.utcnow()
+                view.cleared_at = None      # 다시 열어 봤으면 '읽은 공고'에 다시 나온다
             else:
                 db.session.add(TenderView(user_id=uid, tender_id=tender_id, viewed_at=datetime.utcnow()))
             db.session.commit()
