@@ -453,7 +453,8 @@ class AgencyWeight(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     agency_name = db.Column(db.String(200), nullable=False)
-    weight = db.Column(db.Float, default=5.0)  # 0 / 2.5 / 5 / 7.5 / 10
+    weight = db.Column(db.Float, default=5.0)  # 예전 값 0 / 2.5 / 5 / 7.5 / 10 — 3부 뒤로는 점수에 쓰지 않는다 (기록으로 남김)
+    adjust = db.Column(db.Float, nullable=True)  # 3부: 가감점 −30 ~ +30. NULL 이면 점수를 움직이지 않는다
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     user = db.relationship('User', backref=db.backref('agency_weights', lazy=True, cascade='all, delete-orphan'))
@@ -463,6 +464,7 @@ class AgencyWeight(db.Model):
             'id': self.id,
             'agency_name': self.agency_name,
             'weight': self.weight,
+            'adjust': self.adjust,
         }
 
 
@@ -532,6 +534,7 @@ def init_db(app):
             ('ALTER TABLE tenders ADD COLUMN business_number TEXT',                 '[DB] tenders.business_number 추가'),
             ('ALTER TABLE users ADD COLUMN nickname TEXT',                          '[DB] users.nickname 추가'),
             ('ALTER TABLE tender_views ADD COLUMN cleared_at DATETIME',             '[DB] tender_views.cleared_at 추가'),
+            ('ALTER TABLE agency_weights ADD COLUMN adjust FLOAT',                  '[DB] agency_weights.adjust 추가'),
         ]
         # 중소벤처 24 공고 중 기관명이 '기타'인 것은 '중소벤처 24'로 정정
         data_fixes = [
