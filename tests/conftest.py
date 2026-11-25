@@ -122,6 +122,35 @@ def cases_app(tenders_app):
 
 
 @pytest.fixture
+def vec_db(tmp_path):
+    """임시 벡터 DB 연결. tender_vectors.store 로 벡터를 직접 넣어 쓴다."""
+    import tender_vectors
+    conn = tender_vectors.connect(str(tmp_path / 'vec_fixture.db'))
+    yield conn
+    conn.close()
+
+
+@pytest.fixture
+def bookmark(app):
+    def _bm(user, tender):
+        from database import Bookmark
+        db.session.add(Bookmark(user_id=user.id, tender_id=tender.id))
+        db.session.commit()
+    return _bm
+
+
+@pytest.fixture
+def add_mark(app):
+    def _add(user, agency_name, mark):
+        from database import AgencyWeight
+        row = AgencyWeight(user_id=user.id, agency_name=agency_name, mark=mark)
+        db.session.add(row)
+        db.session.commit()
+        return row
+    return _add
+
+
+@pytest.fixture
 def client(app):
     return app.test_client()
 

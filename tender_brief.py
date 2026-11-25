@@ -103,8 +103,7 @@ DEFAULT_PRESET = {
     'section_days': {'pre': 7, 'normal': 7, 'support': 14},
     'core_keywords': [],       # 2배 가중. 비우면 scoring 기본값(AI·인공지능)
     'type_weights': {},        # 사업유형별 점수 45/35/25/15/0
-    'agency_weights': {},      # 기관명 → 점수(기본 5)
-    'use_embedding': True,     # 제목 임베딩 유사도 혼합 (규칙 60 : 임베딩 40)
+    'use_embedding': True,     # 예전 설정 — 3부부터 쓰지 않는다 (저장된 프리셋과의 호환용으로 키만 남김)
     'min_score': 0,            # 이 점수 미만은 싣지 않는다
 }
 
@@ -265,9 +264,9 @@ class _Row:
     """scoring.py 는 SQLAlchemy Tender 객체를 받는다. sqlite3.Row 를 그 모양으로 감싼다.
 
     별도 점수 로직을 새로 만들지 않는 이유는, 공고검색기에서 이미 쓰이며
-    튜닝된 규칙(키워드 밀도·경계 가중치·핵심어 2배·사업유형·기관 가중치·
-    임베딩 혼합)을 뉴스레터에서도 똑같이 적용해야 두 화면의 순위가
-    어긋나지 않기 때문이다.
+    튜닝된 규칙(키워드 밀도·경계 가중치·핵심어 2배·사업유형)과 100점 눈금
+    (relevance.py, 제품 계약서 3부)을 뉴스레터에서도 똑같이 적용해야 두 화면의
+    순위가 어긋나지 않기 때문이다.
     """
     __slots__ = ('id', 'title', 'agency', 'demand_agency', 'status',
                  'estimated_price', 'announced_date')
@@ -289,7 +288,7 @@ def scoring_config(conn, preset):
     관심 있을 사업' 의 기준을 관리자가 공고검색기에서 이미 튜닝해 두었으므로
     그것을 출발점으로 쓴다. 프리셋에 값이 있으면 그쪽이 이긴다.
     """
-    base = {'core_keywords': [], 'type_weights': {}, 'agency_weights': {}}
+    base = {'core_keywords': [], 'type_weights': {}}
     try:
         row = conn.execute(
             'SELECT interest_keywords, type_weights, core_keywords '
@@ -297,45 +296,38 @@ def scoring_config(conn, preset):
         if row:
             base['core_keywords'] = json.loads(row['core_keywords'] or '[]')
             base['type_weights'] = json.loads(row['type_weights'] or '{}')
-        for a in conn.execute(
-                'SELECT agency_name, weight FROM agency_weights WHERE user_id=1'):
-            base['agency_weights'][a['agency_name']] = a['weight']
     except Exception as e:
         print(f'[입찰동향] 공고검색기 설정 상속 실패 — 기본값 사용: {e}')
-
     return {
         'include_keywords': preset.get('include_keywords') or [],
         'core_keywords': preset.get('core_keywords') or base['core_keywords'],
         'type_weights': preset.get('type_weights') or base['type_weights'],
-        'agency_weights': preset.get('agency_weights') or base['agency_weights'],
     }
 
 
 def score_rows(rows, cfg, use_embedding=True):
     """후보 전체에 적합도 점수를 매긴다. {id: (점수, 사업유형)} 반환.
 
-    임베딩은 요청당 1회 배치 인코딩이다(compute_embed_sims). 모델이 아직
-    로딩 중이면 빈 dict 가 돌아오고 규칙 점수만 쓴다 — 느려지지 않는다.
+    공고검색기와 같은 100점 눈금이다: (키워드 + 유형)을 100점으로 환산한다. 발주처는 점수에 들어가지 않는다.
+    사례 점수는 섞지 않는다 — 뉴스레터는 수신자별 담은 공고가 없다.
+    use_embedding 은 예전 프리셋과의 호환용으로 받기만 한다 (3부부터 임베딩 혼합을 쓰지 않는다).
     """
+    import relevance
     import scoring
     objs = [_Row(r) for r in rows]
     kws = cfg['include_keywords']
     if not kws or not objs:
         return {}
 
-    sims = {}
-    if use_embedding:
-        try:
-            sims = scoring.compute_embed_sims(objs, kws, cfg['core_keywords'])
-        except Exception as e:
-            print(f'[입찰동향] 임베딩 생략 — 규칙 점수만 사용: {e}')
-
+    tmax = relevance.type_max(cfg['type_weights'])
     out = {}
     for o in objs:
-        total, type_name, *_ = scoring._score_and_type(
-            o, kws, cfg['type_weights'], cfg['agency_weights'],
-            cfg['core_keywords'], sims.get(o.id))
-        out[o.id] = (total, type_name)
+        _, type_name, kw, ty, _ = scoring._score_and_type(
+            o, kws, cfg['type_weights'], None, cfg['core_keywords'])
+        if type_name == '결과공고' or (kw == 0 and ty == 0):
+            out[o.id] = (0.0, type_name)
+            continue
+        out[o.id] = (relevance.combine(relevance.base_score(kw, ty, tmax), None), type_name)
     return out
 
 
@@ -557,7 +549,7 @@ def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
         'class_counts': counts,
         'dropped': dropped,
         'scored': len(scores),
-        'embedding_used': bool(scores) and preset.get('use_embedding', True),
+        'embedding_used': False,      # 3부부터 임베딩 혼합을 쓰지 않는다 (화면 호환용으로 키만 남김)
         'keywords_used': cfg['include_keywords'],
         'core_keywords_used': cfg['core_keywords'],
         'sections': sections,
@@ -634,16 +626,7 @@ def build_section_cached(conn, force=False):
     created = now.isoformat(timespec='seconds')
     out = {**tb, 'computed_at': created, 'cached': False}
 
-    # 임베딩 모델이 아직 로딩 중이면 규칙 점수만으로 순위가 매겨진다(scoring 의 폴백).
-    # 그 결과를 저장하면 하루 종일 덜 정확한 순위가 굳는다. 이때는 저장하지 않는다.
-    try:
-        import scoring
-        preset = get_preset(conn)
-        if preset.get('use_embedding', True) and not scoring._embed_model_ready:
-            out['degraded'] = True
-            return out
-    except Exception:
-        pass
+    # (3부부터 점수에 임베딩을 쓰지 않는다 — 모델 로딩 여부와 상관없이 순위가 같으므로 늘 저장한다.)
 
     conn.execute(
         """INSERT INTO brief_snapshots (snap_date, payload, created_at)

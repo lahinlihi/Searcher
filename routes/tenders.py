@@ -1,11 +1,9 @@
 from flask import Blueprint, request, jsonify, g, current_app
 from database import db, Tender, CrawlLog, TenderMemo, DismissedTender, Filter
 from decorators import login_required, admin_required
-from scoring import (load_user_prefs, load_interest_keywords, smart_sort_tenders_by_keyword_count,
-                     _score_and_type, compute_embed_sims)
+from scoring import load_user_prefs, load_interest_keywords
+from relevance import Scorer
 from sqlalchemy import func as sql_func
-import case_scoring
-import case_store
 from config import Config
 from datetime import datetime, timedelta
 import json
@@ -116,16 +114,6 @@ def api_tender_related(tender_id):
     return jsonify(result)
 
 
-def _agency_weights(uid):
-    """사용자가 정한 기관별 가중치 {기관명: 가중치}"""
-    from database import AgencyWeight
-    try:
-        rows = AgencyWeight.query.filter_by(user_id=uid).all() if uid else []
-        return {r.agency_name: r.weight for r in rows}
-    except Exception:
-        return {}
-
-
 def _apply_interest_filters(query, prefs):
     """
     사용자 관심 설정으로 거른다: 제외 키워드 → 관심 키워드(하나라도 포함) → 금액 범위.
@@ -145,19 +133,18 @@ def _apply_interest_filters(query, prefs):
     return query
 
 
-def _scored_dict(tender, prefs, agency_weights):
-    """공고를 화면용 dict 로 바꾸고 관심도 점수를 붙인다."""
-    keywords = prefs['interest_keywords']
-    d = tender.to_dict(interest_keywords=keywords)
-    score, btype, kw_s, type_s, agency_s = _score_and_type(
-        tender, keywords, prefs['type_weights'], agency_weights, prefs.get('core_keywords', []))
-    d['relevance_score'] = score
-    d['business_type'] = btype
-    d['score_breakdown'] = {'keyword': kw_s, 'type': type_s, 'agency': agency_s}
+def _scored_dict(tender, prefs, result):
+    """공고를 화면용 dict 로 바꾸고 적합도를 붙인다. result 는 Scorer.score() 가 그 공고에 낸 값."""
+    d = tender.to_dict(interest_keywords=prefs['interest_keywords'])
+    d['relevance_score'] = result['total']
+    d['business_type'] = result['business_type']
+    d['score_breakdown'] = Scorer.breakdown(result)
+    if result.get('nearest_case'):
+        d['nearest_case'] = result['nearest_case']
     return d
 
 
-DASHBOARD_TOP_N = 24   # 대시보드 구역마다 보여 주는 건수
+DASHBOARD_TOP_N = 15   # 대시보드 탭마다 보여 주는 건수 — 한 번에 볼 '진짜 중요한 것'만 (쪽 넘기기 없음)
 
 
 def dashboard_section_conditions(now):
@@ -202,17 +189,6 @@ def dashboard_section_queries(now):
             for name, conds in dashboard_section_conditions(now).items()}
 
 
-def _case_scores(uid, tenders):
-    """사례 점수 {id: {...}} 또는 None. 실패해도 대시보드는 기존대로 보여 준다."""
-    if not uid:
-        return None
-    try:
-        return case_scoring.score_tenders(uid, tenders)
-    except Exception as e:
-        print(f'[사례 점수] 계산 실패 — 기존 점수만 표시: {e}')
-        return None
-
-
 @bp.route('/api/dashboard')
 @login_required
 def api_dashboard():
@@ -223,9 +199,10 @@ def api_dashboard():
         yesterday = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
         uid = g.user.id if g.user else None
+        fresh_only = request.args.get('fresh') == '1'
         prefs = load_user_prefs(uid)
         include_keywords = prefs['interest_keywords']
-        agency_weights = _agency_weights(uid)
+        scorer = Scorer(uid)
         # 관심없음 처리된 공고
         dismissed = {d.tender_id for d in DismissedTender.query.filter_by(user_id=uid).all()} if uid else set()
 
@@ -249,25 +226,17 @@ def api_dashboard():
         # ── 목록 3개: 조건만 다르고, 관심 설정 필터와 정렬은 같다 ──────────────
         response_data = {'summary': summary}
         matched = 0
-        filtered = {name: [t for t in _apply_interest_filters(query, prefs).all() if t.id not in dismissed]
+        # fresh=1: 15칸을 '아직 처리 안 한 공고'로 채운다 — 열어 본 공고는 바로, 담은 공고는 다음 날 빠지고 다음 순위가 올라온다
+        handled = _handled(uid) if fresh_only else set()
+        filtered = {name: [t for t in _apply_interest_filters(query, prefs).all()
+                           if t.id not in dismissed and t.id not in handled]
                     for name, query in dashboard_section_queries(now).items()}
-        # 사례 점수: 좋은 사례가 5건 미만이거나 모델이 없으면 None → 아래는 예전과 똑같이 돈다
-        case_scores = _case_scores(uid, [t for ts in filtered.values() for t in ts])
-        # 점수를 못 구한 공고가 하나라도 있으면(모델 장애 등) 이번 요청은 정렬하지 않는다 — 새 공고가 맨 뒤로 밀리지 않게
-        sort_by_case = (case_scores is not None and case_store.get_sort_enabled(uid)
-                        and all(t.id in case_scores for ts in filtered.values() for t in ts))
+        # 적합도(제품 계약서 3부): 구역을 합쳐 한 번에 점수를 낸다 — 좋은 사례 벡터를 한 번만 읽는다
+        scores = scorer.score([t for ts in filtered.values() for t in ts])
         for name, tenders in filtered.items():
             matched += len(tenders)
-            # 규칙 점수 기반 정렬만 수행 — 임베딩은 /api/embed-scores 에서 on-demand 처리
-            ordered = smart_sort_tenders_by_keyword_count(
-                tenders, include_keywords, prefs['type_weights'], agency_weights,
-                prefs.get('core_keywords', []))
-            if sort_by_case:   # 사례 점수 순 (같으면 기존 순서). 관심 키워드 필터는 그대로다
-                ordered = sorted(ordered, key=lambda t: -case_scores.get(t.id, {}).get('case_score', -1.0))
-            response_data[name] = [_scored_dict(t, prefs, agency_weights) for t in ordered[:DASHBOARD_TOP_N]]
-            if case_scores is not None:
-                for d in response_data[name]:
-                    d.update(case_scores.get(d['id'], {}))
+            ordered = scorer.sort(tenders, scores)
+            response_data[name] = [_scored_dict(t, prefs, scores[t.id]) for t in ordered[:DASHBOARD_TOP_N]]
 
         summary['keyword_match'] = matched   # 관심 설정에 걸린 전체 건수 (배지용)
         response_data['include_keywords'] = include_keywords
@@ -277,34 +246,156 @@ def api_dashboard():
         return jsonify({'error': str(e)}), 500
 
 
+def _key_agency_candidates(names, now):
+    """등록 이름이 발주기관·수요기관에 들어 있는 진행 중 공고, 수집일이 새로운 순.
+    이름의 % 와 _ 는 글자 그대로 찾는다 (autoescape) — 그렇지 않으면 '%' 한 글자가 전 공고를 읽어 온다."""
+    name_match = db.or_(*[c.contains(name, autoescape=True)
+                          for name in names for c in (Tender.agency, Tender.demand_agency)])
+    return (Tender.query
+            .filter(name_match,
+                    db.or_(Tender.deadline_date == None, Tender.deadline_date >= now),
+                    db.or_(Tender.status == None, Tender.status != '결과공고'),
+                    db.or_(Tender.is_duplicate == None, Tender.is_duplicate == False))
+            .order_by(Tender.created_at.desc(), Tender.id.desc()).all())
+
+
+@bp.route('/api/dashboard/key-agencies')
+@login_required
+def api_key_agencies():
+    """중점 발주처 탭 (제품 계약서 3부 22.5): "이 발주처의 다른 사업들은 이렇다".
+
+    중점으로 등록한 발주처의 공고 가운데 아직 처리하지 않은 것을 적합도·관심 키워드와 상관없이 모은다.
+    적합도는 일 기준 그대로 붙인다(맞지 않는 사업은 낮게 보인다). 수의계약도 넣는다.
+    마감이 지난 공고와 결과공고는 뺀다. 적합도 높은 순(같으면 수집일이 새로운 순), 최대 DASHBOARD_TOP_N 건.
+    점수가 낮아도 빼지 않는다 — 중점 발주처의 공고는 "무조건" 나온다.
+    """
+    import relevance
+    uid = g.user.id
+    try:
+        marks = relevance.load_agency_marks(uid)
+        keys = sorted(name for name, m in marks.items() if m == relevance.MARK_KEY)
+        if not keys:
+            return jsonify({'agencies': [], 'items': []})
+        skip = _handled(uid) | {d.tender_id for d in DismissedTender.query.filter_by(user_id=uid).all()}
+        # 더 긴 이름으로 후순위에 둔 발주처면(예: '서울' 중점, '서울시교육청' 후순위) 중점 발주처가 아니다
+        rows = [t for t in _key_agency_candidates(keys, datetime.now())
+                if t.id not in skip and relevance.agency_mark(t.agency, t.demand_agency, marks) == relevance.MARK_KEY]
+        prefs = load_user_prefs(uid)
+        scores = Scorer(uid).score(rows)
+        # rows 는 수집일이 새로운 순 — 안정 정렬이라 점수가 같으면 그 순서가 남는다
+        picked = sorted(rows, key=lambda t: -scores[t.id]['total'])[:DASHBOARD_TOP_N]
+        items = []
+        for t in picked:
+            d = _scored_dict(t, prefs, scores[t.id])
+            d['matched_agency'] = relevance.matched_agency_name(t.agency, t.demand_agency, keys)
+            items.append(d)
+        return jsonify({'agencies': keys, 'items': items})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+RECENT_VIEW_DAYS = 7    # '읽은 공고'에 남겨 두는 기간
+
+
+def _utc_start_of_local_today():
+    """오늘 0시(서버 현지 시각)를 UTC 로. 열람·북마크 시각은 UTC(datetime.utcnow)로 저장된다."""
+    now = datetime.now()
+    offset = now - datetime.utcnow()
+    return now.replace(hour=0, minute=0, second=0, microsecond=0) - offset
+
+
+def _handled(uid):
+    """이미 처리한 공고 id — 열어 본 공고(바로)와 어제까지 담은 공고. 대시보드 15칸에서 뺀다.
+    오늘 담은 공고는 남긴다 (별표를 누르자마자 사라지면 잘못 누른 것처럼 보인다)."""
+    if not uid:
+        return set()
+    from database import Bookmark, TenderView
+    seen = {r[0] for r in TenderView.query.filter(TenderView.user_id == uid)
+            .with_entities(TenderView.tender_id).all()}
+    kept = {r[0] for r in Bookmark.query.filter(Bookmark.user_id == uid, Bookmark.created_at < _utc_start_of_local_today())
+            .with_entities(Bookmark.tender_id).all()}
+    return seen | kept
+
+
+@bp.route('/api/viewed/recent')
+@login_required
+def api_viewed_recent():
+    """읽은 공고 — 열어 봤지만 담지도 숨기지도 지우지도 않은, 아직 마감 전인 공고. 최근에 본 순, 최대 15건.
+
+    쌓이지 않게 하는 장치: 마감이 지나면 빠지고, 7일이 지나면 빠지고, 담거나 숨기거나 지우면 빠지고, 15건을 넘지 않는다.
+    """
+    from database import Bookmark, TenderView
+    uid = g.user.id
+    try:
+        now = datetime.now()
+        prefs = load_user_prefs(uid)
+        skip = {d.tender_id for d in DismissedTender.query.filter_by(user_id=uid).all()}
+        skip |= {r[0] for r in Bookmark.query.filter(Bookmark.user_id == uid).with_entities(Bookmark.tender_id).all()}
+        rows = (db.session.query(TenderView, Tender).join(Tender, Tender.id == TenderView.tender_id)
+                .filter(TenderView.user_id == uid, TenderView.cleared_at == None,
+                        TenderView.viewed_at >= datetime.utcnow() - timedelta(days=RECENT_VIEW_DAYS),
+                        db.or_(Tender.deadline_date == None, Tender.deadline_date >= now))
+                .order_by(TenderView.viewed_at.desc()).all())
+        shown = [(view, tender) for view, tender in rows if tender.id not in skip][:DASHBOARD_TOP_N]
+        scores = Scorer(uid).score([tender for _, tender in shown])
+        items = []
+        for view, tender in shown:
+            d = _scored_dict(tender, prefs, scores[tender.id])
+            d['viewed_at'] = view.viewed_at.isoformat(timespec='seconds') + 'Z'
+            items.append(d)
+        return jsonify({'items': items, 'days': RECENT_VIEW_DAYS})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/viewed/<int:tender_id>', methods=['DELETE'])
+@login_required
+def api_viewed_clear(tender_id):
+    """읽은 공고 목록에서 지운다. 열람 기록은 남겨 15칸으로 돌아오지 않게 한다."""
+    from database import TenderView
+    try:
+        view = TenderView.query.filter_by(user_id=g.user.id, tender_id=tender_id).first()
+        if view is None:
+            return jsonify({'cleared': False})
+        view.cleared_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({'cleared': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/api/viewed/ids')
+@login_required
+def api_viewed_ids():
+    """내가 상세 화면을 열어 본 공고 id 목록 (대시보드가 '안 본 공고'를 앞에 두는 데 쓴다)."""
+    from database import TenderView
+    rows = TenderView.query.filter_by(user_id=g.user.id).with_entities(TenderView.tender_id).all()
+    return jsonify(sorted(r[0] for r in rows))
+
+
 @bp.route('/api/embed-scores', methods=['POST'])
 @login_required
 def api_embed_scores():
-    """화면에 보이는 공고 ID 목록 → 임베딩 혼합 점수 반환 (on-demand lazy 처리)"""
+    """화면에 보이는 공고 ID 목록 → 적합도. 목록 API 와 같은 점수다 (3부부터 임베딩 혼합으로 숫자를 바꾸지 않는다).
+    예전 화면 코드가 부르던 주소라 남겨 둔다."""
     try:
         tender_ids = (request.json or {}).get('tender_ids', [])
         if not tender_ids:
             return jsonify({'scores': {}})
 
         uid = g.user.id if g.user else None
-        prefs = load_user_prefs(uid)
-        kws = prefs['interest_keywords']
-        ck = prefs.get('core_keywords', [])
-        aw = _agency_weights(uid)
-
         tenders = Tender.query.filter(Tender.id.in_(tender_ids)).all()
-        sims = compute_embed_sims(tenders, kws, ck)
-
         scores = {}
-        for t in tenders:
-            s, btype, ks, ts, as_ = _score_and_type(
-                t, kws, prefs['type_weights'], aw, ck, embed_sim=sims.get(t.id))
-            scores[str(t.id)] = {
-                'score': s,
-                'keyword': ks,
-                'type': ts,
-                'agency': as_,
-                'business_type': btype,
+        for tid, r in Scorer(uid).score(tenders).items():
+            scores[str(tid)] = {
+                'score': r['total'],
+                'keyword': r['keyword'],
+                'type': r['type'],
+                'case': r['case'],
+                'agency': r['agency'],
+                'base': r['base'],
+                'business_type': r['business_type'],
             }
         return jsonify({'scores': scores})
     except Exception as e:
@@ -471,11 +562,11 @@ def api_tenders():
         uid = g.user.id if g.user else None
         prefs = load_user_prefs(uid)
         interest_keywords = prefs['interest_keywords']
-        agency_weights = _agency_weights(uid)
+        scorer = Scorer(uid)
+        found = query.all()
+        scores = scorer.score(found)
 
-        tenders = _dedupe_same_project(smart_sort_tenders_by_keyword_count(
-            query.all(), interest_keywords, prefs['type_weights'], agency_weights,
-            prefs.get('core_keywords', [])))
+        tenders = _dedupe_same_project(scorer.sort(found, scores))
 
         total = len(tenders)
         page_items = tenders[(page - 1) * per_page:page * per_page]
@@ -489,13 +580,7 @@ def api_tenders():
 
         result = []
         for t in page_items:
-            if interest_keywords:
-                d = _scored_dict(t, prefs, agency_weights)
-            else:
-                d = t.to_dict(interest_keywords=interest_keywords)
-                d['relevance_score'] = 0
-                d['business_type'] = '기타'
-                d['score_breakdown'] = {'keyword': 0.0, 'type': 0.0, 'agency': 0.0}
+            d = _scored_dict(t, prefs, scores[t.id])     # 관심 키워드가 없으면 Scorer 가 0점을 낸다
             d['memo_count'] = memo_counts.get(t.id, 0)
             result.append(d)
 

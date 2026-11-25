@@ -81,7 +81,8 @@
                     <label class="font-semibold text-sm text-gray-800">사업 유형 가중치</label>
                 </div>
                 <p class="text-xs text-gray-500 mb-3">
-                    적합도 = 키워드(45) + <strong>사업유형</strong> + 기관가중치(10) · 기본값 <strong>보통 25점</strong><br>
+                    적합도 = (키워드 + <strong>사업유형</strong>)을 100점으로 환산 · 담은 공고가 5건 이상이면 담은 공고와 닮은 정도를 절반 반영 (발주처는 적합도에 들어가지 않습니다)<br>
+                    사업유형 기본값 <strong>보통 25점</strong><br>
                     <span class="font-semibold text-blue-700">주력 45</span> · <span class="text-blue-500">선호 35</span> · 보통 25 · <span class="text-gray-400">낮음 15</span> · <span class="text-red-400">제외 0</span>
                 </p>
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2" id="type-weights-grid">
@@ -89,15 +90,17 @@
                 </div>
             </div>
 
-            <!-- 기관별 가중치 -->
+            <!-- 발주처 표시 -->
             <div class="mb-6 mt-6 border-t pt-6">
                 <div class="flex items-center gap-2 mb-1">
                     <span class="inline-block w-3 h-3 rounded-full bg-orange-400"></span>
-                    <label class="font-semibold text-sm text-gray-800">기관별 가중치</label>
+                    <label class="font-semibold text-sm text-gray-800">발주처 표시</label>
                 </div>
                 <p class="text-xs text-gray-500 mb-3">
-                    기본 <strong>5점</strong>. 등록된 기관명은 매칭 시 지정 점수로 계산됩니다.<br>
-                    0점 등록 시 해당 기관 공고의 점수를 낮출 수 있습니다.
+                    발주처는 적합도 점수에 들어가지 않습니다. 등록한 발주처는 목록에서 표시와 순서로만 구분됩니다.<br>
+                    <strong>중점</strong> — 수행 중이거나 관계가 좋아 더 신경 쓸 발주처. 공고에 "중점 발주처"가 표시되고, 대시보드의 '중점 발주처' 탭에 그 발주처의 새 공고가 적합도와 상관없이 모입니다.<br>
+                    <strong>후순위</strong> — 피하고 싶은 발주처. 숨기지 않고 "후순위 발주처"로 표시해 목록 아래로 보냅니다.<br>
+                    이름은 발주기관·수요기관 이름에 들어 있으면 걸립니다(두 글자 이상). 예: "서울특별시"는 "서울특별시교육청"에도 걸립니다.
                 </p>
 
                 <!-- 등록 폼 -->
@@ -107,14 +110,15 @@
                                placeholder="기관명 입력 (예: 한국콘텐츠진흥원)"
                                onkeydown="if(event.key==='Enter') addAgencyWeight()">
                     </div>
-                    <div class="flex gap-1" id="agency-weight-selector">
-                        <!-- 0 / 2.5 / 5 / 7.5 / 10 버튼 -->
+                    <div class="flex items-center gap-3 text-sm" role="radiogroup" aria-label="발주처 표시">
+                        <label class="inline-flex items-center gap-1 cursor-pointer"><input type="radio" name="agency-mark" id="agency-mark-key" value="key" checked> 중점</label>
+                        <label class="inline-flex items-center gap-1 cursor-pointer"><input type="radio" name="agency-mark" id="agency-mark-low" value="low"> 후순위</label>
                     </div>
                     <button onclick="addAgencyWeight()" class="btn-primary text-sm px-3 py-1.5">등록</button>
                 </div>
                 <span id="agency-save-msg" class="text-xs text-green-600 hidden">저장되었습니다.</span>
 
-                <!-- 등록된 기관 목록 -->
+                <!-- 등록된 발주처 목록 -->
                 <div id="agency-weights-list" class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
                     <!-- JS로 채워짐 -->
                 </div>
@@ -519,79 +523,45 @@ async function deleteFilter(filterId) {
 
 function closeFilterModal() { document.getElementById('filter-modal').classList.add('hidden'); }
 
-// ── 기관별 가중치 ─────────────────────────────────────────────────────────────
-const AGENCY_WEIGHT_OPTIONS = [0, 2.5, 5, 7.5, 10];
-let selectedAgencyWeight = 5.0;
-
-function initAgencyWeightSelector() {
-    const container = document.getElementById('agency-weight-selector');
-    if (!container) return;
-    container.innerHTML = AGENCY_WEIGHT_OPTIONS.map(w => {
-        const isSelected = w === selectedAgencyWeight;
-        const label = w === 5.0 ? `${w} (기본)` : String(w);
-        return `<button type="button"
-            onclick="selectAgencyWeight(${w})"
-            id="awbtn-${w.toString().replace('.', '_')}"
-            class="text-xs font-semibold px-2.5 py-1 rounded border transition-colors
-                   ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'}"
-        >${label}</button>`;
-    }).join('');
-}
-
-function selectAgencyWeight(w) {
-    selectedAgencyWeight = w;
-    AGENCY_WEIGHT_OPTIONS.forEach(opt => {
-        const btn = document.getElementById(`awbtn-${opt.toString().replace('.', '_')}`);
-        if (!btn) return;
-        if (opt === w) {
-            btn.className = btn.className.replace('bg-white text-gray-600 border-gray-300 hover:border-blue-400', 'bg-blue-600 text-white border-blue-600');
-        } else {
-            btn.className = btn.className.replace('bg-blue-600 text-white border-blue-600', 'bg-white text-gray-600 border-gray-300 hover:border-blue-400');
-        }
-    });
-}
+// ── 발주처 표시 (중점 / 후순위) ──────────────────────────────────────────────
+const AGENCY_MARKS = [['key', '중점'], ['low', '후순위']];
 
 async function loadAgencyWeights() {
     try {
         const res = await fetch('/api/agency-weights');
         const list = await res.json();
         renderAgencyWeights(list);
-    } catch (e) { console.error('기관별 가중치 로드 실패:', e); }
-}
-
-function _agencyBadgeCls(weight) {
-    if (weight >= 10)  return 'bg-blue-700 text-white';
-    if (weight >= 7.5) return 'bg-blue-500 text-white';
-    if (weight >= 5)   return 'bg-gray-200 text-gray-700';
-    if (weight > 0)    return 'bg-gray-100 text-gray-400';
-    return 'bg-red-50 text-red-400';
+    } catch (e) { console.error('발주처 표시 로드 실패:', e); }
 }
 
 function renderAgencyWeights(list) {
     const container = document.getElementById('agency-weights-list');
     if (!container) return;
     if (!list || list.length === 0) {
-        container.innerHTML = '<p class="text-xs text-gray-400 col-span-full">등록된 기관이 없습니다. 기본값(5점)이 적용됩니다.</p>';
+        container.innerHTML = '<p class="text-xs text-gray-400 col-span-full">등록된 발주처가 없습니다.</p>';
         return;
     }
     container.innerHTML = list.map(aw => {
-        const badgeCls = _agencyBadgeCls(aw.weight);
-        const opts = AGENCY_WEIGHT_OPTIONS.map(w => {
-            const active = aw.weight === w;
-            const btnCls = active
-                ? 'bg-blue-600 text-white border-blue-700 font-bold shadow-sm'
-                : 'bg-white text-gray-400 border-gray-200 hover:border-gray-400 hover:text-gray-600';
-            return `<button type="button"
-                onclick="updateAgencyWeight(${aw.id}, ${w})"
-                class="py-1.5 text-xs font-medium rounded border transition-all ${btnCls}"
-                >${w}</button>`;
+        const pending = aw.mark !== 'key' && aw.mark !== 'low';
+        const chip = aw.mark === 'key' ? '<span class="hs-chip hs-chip-key">중점</span>'
+            : aw.mark === 'low' ? '<span class="hs-chip hs-chip-low">후순위</span>'
+            : '<span class="hs-chip">표시 없음</span>';
+        const buttons = AGENCY_MARKS.map(([value, label]) => {
+            const on = aw.mark === value;
+            return `<button type="button" onclick="updateAgencyWeight(${aw.id}, '${value}')" aria-pressed="${on}"
+                class="py-1.5 text-xs font-medium rounded border transition-all ${on
+                    ? 'bg-blue-600 text-white border-blue-700 font-bold shadow-sm'
+                    : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400 hover:text-gray-700'}">${label}</button>`;
         }).join('');
+        const note = pending
+            ? `<p class="text-xs text-gray-400 mt-1">예전 값 ${aw.weight}점 — 아직 표시를 고르지 않아 아무 영향이 없습니다.</p>` : '';
         return `<div class="p-2.5 border rounded-lg bg-white shadow-sm relative">
             <div class="flex items-start justify-between mb-1 pr-5">
                 <span class="text-sm font-bold text-gray-900 leading-snug break-all">${escHtml(aw.agency_name)}</span>
-                <span class="text-sm font-bold px-2 py-0.5 rounded-full whitespace-nowrap ml-1 shrink-0 ${badgeCls}">${aw.weight}점</span>
+                <span class="ml-1 shrink-0">${chip}</span>
             </div>
-            <div class="grid grid-cols-5 gap-1 mt-2">${opts}</div>
+            <div class="grid grid-cols-2 gap-1 mt-2">${buttons}</div>
+            ${note}
             <button onclick="deleteAgencyWeight(${aw.id})"
                 class="absolute top-2 right-2 text-gray-300 hover:text-red-500 transition-colors text-lg leading-none"
                 title="삭제">×</button>
@@ -603,11 +573,12 @@ async function addAgencyWeight() {
     const nameInput = document.getElementById('agency-name-input');
     const agency_name = (nameInput.value || '').trim();
     if (!agency_name) { nameInput.focus(); return; }
+    const mark = document.getElementById('agency-mark-low').checked ? 'low' : 'key';
 
     const res = await fetch('/api/agency-weights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agency_name, weight: selectedAgencyWeight })
+        body: JSON.stringify({ agency_name, mark })
     });
     if (res.ok) {
         nameInput.value = '';
@@ -616,17 +587,21 @@ async function addAgencyWeight() {
         setTimeout(() => msg.classList.add('hidden'), 2000);
         loadAgencyWeights();
     } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         alert(err.error || '등록 실패');
     }
 }
 
-async function updateAgencyWeight(id, weight) {
-    await fetch(`/api/agency-weights/${id}`, {
+async function updateAgencyWeight(id, mark) {
+    const res = await fetch(`/api/agency-weights/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ weight })
+        body: JSON.stringify({ mark })
     });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || '저장 실패');
+    }
     loadAgencyWeights();
 }
 
@@ -639,7 +614,6 @@ async function deleteAgencyWeight(id) {
 document.addEventListener('DOMContentLoaded', () => {
     loadInterestKeywords();
     loadFilters();
-    initAgencyWeightSelector();
     loadAgencyWeights();
 });
 </script>

@@ -46,24 +46,38 @@ def test_dashboard_no_cases_unchanged(user, client, make_tender, fake_model):
     r = client.get('/api/dashboard')
     assert r.status_code == 200
     assert 'case_score' not in r.get_data(as_text=True)
+    assert 'case_sort' not in r.get_json()
+
+
+def _vec(*tenders):
+    """제목 벡터를 미리 넣는다 (운영에서는 크롤 훅이 한다 — 대시보드는 벡터를 읽기만 한다)."""
+    conn = tender_vectors.connect()
+    try:
+        tender_vectors.ensure(conn, list(tenders))
+    finally:
+        conn.close()
 
 
 def test_dashboard_with_cases_adds_fields(user, client, make_tender, fake_model):
-    _cases(user, make_tender)
-    _fresh(make_tender, '교육 운영 용역'); _fresh(make_tender, '공공앱 유지관리')
+    cases = _cases(user, make_tender)
+    _vec(*cases, _fresh(make_tender, '교육 운영 용역'), _fresh(make_tender, '공공앱 유지관리'))
     items = _items(client.get('/api/dashboard').get_json())
     assert len(items) == 2
-    assert all('case_score' in x and 'nearest_case' in x for x in items)
+    assert all(x['score_breakdown']['case'] is not None and 'nearest_case' in x for x in items)
+    assert 'case_score' not in items[0]                      # 3부: 사례 점수는 score_breakdown.case 로만 나간다
     by_title = {x['title']: x for x in items}
-    assert by_title['공공앱 유지관리']['case_score'] > by_title['교육 운영 용역']['case_score']
+    assert by_title['공공앱 유지관리']['score_breakdown']['case'] > by_title['교육 운영 용역']['score_breakdown']['case']
 
 
-def test_dashboard_missing_vectors_computed_on_the_fly(user, client, make_tender, fake_model):
-    _cases(user, make_tender)
+def test_dashboard_does_not_encode_on_the_fly(user, client, make_tender, fake_model):
+    """대시보드는 벡터를 읽기만 한다. 벡터가 없는 새 공고는 기본 점수만 받는다 (요청마다 모델을 돌리지 않는다)."""
+    _vec(*_cases(user, make_tender))
     _fresh(make_tender, '공공앱 유지관리')
-    client.get('/api/dashboard')
+    item = _items(client.get('/api/dashboard').get_json())[0]
+    assert item['score_breakdown']['case'] is None
+    assert item['relevance_score'] == item['score_breakdown']['base']
     conn = tender_vectors.connect()
-    assert conn.execute('SELECT COUNT(*) FROM tender_vecs').fetchone()[0] >= 6
+    assert conn.execute('SELECT COUNT(*) FROM tender_vecs').fetchone()[0] == 5
 
 
 def test_dashboard_without_model_unchanged(user, client, make_tender, monkeypatch, tmp_path):
@@ -74,42 +88,32 @@ def test_dashboard_without_model_unchanged(user, client, make_tender, monkeypatc
     _fresh(make_tender, '공공앱 유지관리')
     r = client.get('/api/dashboard')
     assert r.status_code == 200 and 'case_score' not in r.get_data(as_text=True)
+    assert _items(r.get_json())[0]['score_breakdown']['case'] is None
 
 
 def _order(client):
     return [x['title'] for x in client.get('/api/dashboard').get_json()['urgent_tenders']]
 
 
-def test_sort_on_reorders_only_filtered(user, client, make_tender, fake_model):
-    _cases(user, make_tender)
-    _fresh(make_tender, '교육 운영 용역')                     # 규칙 점수가 높다 (유형 점수 있음)
-    _fresh(make_tender, '공공앱 개선')                        # 사례와 비슷하다 (유형 점수 없음)
-    _fresh(make_tender, '건설 공사 감리')                     # 관심 키워드 없음
+def test_case_mix_reorders_only_filtered(user, client, make_tender, fake_model):
+    """사례가 5건 모이면 닮은 공고가 위로 온다. 관심 키워드 필터는 그대로다 (전환 스위치는 없다)."""
+    a = _fresh(make_tender, '교육 운영 용역')                 # 기본 점수가 높다 (유형 점수 있음)
+    b = _fresh(make_tender, '공공앱 개선')                    # 사례와 비슷하다 (유형 점수 없음)
+    c = _fresh(make_tender, '건설 공사 감리')                 # 관심 키워드 없음
     before = _order(client)
     assert before[0].startswith('교육')
-    case_store.set_sort_enabled(user.id, True)
+    _vec(*_cases(user, make_tender), a, b, c)
     after = _order(client)
     assert after[0] == '공공앱 개선'
     assert '건설 공사 감리' not in after and sorted(after) == sorted(before)
+    assert 'case_sort' not in client.get('/api/dashboard').get_json()
 
 
-def test_sort_skipped_when_some_scores_missing(user, client, make_tender, fake_model, monkeypatch):
-    """모델이 없어 새 공고의 사례 점수를 못 구하면, 그 요청은 정렬하지 않는다 (새 공고가 맨 뒤로 밀리지 않게)."""
-    import scoring
-    _cases(user, make_tender)
-    _fresh(make_tender, '공공앱 개선')
-    client.get('/api/dashboard')                       # 여기까지는 벡터가 저장된다
-    case_store.set_sort_enabled(user.id, True)
-    monkeypatch.setattr(scoring, '_get_embed_model', lambda block=False: None)
-    _fresh(make_tender, '교육 운영 용역')               # 벡터가 없는 새 공고 (규칙 점수가 높다)
-    order = _order(client)
-    assert order[0] == '교육 운영 용역'
+def test_legacy_sort_switch_changes_nothing(user, client, make_tender, fake_model):
+    """예전 '사례 점수순' 스위치 값이 남아 있어도 순서와 점수는 같다."""
+    cases = _cases(user, make_tender)
+    _vec(*cases, *[_fresh(make_tender, t) for t in ('교육 운영 AI 교육', '공공앱 유지관리', '교육 과정')])
 
-
-def test_sort_off_restores_order(user, client, make_tender, fake_model):
-    _cases(user, make_tender)
-    for t in ('교육 운영 AI 교육', '공공앱 유지관리', '교육 과정'):
-        _fresh(make_tender, t)
     def snapshot():
         # days_left 는 호출 시각(datetime.now)에 따라 달라질 수 있어 비교에서 뺀다
         body = client.get('/api/dashboard').get_json()
@@ -117,39 +121,17 @@ def test_sort_off_restores_order(user, client, make_tender, fake_model):
                 for k in ('pre_tenders', 'urgent_tenders', 'recent_tenders')}
     before = snapshot()
     case_store.set_sort_enabled(user.id, True)
-    assert snapshot() != before                       # 켜면 순서가 바뀐다 (사례와 비슷한 '공공앱'이 앞으로)
-    case_store.set_sort_enabled(user.id, False)
     assert snapshot() == before
 
 
-# ── 정렬 설정 ───────────────────────────────────────────────────────────────
+# ── 정렬 설정 (3부에서 없어진 전환 — 주소만 남는다) ─────────────────────────
 
-def test_sort_setting_rejected_without_eval(user, client):
-    r = client.post('/api/cases/sort-setting', json={'enabled': True})
-    assert r.status_code == 409 and r.get_json()['reason']
-    assert client.get('/api/cases/sort-setting').get_json() == {
-        'enabled': False, 'allowed': False, 'reason': r.get_json()['reason']}
-
-
-def test_sort_setting_allowed_when_case_better(user, client):
-    m = lambda med, n=6: {'n': n, 'median': med, 'top100': 0, 'top500': 0}
-    case_store.save_eval(user.id, {'filtered': {'current': m(300), 'case': m(40)}})
-    assert client.post('/api/cases/sort-setting', json={'enabled': True}).status_code == 200
-    assert client.get('/api/cases/sort-setting').get_json()['enabled'] is True
-    assert client.post('/api/cases/sort-setting', json={'enabled': False}).status_code == 200
-
-
-def test_sort_setting_rejected_when_vectors_missing(user, client):
-    m = lambda med, n=6: {'n': n, 'median': med, 'top100': 0, 'top500': 0}
-    case_store.save_eval(user.id, {'missing_vectors': 120, 'filtered': {'current': m(300), 'case': m(40)}})
-    r = client.post('/api/cases/sort-setting', json={'enabled': True})
-    assert r.status_code == 409 and '120' in r.get_json()['reason']
-
-
-def test_sort_setting_rejected_when_case_worse(user, client):
-    m = lambda med, n=6: {'n': n, 'median': med, 'top100': 0, 'top500': 0}
-    case_store.save_eval(user.id, {'filtered': {'current': m(40), 'case': m(300)}})
-    assert client.post('/api/cases/sort-setting', json={'enabled': True}).status_code == 409
+def test_sort_setting_is_fixed(user, client):
+    fixed = {'enabled': True, 'allowed': True, 'reason': '사례 점수는 적합도에 항상 절반 반영됩니다.'}
+    assert client.get('/api/cases/sort-setting').get_json() == fixed
+    r = client.post('/api/cases/sort-setting', json={'enabled': False})
+    assert r.status_code == 200 and r.get_json() == fixed
+    assert case_store.get_sort_enabled(user.id) is False      # 저장값은 건드리지 않는다
 
 
 # ── 비슷한 공고 구역 ────────────────────────────────────────────────────────
@@ -259,7 +241,7 @@ def test_cases_page_renders(cases_app, client, login, make_user):
     r = client.get('/cases')
     assert r.status_code == 200
     html = r.get_data(as_text=True)
-    for text in ('놓친 공고 신고', '채점', '사례 점수로 정렬', 'js/cases.js'):
+    for text in ('놓친 공고 신고', '채점', '사례 점수가 쓰이는 곳', 'js/cases.js'):
         assert text in html
 
 

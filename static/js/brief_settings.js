@@ -180,9 +180,7 @@ function renderFunnel(pv) {
         arrow,
         step('메일 게재', pv.selected),
     ].join(' ')
-    + (pv.embedding_used
-        ? ' <span class="text-xs text-green-700 ml-1">임베딩 적용</span>'
-        : ' <span class="text-xs text-amber-700 ml-1">규칙 점수만</span>');
+    ;
 
     // 분류 분포 막대
     const c = pv.class_counts || {};

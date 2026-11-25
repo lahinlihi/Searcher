@@ -157,48 +157,38 @@ async function deleteMemo(memoId) {
 }
 
 // ── 관심공고 (북마크) ─────────────────────────────────────────────────────────
-(async function initBookmark() {
-    const tenderId = TENDER_ID;
+// 버튼 모양: ☆ 관심공고 담기 / ★ 관심공고에 담김
+function _showBookmark(on) {
     const btn = document.getElementById('bookmark-btn');
+    if (!btn) return;
+    btn.classList.toggle('hs-star', true);
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', String(on));
+    const icon = btn.querySelector('.bm-icon');
+    const label = btn.querySelector('.bm-label');
+    if (icon) icon.textContent = on ? '★' : '☆';
+    if (label) label.textContent = on ? '관심공고에 담김' : '관심공고 담기';
+    btn.title = on ? '관심공고 해제' : '관심공고 추가';
+}
+
+(async function initBookmark() {
     try {
-        const res = await fetch('/api/bookmarks/ids');
-        const ids = await res.json();
-        if (ids.includes(tenderId)) {
-            btn.textContent = '★';
-            btn.classList.add('text-yellow-400');
-            btn.title = '관심공고 해제';
-        } else {
-            btn.textContent = '☆';
-            btn.classList.add('text-gray-300');
-            btn.title = '관심공고 추가';
-        }
+        const ids = await (await fetch('/api/bookmarks/ids')).json();
+        _showBookmark(ids.includes(TENDER_ID));
     } catch (e) {
-        btn.textContent = '☆';
-        btn.classList.add('text-gray-300');
+        _showBookmark(false);
     }
 })();
 
 async function toggleBookmark() {
-    const tenderId = TENDER_ID;
-    const btn = document.getElementById('bookmark-btn');
     try {
         const res = await fetch('/api/bookmarks/toggle', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tender_id: tenderId })
+            body: JSON.stringify({ tender_id: TENDER_ID })
         });
         const data = await res.json();
-        if (data.bookmarked) {
-            btn.textContent = '★';
-            btn.classList.remove('text-gray-300');
-            btn.classList.add('text-yellow-400');
-            btn.title = '관심공고 해제';
-        } else {
-            btn.textContent = '☆';
-            btn.classList.remove('text-yellow-400');
-            btn.classList.add('text-gray-300');
-            btn.title = '관심공고 추가';
-        }
+        _showBookmark(!!data.bookmarked);
     } catch (e) { console.error(e); }
 }
 
@@ -220,13 +210,13 @@ async function toggleBookmark() {
             const activeBid = list && list.find(t => t.status !== '사전규격' && t.days_left !== null && t.days_left >= 0);
             if (activeBid && banner) {
                 // 상태 3-1: 사전규격 → 본공고 입찰중
-                banner.className = 'mb-5 px-5 py-4 rounded-xl flex items-center gap-4 bg-emerald-50 border-2 border-emerald-200 text-emerald-900';
-                if (bannerIcon) bannerIcon.textContent = '📬';
-                if (bannerTitle) bannerTitle.textContent = '현재 입찰 중입니다.';
+                banner.className = 'hs-dstatus hs-dstatus-live';
+                if (bannerIcon) bannerIcon.textContent = '';
+                if (bannerTitle) bannerTitle.textContent = '본 공고가 입찰 중입니다.';
                 if (bannerSub) {
                     const dText = activeBid.days_left === 0 ? '오늘 마감' : `마감 D-${activeBid.days_left}`;
-                    bannerSub.className = 'text-sm text-emerald-700 mt-1 flex items-center gap-2 flex-wrap';
-                    bannerSub.innerHTML = `${dText} &nbsp;<a href="/tender/${activeBid.id}" class="inline-flex items-center gap-1 bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full hover:bg-emerald-700 transition-colors">본 공고 바로가기 →</a>`;
+                    bannerSub.className = 'hs-dstatus-sub';
+                    bannerSub.innerHTML = `${dText} · <a href="/tender/${activeBid.id}" class="hs-link" style="font-weight: 700">본 공고 바로가기 →</a>`;
                 }
             } else {
                 // 상태 2: 본공고 없음 또는 이미 마감

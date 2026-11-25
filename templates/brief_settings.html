@@ -136,13 +136,11 @@
                     입찰 공고는 짧게 뜨고 닫힙니다. 한 기간으로 묶으면 지원사업 후보가 모자라거나,
                     이미 식은 공고까지 실립니다.
                 </p>
-                <label class="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-                    <input type="checkbox" id="use-embedding" class="rounded">
-                    제목 의미 유사도(임베딩) 혼합 — 규칙 점수 60% + 임베딩 40%
-                </label>
+                <input type="checkbox" id="use-embedding" hidden>
                 <p class="text-xs text-gray-500">
-                    점수 기준은 공고검색기의 <b>관심 키워드 · 핵심 키워드 · 사업유형 가중치 · 기관 가중치</b>를
-                    그대로 씁니다. 바꾸려면 공고검색기 설정에서 조정하세요.
+                    점수는 공고검색기와 같은 100점 눈금입니다: <b>(키워드 + 사업유형)을 100점으로 환산</b>. 발주처는 점수에 들어가지 않습니다.
+                    핵심 키워드 · 사업유형 가중치는 공고검색기 설정을 그대로 씁니다. 바꾸려면 공고검색기 설정에서 조정하세요.
+                    (예전의 "임베딩 혼합"은 쓰지 않습니다.)
                 </p>
             </div>
 

@@ -438,6 +438,8 @@ class TenderView(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     tender_id = db.Column(db.Integer, db.ForeignKey('tenders.id'), nullable=False)
     viewed_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    # 대시보드 '읽은 공고'에서 지운 시각. 지워도 열람 기록은 남는다(다시 대시보드 목록으로 돌아오지 않게). 다시 열어 보면 None 으로 되돌린다
+    cleared_at = db.Column(db.DateTime, nullable=True)
 
     __table_args__ = (db.UniqueConstraint('user_id', 'tender_id'),)
 
@@ -451,7 +453,8 @@ class AgencyWeight(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     agency_name = db.Column(db.String(200), nullable=False)
-    weight = db.Column(db.Float, default=5.0)  # 0 / 2.5 / 5 / 7.5 / 10
+    weight = db.Column(db.Float, default=5.0)  # 예전 값 0 / 2.5 / 5 / 7.5 / 10 — 3부 뒤로는 쓰지 않는다 (기록으로 남김)
+    mark = db.Column(db.String(10), nullable=True)  # 3부: 'key'(중점) / 'low'(후순위). 점수와 별도의 표시. NULL 이면 영향 없음
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     user = db.relationship('User', backref=db.backref('agency_weights', lazy=True, cascade='all, delete-orphan'))
@@ -461,6 +464,7 @@ class AgencyWeight(db.Model):
             'id': self.id,
             'agency_name': self.agency_name,
             'weight': self.weight,
+            'mark': self.mark,
         }
 
 
@@ -529,6 +533,8 @@ def init_db(app):
             ('ALTER TABLE user_preferences ADD COLUMN type_weights TEXT DEFAULT "{}"', '[DB] user_preferences.type_weights 추가'),
             ('ALTER TABLE tenders ADD COLUMN business_number TEXT',                 '[DB] tenders.business_number 추가'),
             ('ALTER TABLE users ADD COLUMN nickname TEXT',                          '[DB] users.nickname 추가'),
+            ('ALTER TABLE tender_views ADD COLUMN cleared_at DATETIME',             '[DB] tender_views.cleared_at 추가'),
+            ('ALTER TABLE agency_weights ADD COLUMN mark TEXT',                     '[DB] agency_weights.mark 추가'),
         ]
         # 중소벤처 24 공고 중 기관명이 '기타'인 것은 '중소벤처 24'로 정정
         data_fixes = [

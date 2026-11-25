@@ -55,7 +55,7 @@ async function lookupMissed(ev) {
         }
         box.innerHTML = `<p class="text-xs text-gray-500">어느 공고인가요? (${candidates.length}건)</p>` +
             candidates.map(c => `
-                <button onclick="diagnose(${c.id})" class="w-full text-left text-sm border border-gray-200 rounded-lg px-3 py-2 hover:bg-blue-50">
+                <button onclick="diagnose(${c.id})" class="w-full text-left text-sm border border-gray-200 rounded-lg px-3 py-2 hover:bg-orange-50">
                     <span class="block truncate">${safeHtml(c.title)}</span>
                     <span class="text-xs text-gray-500">${safeHtml(c.source_site)} · ${safeHtml(c.status || '')} · ${safeHtml(c.created_at.replace('T', ' '))} 수집</span>
                 </button>`).join('');
@@ -90,23 +90,27 @@ async function diagnose(tenderId) {
     }
 }
 
+function fmtPart(v) {
+    return (v === null || v === undefined) ? '-' : Number(v).toFixed(1);
+}
+
 function renderVerdict(r) {
     const style = VERDICT_STYLE[r.verdict] || 'bg-gray-100 text-gray-700';
     const section = r.section ? SECTION_LABELS[r.section] || r.section : '-';
     let detail = '';
     if (r.rank) {
-        detail = `<p>${safeHtml(section)} 구역, 같은 시점 관심 키워드 통과 공고 ${r.pool}건 중 <b>${r.rank}등</b> (${Number(r.score).toFixed(1)}점, 대시보드에는 24등까지 나옵니다)</p>
+        detail = `<p>${safeHtml(section)} 구역, 같은 시점 관심 키워드 통과 공고 ${r.pool}건 중 <b>${r.rank}등</b> (${Number(r.score).toFixed(1)}점, 대시보드에는 15등까지 나옵니다)</p>
             <table class="text-xs text-gray-600 mt-1"><tbody>
-                <tr><td class="pr-3">키워드</td><td class="text-right">${r.breakdown.keyword}</td></tr>
-                <tr><td class="pr-3">유형</td><td class="text-right">${r.breakdown.type}</td></tr>
-                <tr><td class="pr-3">기관</td><td class="text-right">${r.breakdown.agency}</td></tr>
+                <tr><td class="pr-3">키워드·유형 (100점 환산)</td><td class="text-right">${fmtPart(r.breakdown.base)}</td></tr>
+                <tr><td class="pr-3">담은 공고와 닮음</td><td class="text-right">${r.breakdown.case === null || r.breakdown.case === undefined ? '반영 안 함 (사례 5건 미만이거나 벡터 없음)' : fmtPart(r.breakdown.case)}</td></tr>
+                <tr><td class="pr-3">발주처 표시 (점수와 별도)</td><td class="text-right">${r.breakdown.agency === 'key' ? '중점 발주처' : r.breakdown.agency === 'low' ? '후순위 발주처 — 목록 맨 아래로 갑니다' : '없음'}</td></tr>
             </tbody></table>`;
     }
     const reasons = (r.reasons || []).length
         ? `<ul class="list-disc pl-5 text-sm">${r.reasons.map(x => `<li>${safeHtml(x)}</li>`).join('')}</ul>` : '';
     const addBtn = r.is_case
         ? '<span class="text-xs text-green-700">이미 정답 목록에 있습니다</span>'
-        : `<button onclick="addCase(${r.tender.id}, this)" class="text-sm bg-blue-600 text-white rounded-lg px-3 py-1.5 hover:bg-blue-700">정답 목록에 넣기</button>`;
+        : `<button onclick="addCase(${r.tender.id}, this)" class="text-sm bg-[color:var(--hs-brand)] text-white rounded-lg px-3 py-1.5 hover:bg-[#E84E0B]">정답 목록에 넣기</button>`;
     return `
         <div class="rounded-lg border border-gray-200 p-3 space-y-2 text-sm">
             <p class="font-medium truncate"><a href="/tender/${r.tender.id}" target="_blank" rel="noopener" class="hover:underline">${safeHtml(r.tender.title)}</a></p>
@@ -158,7 +162,7 @@ async function loadEval() {
             const m = d.latest.metrics;
             latest.innerHTML = `<p class="text-xs text-gray-500 mb-2">${safeHtml(d.latest.run_at.replace('T', ' '))} 채점 · 정답 ${m.answers}건${m.missing_vectors ? ` · 비교에서 뺀 공고 ${m.missing_vectors}건(제목 벡터 없음)` : ''}</p>
                 <div class="grid gap-4 md:grid-cols-2">
-                    ${metricTable('관심 키워드를 통과한 공고 중 (정렬 전환 판정 기준)', m.filtered)}
+                    ${metricTable('관심 키워드를 통과한 공고 중', m.filtered)}
                     ${metricTable('전체 공고 중 (키워드에 없는 정답은 현재 방식에서 맨 뒤)', m.all)}
                 </div>`;
         }
@@ -182,7 +186,6 @@ async function runEval() {
     try {
         await api('/api/cases/eval', {method: 'POST'});
         await loadEval();
-        await loadSort();
     } catch (e) {
         alert('채점하지 못했습니다: ' + e.message);
     } finally {
@@ -190,27 +193,4 @@ async function runEval() {
     }
 }
 
-// ── 사례 점수로 정렬 ────────────────────────────────────────────────────────
-
-function showSort(s) {
-    const t = document.getElementById('sort-toggle');
-    t.checked = s.enabled;
-    t.disabled = !s.enabled && !s.allowed;
-    document.getElementById('sort-reason').textContent = s.enabled ? '켜져 있습니다.' : (s.reason || '켤 수 있습니다.');
-}
-
-async function loadSort() {
-    try { showSort(await api('/api/cases/sort-setting')); }
-    catch (e) { document.getElementById('sort-reason').textContent = '설정을 불러오지 못했습니다.'; }
-}
-
-async function toggleSort(el) {
-    try {
-        showSort(await api('/api/cases/sort-setting', {method: 'POST', body: {enabled: el.checked}}));
-    } catch (e) {
-        el.checked = !el.checked;
-        document.getElementById('sort-reason').textContent = e.message;
-    }
-}
-
-document.addEventListener('DOMContentLoaded', () => { loadEval(); loadSort(); });
+document.addEventListener('DOMContentLoaded', () => { loadEval(); });
