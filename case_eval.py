@@ -50,8 +50,8 @@ def evaluate(user_id, vec_conn=None, encoder=None, save=True):
             # "현재 방식" = 사례를 섞기 전의 적합도 (기본 점수 + 발주처 가감점). 사례 방식과 견주려는 것이라 섞지 않는다
             _, _, kw, ty, _ = _score_and_type(t, prefs['interest_keywords'], prefs['type_weights'], None, core)
             rule_cache[t.id] = relevance.combine(
-                relevance.base_score(kw, ty, tmax), None,
-                relevance.agency_adjust(t.agency, t.demand_agency, adjusts)) if (kw or ty) else 0.0
+                relevance.base_score(kw, ty, tmax) if (kw or ty) else 0.0, None,
+                relevance.agency_adjust(t.agency, t.demand_agency, adjusts))
         return rule_cache[t.id]
 
     ranks = {'all': {'current': [], 'case': []}, 'filtered': {'current': [], 'case': []}}

@@ -335,11 +335,11 @@ def score_rows(rows, cfg, use_embedding=True):
     for o in objs:
         _, type_name, kw, ty, _ = scoring._score_and_type(
             o, kws, cfg['type_weights'], None, cfg['core_keywords'])
-        if type_name == '결과공고' or (kw == 0 and ty == 0):
+        if type_name == '결과공고':
             out[o.id] = (0.0, type_name)
             continue
-        total = relevance.combine(relevance.base_score(kw, ty, tmax), None,
-                                  relevance.agency_adjust(o.agency, o.demand_agency, adjusts))
+        base = relevance.base_score(kw, ty, tmax) if (kw or ty) else 0.0
+        total = relevance.combine(base, None, relevance.agency_adjust(o.agency, o.demand_agency, adjusts))
         out[o.id] = (total, type_name)
     return out
 

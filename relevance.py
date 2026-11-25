@@ -156,9 +156,13 @@ class Scorer:
                 t, self.keywords, self.type_weights, None, self.core_keywords)
             adjust = agency_adjust(t.agency, getattr(t, 'demand_agency', None), self.adjusts)
             case100, near = cases.get(t.id, (None, None))
-            if type_name == '결과공고' or (kw_raw == 0 and type_score == 0):
-                # 키워드도 유형도 잡히지 않은 공고(결과공고·제외 패턴 포함)는 닮음이나 발주처로 살리지 않는다
-                base, total = 0.0, 0.0
+            if type_name == '결과공고':
+                base, total, case100, near = 0.0, 0.0, None, None
+            elif kw_raw == 0 and type_score == 0:
+                # 키워드도 유형도 잡히지 않은 공고(제외 패턴 포함): 닮음만으로는 살리지 않는다.
+                # 발주처 가감점은 그대로 적용한다 — "가점을 준 발주처의 공고는 등록 전보다 그만큼 높다"(3부 23절)
+                base, case100, near = 0.0, None, None
+                total = combine(0.0, None, adjust)
             else:
                 base = base_score(kw_raw, type_score, self.tmax)
                 total = combine(base, case100, adjust)

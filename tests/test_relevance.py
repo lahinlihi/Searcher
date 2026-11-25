@@ -120,6 +120,25 @@ def test_scorer_applies_agency_adjust(app, make_user, make_tender, make_prefs, a
     assert res[other.id]['agency'] == 0.0 and res[other.id]['total'] == round(res[other.id]['base'], 1)
 
 
+def test_scorer_adjust_applies_even_when_base_is_zero(app, make_user, make_tender, make_prefs, add_adjust, vec_db,
+                                                      bookmark):
+    """수용 기준: +20 을 준 발주처의 공고는 등록 전 점수보다 20 높다 — 키워드·유형이 하나도 안 잡힌 공고(0점)도.
+    다만 닮음(사례 점수)만으로는 0점 공고를 살리지 않고, 결과공고는 늘 0 이다."""
+    u = make_user(); make_prefs(u, interest=['교육'])
+    add_adjust(u, '테스트기관', 20.0)
+    goods = [make_tender(title=f'교육 사례 {i}', agency='다른기관') for i in range(5)]
+    for g_ in goods:
+        bookmark(u, g_)
+    plain = make_tender(title='청사 보안', agency='테스트기관')              # 키워드 없음, 유형 '기타'
+    alike = make_tender(title='청사 보안', agency='다른기관')                # 가감점 없음, 사례와 똑같은 벡터
+    result = make_tender(title='교육 운영 용역 선정 결과', agency='테스트기관', status='결과공고')
+    tender_vectors.store(vec_db, [g_.id for g_ in goods] + [plain.id, alike.id], [_axis(0)] * 7)
+    res = R.Scorer(u.id, vec_conn=vec_db).score([plain, alike, result])
+    assert res[plain.id]['base'] == 0.0 and res[plain.id]['total'] == 20.0
+    assert res[alike.id]['total'] == 0.0
+    assert res[result.id]['total'] == 0.0
+
+
 def test_scorer_ignores_legacy_weight_without_adjust(app, make_user, make_tender, make_prefs, vec_db):
     # 예전 값(weight)만 있고 새 값(adjust)이 없는 등록은 점수를 움직이지 않는다
     from database import db, AgencyWeight

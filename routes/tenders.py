@@ -246,6 +246,51 @@ def api_dashboard():
         return jsonify({'error': str(e)}), 500
 
 
+@bp.route('/api/dashboard/key-agencies')
+@login_required
+def api_key_agencies():
+    """중점 발주처 칸 (제품 계약서 3부 22.5).
+
+    가점(+)을 준 발주처의 공고 가운데 아직 처리하지 않은 것을 적합도·관심 키워드와 상관없이 모은다.
+    수의계약도 넣는다 — 그 발주처의 움직임을 놓치지 않으려는 칸이다. 마감이 지난 공고와 결과공고는 뺀다.
+    수집일이 새로운 순, 최대 DASHBOARD_TOP_N 건.
+    """
+    import relevance
+    uid = g.user.id
+    try:
+        plus = sorted(name for name, v in relevance.load_agency_adjusts(uid).items() if v > 0)
+        if not plus:
+            return jsonify({'agencies': [], 'items': []})
+        now = datetime.now()
+        skip = _handled(uid) | {d.tender_id for d in DismissedTender.query.filter_by(user_id=uid).all()}
+        name_match = db.or_(*[c.contains(name, autoescape=True)
+                              for name in plus for c in (Tender.agency, Tender.demand_agency)])
+        rows = (Tender.query
+                .filter(name_match,
+                        db.or_(Tender.deadline_date == None, Tender.deadline_date >= now),
+                        db.or_(Tender.status == None, Tender.status != '결과공고'),
+                        db.or_(Tender.is_duplicate == None, Tender.is_duplicate == False))
+                .order_by(Tender.created_at.desc(), Tender.id.desc()).all())
+        rows = [t for t in rows if t.id not in skip]
+        prefs = load_user_prefs(uid)
+        scorer = Scorer(uid)
+        scores = scorer.score(rows)
+        items = []
+        for t in rows:
+            # 더 긴 이름으로 감점을 준 발주처면(예: '서울' 가점, '서울시교육청' 감점) 중점 발주처가 아니다
+            if scores[t.id]['agency'] <= 0:
+                continue
+            d = _scored_dict(t, prefs, scores[t.id])
+            text = f"{t.agency or ''} {t.demand_agency or ''}"
+            d['matched_agency'] = max((n for n in plus if n in text), key=len, default=None)
+            items.append(d)
+            if len(items) >= DASHBOARD_TOP_N:
+                break
+        return jsonify({'agencies': plus, 'items': items})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 RECENT_VIEW_DAYS = 7    # '읽은 공고'에 남겨 두는 기간
 
 

@@ -1,5 +1,6 @@
 // 대시보드 (2026-11 디자인 개편, B 목록형)
-// 데이터: /api/dashboard (구역 3개 — 점수와 순서는 서버가 준 그대로 쓴다), /api/cases/similar (비슷한 공고)
+// 데이터: /api/dashboard (구역 3개 — 점수와 순서는 서버가 준 그대로 쓴다), /api/dashboard/key-agencies (중점 발주처),
+//         /api/cases/similar (비슷한 공고)
 // 공고 한 줄은 tender-row.js 의 renderTenderRow 가 그린다.
 
 let includeKeywords = [];
@@ -7,6 +8,7 @@ let bookmarkedIds = new Set();
 let dismissedIds = new Set();
 let dashData = null;
 let similarData = null;
+let keyData = null;
 let recentData = null;
 let viewedIds = new Set();
 let currentTab = 'all';
@@ -21,6 +23,7 @@ let _lastFetchTime = 0;
 function _reloadDashboard() {
     Promise.all([loadBookmarkedIds(), loadDismissedIds(), loadViewedIds()]).then(() => {
         loadDashboardData();
+        loadKeyAgencies();
         loadSimilar();
         loadRecent();
     });
@@ -108,6 +111,20 @@ function applyDashboardData(data) {
     renderList();
 }
 
+// 중점 발주처 — 가점을 준 발주처의 아직 안 본 공고 (적합도·관심 키워드와 상관없이)
+async function loadKeyAgencies() {
+    try {
+        const res = await fetch('/api/dashboard/key-agencies');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || res.status);
+        keyData = data;
+    } catch (e) {
+        keyData = { error: true, agencies: [], items: [] };
+    }
+    updateCounts();
+    if (currentTab === 'key') renderList();
+}
+
 async function loadSimilar() {
     try {
         const res = await fetch('/api/cases/similar');
@@ -169,7 +186,8 @@ function markRead(row) {
     if (viewedIds.has(id) && currentTab !== 'recent_viewed') return;
     viewedIds.add(id);
     if (currentTab === 'recent_viewed') return;
-    const pool = [...Object.values(SECTION_KEY).flatMap(k => (dashData && dashData[k]) || []), ...((similarData && similarData.items) || [])];
+    const pool = [...Object.values(SECTION_KEY).flatMap(k => (dashData && dashData[k]) || []),
+                  ...((keyData && keyData.items) || []), ...((similarData && similarData.items) || [])];
     const t = pool.find(x => x.id === id);
     if (t) {
         recentData = recentData && recentData.items ? recentData : { items: [], days: 7 };
@@ -180,7 +198,7 @@ function markRead(row) {
     row.style.opacity = '0';
     row.style.transform = 'translateY(-6px)';
     setTimeout(() => { renderList(); }, 260);
-    setTimeout(() => { justReadId = null; loadDashboardData(); loadRecent(); }, 2000);   // 상세 화면이 열람을 기록한 뒤 다시 받는다
+    setTimeout(() => { justReadId = null; loadDashboardData(); loadKeyAgencies(); loadRecent(); }, 2000);   // 상세 화면이 열람을 기록한 뒤 다시 받는다
 }
 
 // ── 그리기 ─────────────────────────────────────────────────────────────────
@@ -225,6 +243,7 @@ function _sectionItems(sec) {
 
 function _tabItems(tab) {
     if (tab === 'similar') return similarData && similarData.items ? _visible(similarData.items) : [];
+    if (tab === 'key') return keyData && keyData.items ? _visible(keyData.items) : [];
     if (tab !== 'all') return _sectionItems(tab);
     // 전체: 세 구역을 합쳐 적합도 순으로 (같으면 받은 순서)
     const all = [..._sectionItems('pre'), ..._sectionItems('urgent'), ..._sectionItems('recent')];
@@ -260,6 +279,8 @@ function updateCounts() {
     }
     const rc = document.getElementById('cnt-recent_viewed');
     rc.textContent = recentData && recentData.items ? _readItems().length : '';
+    const key = document.getElementById('cnt-key');
+    key.textContent = keyData && keyData.agencies && keyData.agencies.length ? _tabItems('key').length : '';
     const sim = document.getElementById('cnt-similar');
     sim.textContent = similarData && similarData.enabled ? _tabItems('similar').length : '';
 }
@@ -268,7 +289,7 @@ function updateCounts() {
 // 그래서 마감이 아니라 새로 들어온 맞는 공고를 알려 준다. 보이는 목록에서 계산한 사실만 쓴다.
 function renderToday(items) {
     const box = document.getElementById('hs-today');
-    if (currentTab === 'similar' || currentTab === 'recent_viewed' || !dashData) { box.hidden = true; return; }
+    if (currentTab === 'similar' || currentTab === 'key' || currentTab === 'recent_viewed' || !dashData) { box.hidden = true; return; }
     const fresh = items.filter(t => hsIsNew(t));
     const label = '<b class="hs-today-label">새로 나온 공고</b> · ';
     if (!fresh.length) {
@@ -315,6 +336,25 @@ function renderList() {
             actionsHtml: `<button type="button" class="hs-btn hs-btn-yes" onclick="markSimilarGood(${t.id}, this)">좋음</button>
                 <button type="button" class="hs-btn hs-btn-no" onclick="dismissTender(${t.id}, this)">아님</button>`,
         })).join('') : '<li class="hs-empty">지금은 사례와 충분히 비슷한 공고가 없습니다.</li>';
+        return;
+    }
+
+    if (currentTab === 'key') {
+        renderToday([]);
+        if (!keyData) { cap.textContent = '불러오는 중…'; list.innerHTML = ''; return; }
+        if (keyData.error) { cap.textContent = '중점 발주처 공고를 불러오지 못했습니다.'; list.innerHTML = ''; return; }
+        if (!keyData.agencies.length) {
+            cap.textContent = '';
+            list.innerHTML = '<li class="hs-empty">발주처에 가점을 주면 그 발주처의 새 공고가 여기에 모입니다.<br><a href="/filters" class="hs-link">필터관리에서 등록</a></li>';
+            return;
+        }
+        // 이 탭의 기본 순서는 수집일이 새로운 순이다 (적합도가 낮아도 놓치지 않으려는 칸)
+        const items = _sorted(_tabItems('key')).slice(0, MAX_ITEMS);
+        const names = keyData.agencies.slice(0, 4).join(', ') + (keyData.agencies.length > 4 ? ` 외 ${keyData.agencies.length - 4}곳` : '');
+        cap.textContent = `${items.length}건 · 가점을 준 발주처(${names})의 아직 안 본 공고 · 적합도·관심 키워드와 상관없이, 새로 들어온 순`;
+        list.innerHTML = items.length
+            ? items.map(t => renderTenderRow(t, { keywords: includeKeywords, bookmarked: bookmarkedIds, dismiss: true })).join('')
+            : '<li class="hs-empty">가점을 준 발주처의 진행 중인 새 공고가 없습니다.</li>';
         return;
     }
 
