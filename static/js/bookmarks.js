@@ -115,7 +115,8 @@ async function loadDismissed() {
 function renderDismissedRow(t) {
     const at = t.dismissed_at ? t.dismissed_at.substring(0, 10) : '';
     return renderTenderRow(t, {
-        metaHtml: at ? `<span>숨긴 날 ${safeHtml(at.substring(5))}</span>` : '',
+        metaHtml: (at ? `<span>숨긴 날 ${safeHtml(at.substring(5))}</span>` : '')
+            + ((t.reason_labels || []).length ? `<span class="hs-chip" title="제외할 때 남긴 이유">${t.reason_labels.map(safeHtml).join(', ')}</span>` : ''),
         actionsHtml: `<button type="button" class="hs-btn" style="min-height: 36px; padding: 0 12px" title="다시 대시보드에 표시"
                         onclick="undismissTender(${t.id})">복원</button>`,
     });

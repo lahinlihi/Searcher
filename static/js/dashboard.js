@@ -402,11 +402,18 @@ function _agoText(iso) {
 
 // ── 동작 ───────────────────────────────────────────────────────────────────
 
-async function dismissTender(tenderId, btn) {
+// 관심없음: 이유를 하나 골라야 제외된다 (5부). X 를 누르면 그 자리에서 이유 칩이 펼쳐지고,
+// 칩 밖을 누르면 제외하지 않고 닫힌다.
+function dismissTender(tenderId, btn) {
+    hsOpenReasonPicker(btn, { title: '왜 제외하나요? (하나 누르면 제외됩니다)', onPick: reasons => _dismissWithReasons(tenderId, btn, reasons) });
+}
+
+async function _dismissWithReasons(tenderId, btn, reasons) {
     const row = btn.closest('.hs-row');
     if (row) { row.style.transition = 'opacity .25s'; row.style.opacity = '0.35'; }
     try {
-        const res = await fetch(`/api/tenders/${tenderId}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        const res = await fetch(`/api/tenders/${tenderId}/dismiss`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reasons }) });
         if (!res.ok) throw new Error(res.status);
         dismissedIds.add(tenderId);
         setTimeout(() => { if (row) row.remove(); updateCounts(); }, 200);

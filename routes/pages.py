@@ -120,8 +120,12 @@ def tender_detail(tender_id):
         except Exception:
             db.session.rollback()
 
+    import reasons
+    eligibility_flags = reasons.flags(uid, {tender.id: tender.title}).get(tender.id, []) if uid else []
+
     return render_template('detail.html', tender=tender, days_left=days_left,
                            is_expired=is_expired, extra=extra,
                            relevance_score=relevance_score, business_type=business_type,
                            score_breakdown=score_breakdown,
-                           nearest_case=nearest_case, type_max=type_max, agency_mark=agency_mark)
+                           nearest_case=nearest_case, type_max=type_max, agency_mark=agency_mark,
+                           eligibility_flags=eligibility_flags)

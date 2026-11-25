@@ -100,6 +100,20 @@ def test_detail_shows_score_parts_and_agency_mark_separately(full_app, client, l
     assert '중점 발주처' not in plain and '후순위 발주처' not in plain
 
 
+def test_detail_has_reason_chips_and_flag_line(full_app, client, login, make_user, make_prefs, make_tender, fake_model):
+    """상세 화면: 메모 옆에 이유 칩 자리가 있고, 켜 둔 규칙에 걸린 공고에는 '자격 확인 필요' 줄이 나온다."""
+    import reasons as RS
+    from routes.reasons import bp as reasons_bp
+    full_app.register_blueprint(reasons_bp)
+    u = make_user(); make_prefs(u, interest=['교육'])
+    RS.add_rule(u.id, 'license', ['국외연수'])
+    _, html = _get(client, login, u, f"/tender/{make_tender(title='교육 국외연수 운영').id}")
+    assert 'id="reason-chips"' in html and '나에게만 보이고' in html
+    assert '자격 확인 필요: 업종·등록 요건' in html
+    _, html = _get(client, login, u, f"/tender/{make_tender(title='교육 운영 용역').id}")
+    assert 'id="reason-chips"' in html and '자격 확인 필요:' not in html      # 안내 문구에는 이 말이 있고, 표시 줄은 없다
+
+
 def test_cases_page_has_no_sort_switch(full_app, client, login, make_user):
     _, html = _get(client, login, make_user(role='admin'), '/cases')
     assert 'id="sort-toggle"' not in html

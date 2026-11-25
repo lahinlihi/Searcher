@@ -52,6 +52,28 @@ def test_agency_chip():
         assert _run(f"m.hsAgencyChip({none})") == ''
 
 
+def test_flag_chip():
+    chip = _run("m.hsFlagChip({eligibility_flags: [{label: '규모 제한'}, {label: '업종·등록 요건'}]})")
+    assert 'class="hs-chip hs-chip-flag"' in chip and '자격 확인 필요: 규모 제한, 업종·등록 요건' in chip
+    assert '적합도와 순서는 그대로' in chip                      # 왜 붙었고 무엇이 안 바뀌는지 툴팁으로
+    for none in ("{}", "{eligibility_flags: []}", "{eligibility_flags: null}", "null"):
+        assert _run(f"m.hsFlagChip({none})") == ''
+
+
+def test_flag_chip_escapes_labels():
+    chip = _run("m.hsFlagChip({eligibility_flags: [{label: '<img src=x onerror=1>'}]})")
+    assert '<img' not in chip and '&lt;img' in chip
+
+
+def test_reason_picker_html_shows_only_requested_groups():
+    opts = "[{code:'size',label:'규모 제한',group:'ineligible'},{code:'etc',label:'기타',group:'other'},{code:'like_field',label:'분야가 맞음',group:'like'}]"
+    html = _run(f"m.hsReasonPickerHtml({opts}, ['ineligible','other'])")
+    assert 'data-reason="size"' in html and 'data-reason="etc"' in html and 'like_field' not in html
+    assert html.index('규모 제한') < html.index('기타')
+    escaped = _run("m.hsReasonPickerHtml([{code:'x',label:'<b>굵게</b>',group:'other'}], ['other'])")
+    assert '<b>' not in escaped and '&lt;b&gt;굵게' in escaped
+
+
 def test_rank_puts_low_last_and_key_first_on_ties():
     order = _run("""m.hsRankSort([
         {id: 1, relevance_score: 90, score_breakdown: {agency: 'low'}},

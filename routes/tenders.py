@@ -723,6 +723,7 @@ def api_dismissed_list():
             td['dismissed_at'] = d.created_at.isoformat()
             td['dismissed_id'] = d.id
             td['reasons'] = why.get(d.tender_id, [])      # 이유를 받기 전에 제외한 기록은 빈 목록
+            td['reason_labels'] = [reasons.REASONS[c]['label'] for c in td['reasons']]
             result.append(td)
         return jsonify(result)
     except Exception as e:

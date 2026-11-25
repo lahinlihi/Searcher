@@ -25,6 +25,7 @@ const MY_ROLE = DETAIL.role;
 
 document.addEventListener('DOMContentLoaded', () => {
     loadMemos();
+    loadReasonChips();
     const inp = document.getElementById('new-memo-input');
     if (inp) inp.addEventListener('input', () => {
         document.getElementById('memo-char-count').textContent = inp.value.length + ' / 1000';
@@ -38,6 +39,56 @@ document.addEventListener('DOMContentLoaded', () => {
         items.forEach(el => tl.appendChild(el));
     }
 });
+
+// ── 이유 칩 (제품 계약서 5부) — 이 공고에 내가 남기는 검토 결과. 누를 때마다 눌린 전체를 저장한다 ──
+const REASON_GROUP_LABEL = { ineligible: '자격이 안 됨', other: '그 밖의 이유', eligible: '검토 결과', like: '담는 이유' };
+const REASON_GROUP_ORDER = ['eligible', 'ineligible', 'other', 'like'];
+let _reasonPressed = new Set();
+
+function _esc(v) {
+    return String(v === null || v === undefined ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function loadReasonChips() {
+    const box = document.getElementById('reason-chips');
+    if (!box) return;
+    try {
+        const [o, mine] = await Promise.all([
+            fetch('/api/reasons/options').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
+            fetch(`/api/tenders/${TENDER_ID}/reasons`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }),
+        ]);
+        _reasonPressed = new Set(mine.reasons || []);
+        box.innerHTML = REASON_GROUP_ORDER.map(g => {
+            const chips = o.options.filter(x => x.group === g).map(x =>
+                `<button type="button" class="hs-reason-chip" data-reason="${_esc(x.code)}" aria-pressed="${_reasonPressed.has(x.code)}">${_esc(x.label)}</button>`).join('');
+            return chips ? `<div class="hs-reason-group"><span class="hs-reason-group-label">${_esc(REASON_GROUP_LABEL[g] || g)}</span>${chips}</div>` : '';
+        }).join('');
+        box.addEventListener('click', onReasonChipClick);
+    } catch (e) {
+        box.innerHTML = '<span style="font-size: 13px; color: var(--hs-muted)">이유 칩을 불러오지 못했습니다.</span>';
+    }
+}
+
+async function onReasonChipClick(e) {
+    const chip = e.target.closest('[data-reason]');
+    if (!chip) return;
+    const code = chip.dataset.reason;
+    const next = new Set(_reasonPressed);
+    next.has(code) ? next.delete(code) : next.add(code);
+    chip.disabled = true;
+    try {
+        const res = await fetch(`/api/tenders/${TENDER_ID}/reasons`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reasons: [...next] }) });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
+        _reasonPressed = next;
+        chip.setAttribute('aria-pressed', String(next.has(code)));
+    } catch (err) {
+        alert('저장하지 못했습니다: ' + err.message);
+    } finally {
+        chip.disabled = false;
+    }
+}
 
 async function loadMemos() {
     try {
