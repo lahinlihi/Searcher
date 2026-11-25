@@ -20,23 +20,20 @@ def _run(expr):
 
 
 def test_score_tip_with_case():
-    assert _run("m.hsScoreTip(83.7, {keyword: 36.9, type: 25, case: 79, agency: 0, base: 88.4})") == \
+    assert _run("m.hsScoreTip(83.7, {keyword: 36.9, type: 25, case: 79, agency: null, base: 88.4})") == \
         '적합도 83.7 = 키워드·유형 88.4 와 담은 공고 닮음 79.0 의 평균'
 
 
-def test_score_tip_with_plus_adjust():
-    assert _run("m.hsScoreTip(98.6, {keyword: 30, type: 25, case: null, agency: 20, base: 78.6})") == \
-        '적합도 98.6 = 키워드·유형 78.6 + 발주처 +20'
+def test_score_tip_without_case():
+    assert _run("m.hsScoreTip(78.6, {keyword: 30, type: 25, case: null, agency: null, base: 78.6})") == \
+        '적합도 78.6 = 키워드·유형 78.6'
 
 
-def test_score_tip_with_minus_adjust():
-    assert _run("m.hsScoreTip(48.6, {keyword: 30, type: 25, case: null, agency: -30, base: 78.6})") == \
-        '적합도 48.6 = 키워드·유형 78.6 + 발주처 −30'
-
-
-def test_score_tip_case_and_adjust_together():
-    assert _run("m.hsScoreTip(93.7, {keyword: 36.9, type: 25, case: 79, agency: 10, base: 88.4})") == \
-        '적합도 93.7 = 키워드·유형 88.4 와 담은 공고 닮음 79.0 의 평균 + 발주처 +10'
+def test_score_tip_never_mentions_agency():
+    """발주처는 점수에 들어가지 않는다 — 구성 설명에도 나오지 않는다."""
+    for mark in ('key', 'low'):
+        tip = _run(f"m.hsScoreTip(78.6, {{keyword: 30, type: 25, case: null, agency: '{mark}', base: 78.6}})")
+        assert tip == '적합도 78.6 = 키워드·유형 78.6'
 
 
 def test_score_tip_without_score_or_breakdown():
@@ -46,7 +43,21 @@ def test_score_tip_without_score_or_breakdown():
     assert _run("m.hsScoreTip(51.2, {keyword: 7, type: 25, agency: 5})") == '적합도 51.2'
 
 
-def test_adjust_chip():
-    assert _run("m.hsAdjustChip({agency: 20})") == '<span class="hs-chip hs-chip-ok" title="등록한 발주처 가점">발주처 +20</span>'
-    assert _run("m.hsAdjustChip({agency: -30})") == '<span class="hs-chip hs-chip-bad" title="등록한 발주처 감점">발주처 −30</span>'
-    assert _run("m.hsAdjustChip({agency: 0})") == '' and _run("m.hsAdjustChip(null)") == ''
+def test_agency_chip():
+    assert _run("m.hsAgencyChip({agency: 'key'})") == \
+        '<span class="hs-chip hs-chip-key" title="중점으로 등록한 발주처 — 적합도에는 들어가지 않습니다">중점 발주처</span>'
+    assert _run("m.hsAgencyChip({agency: 'low'})") == \
+        '<span class="hs-chip hs-chip-low" title="후순위로 등록한 발주처 — 적합도는 그대로이고 목록 아래에 나옵니다">후순위 발주처</span>'
+    for none in ("{agency: null}", "null", "{agency: 20}", "{}"):
+        assert _run(f"m.hsAgencyChip({none})") == ''
+
+
+def test_rank_puts_low_last_and_key_first_on_ties():
+    order = _run("""m.hsRankSort([
+        {id: 1, relevance_score: 90, score_breakdown: {agency: 'low'}},
+        {id: 2, relevance_score: 60, score_breakdown: {agency: null}},
+        {id: 3, relevance_score: 60, score_breakdown: {agency: 'key'}},
+        {id: 4, relevance_score: 70},
+        {id: 5, relevance_score: 95, score_breakdown: {agency: 'low'}},
+    ]).map(t => t.id)""")
+    assert order == [4, 3, 2, 5, 1]

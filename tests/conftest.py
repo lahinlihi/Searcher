@@ -140,10 +140,10 @@ def bookmark(app):
 
 
 @pytest.fixture
-def add_adjust(app):
-    def _add(user, agency_name, adjust):
+def add_mark(app):
+    def _add(user, agency_name, mark):
         from database import AgencyWeight
-        row = AgencyWeight(user_id=user.id, agency_name=agency_name, adjust=adjust)
+        row = AgencyWeight(user_id=user.id, agency_name=agency_name, mark=mark)
         db.session.add(row)
         db.session.commit()
         return row

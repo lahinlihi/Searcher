@@ -94,11 +94,6 @@ function fmtPart(v) {
     return (v === null || v === undefined) ? '-' : Number(v).toFixed(1);
 }
 
-// 저장해 둔 예전 신고 결과에는 hsSigned 가 필요 없지만, tender-row.js 를 싣지 않는 화면이라 여기에도 둔다
-if (typeof hsSigned === 'undefined') {
-    var hsSigned = n => (Number(n) > 0 ? '+' : Number(n) < 0 ? '−' : '') + String(Math.abs(Number(n)));
-}
-
 function renderVerdict(r) {
     const style = VERDICT_STYLE[r.verdict] || 'bg-gray-100 text-gray-700';
     const section = r.section ? SECTION_LABELS[r.section] || r.section : '-';
@@ -108,7 +103,7 @@ function renderVerdict(r) {
             <table class="text-xs text-gray-600 mt-1"><tbody>
                 <tr><td class="pr-3">키워드·유형 (100점 환산)</td><td class="text-right">${fmtPart(r.breakdown.base)}</td></tr>
                 <tr><td class="pr-3">담은 공고와 닮음</td><td class="text-right">${r.breakdown.case === null || r.breakdown.case === undefined ? '반영 안 함 (사례 5건 미만이거나 벡터 없음)' : fmtPart(r.breakdown.case)}</td></tr>
-                <tr><td class="pr-3">발주처 가감점</td><td class="text-right">${r.breakdown.agency ? hsSigned(r.breakdown.agency) : '없음'}</td></tr>
+                <tr><td class="pr-3">발주처 표시 (점수와 별도)</td><td class="text-right">${r.breakdown.agency === 'key' ? '중점 발주처' : r.breakdown.agency === 'low' ? '후순위 발주처 — 목록 맨 아래로 갑니다' : '없음'}</td></tr>
             </tbody></table>`;
     }
     const reasons = (r.reasons || []).length

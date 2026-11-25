@@ -54,22 +54,22 @@ def _five_cases(u, make_tender):
     return goods
 
 
-def test_same_tender_same_score_everywhere(site, make_tender, add_adjust):
+def test_same_tender_same_score_everywhere(site, make_tender, add_mark):
     client, u = site
     _five_cases(u, make_tender)
-    add_adjust(u, '테스트기관', 10.0)
+    add_mark(u, '테스트기관', 'key')
     x = make_tender(title='AI 교육 운영 용역')
     _store([(x, _axis(0))])
     db.session.add(Bookmark(user_id=u.id, tender_id=x.id)); db.session.commit()
 
     want = R.Scorer(u.id).score([x])[x.id]
-    assert want['case'] == 100.0 and want['agency'] == 10.0 and 0 < want['total'] < 100
+    assert want['case'] == 100.0 and want['agency'] == 'key' and 0 < want['total'] < 100
 
     dash = client.get('/api/dashboard').get_json()
     d = next(i for i in dash['urgent_tenders'] if i['id'] == x.id)
     assert d['relevance_score'] == want['total']
     assert d['score_breakdown'] == {'keyword': want['keyword'], 'type': want['type'], 'case': 100.0,
-                                    'agency': 10.0, 'base': want['base']}
+                                    'agency': 'key', 'base': want['base']}
     assert d['nearest_case']['title'].startswith('교육 사례')
 
     found = client.get('/api/tenders?keyword=교육').get_json()['tenders']
@@ -79,10 +79,10 @@ def test_same_tender_same_score_everywhere(site, make_tender, add_adjust):
     assert next(i for i in bm if i['id'] == x.id)['relevance_score'] == want['total']
 
     emb = client.post('/api/embed-scores', json={'tender_ids': [x.id]}).get_json()['scores'][str(x.id)]
-    assert emb['score'] == want['total'] and emb['case'] == 100.0 and emb['agency'] == 10.0
+    assert emb['score'] == want['total'] and emb['case'] == 100.0 and emb['agency'] == 'key'
 
     html = client.get(f'/tender/{x.id}').get_data(as_text=True)
-    assert f">{want['total']:.1f}<" in html
+    assert f">{want['total']:.1f}<" in html and '중점 발주처' in html
 
 
 def test_dashboard_has_no_case_sort_flag(site, make_tender):
@@ -110,20 +110,21 @@ def test_dashboard_without_cases_orders_by_base_then_date(site, make_tender):
     new = make_tender(title='AI 교육 운영 용역', announced_date=now, tender_number='NEW00001')
     items = client.get('/api/dashboard').get_json()['urgent_tenders']
     assert [i['id'] for i in items] == [new.id, old.id]
-    assert items[0]['score_breakdown']['case'] is None and items[0]['score_breakdown']['agency'] == 0.0
+    assert items[0]['score_breakdown']['case'] is None and items[0]['score_breakdown']['agency'] is None
     assert 'nearest_case' not in items[0]
 
 
-def test_bookmark_label_bonus_capped(site, make_tender, add_adjust):
+def test_bookmark_label_bonus_capped(site, make_tender, monkeypatch):
     client, u = site
     _five_cases(u, make_tender)
-    add_adjust(u, '테스트기관', 20.0)
     x = make_tender(title='AI 교육 운영 용역')
     _store([(x, _axis(0))])
-    label, bonus = max(Bookmark.LABEL_BONUS.items(), key=lambda kv: kv[1])
+    label = next(iter(Bookmark.LABEL_BONUS))
+    bonus = 60                                   # 어떤 점수에 더해도 100 을 넘는 보너스로 자르기를 확인한다
+    monkeypatch.setitem(Bookmark.LABEL_BONUS, label, bonus)
     db.session.add(Bookmark(user_id=u.id, tender_id=x.id, label=label)); db.session.commit()
     total = R.Scorer(u.id).score([x])[x.id]['total']
-    assert total < 100 < total + bonus
+    assert total < 100 < total + bonus, total
     item = next(i for i in client.get('/api/bookmarks').get_json() if i['id'] == x.id)
     assert item['relevance_score'] == 100.0 and item['label_bonus'] == bonus
 
@@ -137,13 +138,32 @@ def test_search_without_interest_keywords_scores_zero(app, client, login, make_u
     assert item['relevance_score'] == 0
 
 
-def test_negative_adjust_lowers_but_keeps_listed(site, make_tender, add_adjust):
+def test_low_agency_keeps_score_and_goes_to_bottom(site, make_tender, add_mark):
+    """후순위 발주처: 점수는 그대로, 목록에서는 더 약한 공고보다도 아래. 검색에서도 사라지지 않는다."""
     client, u = site
-    x = make_tender(title='AI 교육 운영 용역', agency='꺼리는기관')
-    before = next(i for i in client.get('/api/dashboard').get_json()['urgent_tenders'] if i['id'] == x.id)
-    add_adjust(u, '꺼리는기관', -30.0)
-    after = next(i for i in client.get('/api/dashboard').get_json()['urgent_tenders'] if i['id'] == x.id)
-    assert after['relevance_score'] == round(before['relevance_score'] - 30.0, 1)
+    strong = make_tender(title='교육 운영 용역', agency='후순위기관')                      # 유형이 잡힌다
+    weak = make_tender(title='교육 자료', agency='다른기관', tender_number='WEAK0001')     # 유형 없음 → 더 낮다
+    get = lambda: client.get('/api/dashboard').get_json()['urgent_tenders']
+    before = get()
+    assert [i['id'] for i in before] == [strong.id, weak.id]
+    add_mark(u, '후순위기관', 'low')
+    after = get()
+    assert [i['id'] for i in after] == [weak.id, strong.id]
+    assert after[1]['relevance_score'] == before[0]['relevance_score']
+    assert after[1]['score_breakdown']['agency'] == 'low'
+    found = [i['id'] for i in client.get('/api/tenders?keyword=교육').get_json()['tenders']]
+    assert found.index(weak.id) < found.index(strong.id)
+
+
+def test_low_agency_drops_out_of_dashboard_top_n_when_enough_others(site, make_tender, add_mark):
+    from routes.tenders import DASHBOARD_TOP_N
+    client, u = site
+    add_mark(u, '후순위기관', 'low')
+    low = make_tender(title='교육 운영 용역', agency='후순위기관')
+    for i in range(DASHBOARD_TOP_N):
+        make_tender(title=f'교육 자료 {i}', agency='다른기관')
+    ids = [i['id'] for i in client.get('/api/dashboard').get_json()['urgent_tenders']]
+    assert len(ids) == DASHBOARD_TOP_N and low.id not in ids
 
 
 def test_brief_scores_use_new_scale():
@@ -151,9 +171,10 @@ def test_brief_scores_use_new_scale():
     import tender_brief
     row = {'id': 1, 'title': 'AI 교육 운영 용역', 'agency': '테스트기관', 'demand_agency': None,
            'status': '일반', 'estimated_price': None, 'announced_date': None}
-    cfg = {'include_keywords': ['교육'], 'core_keywords': [], 'type_weights': {}, 'agency_adjusts': {}}
+    cfg = {'include_keywords': ['교육'], 'core_keywords': [], 'type_weights': {}}
     _, btype, kw, ty, _ = scoring._score_and_type(tender_brief._Row(row), ['교육'], {}, None, [])
     want = round(R.base_score(kw, ty, 25.0), 1)
     assert tender_brief.score_rows([row], cfg) == {1: (want, btype)}
-    cfg['agency_adjusts'] = {'테스트기관': -30.0}
-    assert tender_brief.score_rows([row], cfg)[1][0] == round(want - 30.0, 1)
+    # 예전 설정에 발주처 값이 남아 있어도 점수는 같다 (발주처는 적합도에 들어가지 않는다)
+    cfg['agency_weights'] = {'테스트기관': 0}
+    assert tender_brief.score_rows([row], cfg) == {1: (want, btype)}

@@ -141,6 +141,11 @@ function sortItems(items) {
         if (field === 'title')    { const va = a.title || '', vb = b.title || ''; return dir === 'asc' ? va.localeCompare(vb,'ko') : vb.localeCompare(va,'ko'); }
         if (field === 'agency')   { const va = ag(a), vb = ag(b);                 return dir === 'asc' ? va.localeCompare(vb,'ko') : vb.localeCompare(va,'ko'); }
         if (field === 'announced'){ const va = a.announced_date || '', vb = b.announced_date || ''; return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va); }
+        if (field === 'score' && dir !== 'asc') {      // 적합도 높은 순: 후순위 발주처는 맨 아래, 같은 점수면 중점 발주처 먼저
+            const k = t => { const m = hsAgencyMark(t); return [m === 'low' ? 1 : 0, -(t.relevance_score ?? 0), m === 'key' ? 0 : 1]; };
+            const ka = k(a), kb = k(b);
+            return (ka[0] - kb[0]) || (ka[1] - kb[1]) || (ka[2] - kb[2]);
+        }
         let va, vb;
         if (field === 'budget') { va = a.estimated_price ?? -1; vb = b.estimated_price ?? -1; }
         else if (field === 'memo')  { va = a.memo_count ?? 0; vb = b.memo_count ?? 0; }

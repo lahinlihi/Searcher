@@ -75,31 +75,40 @@ function hsScoreStyle(score) {
     return `background: hsl(${h}, 75%, 89%); color: hsl(${h}, 80%, 23%)`;
 }
 
-// 적합도 구성 설명 (숫자 위에 마우스를 올리면 보인다). bd = score_breakdown {keyword, type, case, agency, base}
-// 적합도 = 키워드·유형 점수(100점 환산) — 담은 공고가 5건 이상이면 닮음 점수와 평균 — 에 등록한 발주처 가감점을 더한 값.
-function hsSigned(n) {
-    const v = Number(n);
-    return (v > 0 ? '+' : v < 0 ? '−' : '') + String(Math.abs(v));
-}
+// 적합도 구성 설명 (숫자 위에 마우스를 올리면 보인다). bd = score_breakdown {keyword, type, case, base, agency}
+// 적합도 = 키워드·유형 점수(100점 환산) — 담은 공고가 5건 이상이면 닮음 점수와 평균. 발주처는 들어가지 않는다.
 function hsScoreTip(score, bd) {
     if (score === null || score === undefined) return '적합도 없음';
     let tip = '적합도 ' + Number(score).toFixed(1);
     if (!bd || bd.base === undefined || bd.base === null) return tip;
     tip += ' = 키워드·유형 ' + Number(bd.base).toFixed(1);
     if (bd.case !== null && bd.case !== undefined) tip += ' 와 담은 공고 닮음 ' + Number(bd.case).toFixed(1) + ' 의 평균';
-    if (bd.agency) tip += ' + 발주처 ' + hsSigned(bd.agency);
     return tip;
 }
-// 등록한 발주처의 가감점 칩 (가감점이 없으면 빈 문자열)
-function hsAdjustChip(bd) {
-    if (!bd || !bd.agency) return '';
-    const plus = Number(bd.agency) > 0;
-    return `<span class="hs-chip ${plus ? 'hs-chip-ok' : 'hs-chip-bad'}" title="등록한 발주처 ${plus ? '가점' : '감점'}">발주처 ${hsSigned(bd.agency)}</span>`;
+
+// 발주처 표시 — 점수와 별도다. bd.agency: 'key'(중점) / 'low'(후순위) / 없음
+function hsAgencyMark(t) {
+    const m = t && t.score_breakdown && t.score_breakdown.agency;
+    return (m === 'key' || m === 'low') ? m : null;
+}
+function hsAgencyChip(bd) {
+    const m = bd && bd.agency;
+    if (m === 'key') return '<span class="hs-chip hs-chip-key" title="중점으로 등록한 발주처 — 적합도에는 들어가지 않습니다">중점 발주처</span>';
+    if (m === 'low') return '<span class="hs-chip hs-chip-low" title="후순위로 등록한 발주처 — 적합도는 그대로이고 목록 아래에 나옵니다">후순위 발주처</span>';
+    return '';
+}
+// 목록 순서 (서버의 relevance.rank_key 와 같은 규칙): 후순위 발주처는 맨 아래 → 적합도 높은 순 → 같으면 중점 발주처 먼저 → 받은 순서
+function hsRankSort(items) {
+    const key = t => { const m = hsAgencyMark(t); return [m === 'low' ? 1 : 0, -(t.relevance_score ?? -1), m === 'key' ? 0 : 1]; };
+    return items.map((t, i) => [t, i, key(t)])
+        .sort((a, b) => (a[2][0] - b[2][0]) || (a[2][1] - b[2][1]) || (a[2][2] - b[2][2]) || (a[1] - b[1]))
+        .map(x => x[0]);
 }
 
 // 공고 한 줄 — 항상 두 줄이다. 앞 칸: 적합도 / 첫 줄: 제목 / 둘째 줄: 구분·기관·금액·유형 … / 오른쪽: 마감·버튼
 // opts: { keywords, bookmarked:Set, dismiss:bool, announced:bool(공고일), origin:bool(원문 링크),
-//         metaHtml:string(둘째 줄 끝에 붙일, 이미 이스케이프된 HTML), actionsHtml:string }
+//         metaHtml:string(둘째 줄 끝에 붙일, 이미 이스케이프된 HTML), actionsHtml:string,
+//         noAgencyChip:bool(중점 발주처 탭처럼 발주처별로 이미 묶어 보여 줄 때) }
 function renderTenderRow(t, opts) {
     opts = opts || {};
     const dd = hsDday(t);
@@ -133,7 +142,7 @@ function renderTenderRow(t, opts) {
                 <span class="hs-row-agency">${safeHtml(hsAgency(t))}</span>
                 <b class="hs-row-price${t.estimated_price ? '' : ' none'}">${hsPrice(t.estimated_price)}</b>
                 ${type ? `<span>${safeHtml(type)}</span>` : ''}
-                ${hsAdjustChip(bd)}${announced}${origin}${memo}${opts.metaHtml || ''}
+                ${opts.noAgencyChip ? '' : hsAgencyChip(bd)}${announced}${origin}${memo}${opts.metaHtml || ''}
             </div>
         </div>
         <div class="hs-row-side">
@@ -160,4 +169,4 @@ async function hsToggleBookmark(tenderId, btn) {
     } catch (e) { console.error(e); }
 }
 
-if (typeof module !== 'undefined') module.exports = { hsPrice, hsDday, hsKind, hsAgency, hsIsNew, hsCollectedMs, hsScoreHue, hsScoreTip, hsAdjustChip };
+if (typeof module !== 'undefined') module.exports = { hsPrice, hsDday, hsKind, hsAgency, hsIsNew, hsCollectedMs, hsScoreHue, hsScoreTip, hsAgencyChip, hsAgencyMark, hsRankSort };

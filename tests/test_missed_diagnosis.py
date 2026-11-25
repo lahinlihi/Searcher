@@ -98,7 +98,7 @@ def test_diagnose_low_rank(tenders_app, make_user, make_prefs, make_tender):
     assert r['section'] == 'urgent_tenders'
     assert r['rank'] > 24 and r['pool'] == 31
     assert set(r['breakdown']) == {'keyword', 'type', 'case', 'agency', 'base'}
-    assert r['breakdown']['agency'] == 0.0 and r['score'] == r['breakdown']['base']
+    assert r['breakdown']['agency'] is None and r['score'] == r['breakdown']['base']
 
 
 def test_diagnose_in_range(tenders_app, make_user, make_prefs, make_tender):

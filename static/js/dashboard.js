@@ -111,7 +111,7 @@ function applyDashboardData(data) {
     renderList();
 }
 
-// 중점 발주처 — 가점을 준 발주처의 아직 안 본 공고 (적합도·관심 키워드와 상관없이)
+// 중점 발주처 — 중점으로 등록한 발주처의 아직 안 본 공고 (적합도·관심 키워드와 상관없이)
 async function loadKeyAgencies() {
     try {
         const res = await fetch('/api/dashboard/key-agencies');
@@ -245,10 +245,8 @@ function _tabItems(tab) {
     if (tab === 'similar') return similarData && similarData.items ? _visible(similarData.items) : [];
     if (tab === 'key') return keyData && keyData.items ? _visible(keyData.items) : [];
     if (tab !== 'all') return _sectionItems(tab);
-    // 전체: 세 구역을 합쳐 적합도 순으로 (같으면 받은 순서)
-    const all = [..._sectionItems('pre'), ..._sectionItems('urgent'), ..._sectionItems('recent')];
-    return all.map((t, i) => [t, i])
-        .sort((a, b) => ((b[0].relevance_score ?? -1) - (a[0].relevance_score ?? -1)) || (a[1] - b[1])).map(x => x[0]);
+    // 전체: 세 구역을 합쳐 서버와 같은 순서로 — 후순위 발주처는 맨 아래, 적합도 순, 같으면 중점 발주처 먼저
+    return hsRankSort([..._sectionItems('pre'), ..._sectionItems('urgent'), ..._sectionItems('recent')]);
 }
 
 // 수집한 날(현지 날짜) — '신규 먼저'는 날짜 단위로 묶고 그 안에서는 받은 순서(적합도)를 지킨다
@@ -303,7 +301,7 @@ function renderToday(items) {
     if (by.pre) parts.push(`사전규격 ${by.pre}`);
     if (by.g2b) parts.push(`나라장터 입찰 ${by.g2b}`);
     if (by.other) parts.push(`기타 채널 ${by.other}`);
-    const best = fresh.reduce((m, t) => ((t.relevance_score ?? -1) > (m.relevance_score ?? -1) ? t : m));
+    const best = hsRankSort(fresh)[0];        // 후순위 발주처의 공고는 '가장 잘 맞는 공고'로 내세우지 않는다
     const title = typeof cleanNoticeTitle === 'function' ? cleanNoticeTitle(best.title || '') : (best.title || '');
     const why = [];
     if (best.relevance_score !== undefined && best.relevance_score !== null) why.push(`적합도 ${Number(best.relevance_score).toFixed(1)}`);
@@ -345,16 +343,24 @@ function renderList() {
         if (keyData.error) { cap.textContent = '중점 발주처 공고를 불러오지 못했습니다.'; list.innerHTML = ''; return; }
         if (!keyData.agencies.length) {
             cap.textContent = '';
-            list.innerHTML = '<li class="hs-empty">발주처에 가점을 주면 그 발주처의 새 공고가 여기에 모입니다.<br><a href="/filters" class="hs-link">필터관리에서 등록</a></li>';
+            list.innerHTML = '<li class="hs-empty">발주처를 중점으로 등록하면 그 발주처의 새 공고가 여기에 모입니다.<br><a href="/filters" class="hs-link">필터관리에서 등록</a></li>';
             return;
         }
-        // 이 탭의 기본 순서는 수집일이 새로운 순이다 (적합도가 낮아도 놓치지 않으려는 칸)
-        const items = _sorted(_tabItems('key')).slice(0, MAX_ITEMS);
-        const names = keyData.agencies.slice(0, 4).join(', ') + (keyData.agencies.length > 4 ? ` 외 ${keyData.agencies.length - 4}곳` : '');
-        cap.textContent = `${items.length}건 · 가점을 준 발주처(${names})의 아직 안 본 공고 · 적합도·관심 키워드와 상관없이, 새로 들어온 순`;
+        // 발주처별로 묶는다 — "이 발주처의 다른 사업들은 이렇다". 묶음은 가장 최근 공고가 새로운 발주처부터,
+        // 묶음 안은 서버가 준 순서(수집일이 새로운 순). 정렬을 고르면 묶음 안에서만 바뀐다
+        const items = _tabItems('key').slice(0, MAX_ITEMS);
+        const groups = [];
+        items.forEach(t => {
+            const name = t.matched_agency || hsAgency(t);
+            let g = groups.find(x => x.name === name);
+            if (!g) { g = { name, items: [] }; groups.push(g); }
+            g.items.push(t);
+        });
+        cap.textContent = `${items.length}건 · 중점으로 등록한 발주처의 아직 안 본 공고 · 적합도·관심 키워드와 상관없이 모읍니다`;
         list.innerHTML = items.length
-            ? items.map(t => renderTenderRow(t, { keywords: includeKeywords, bookmarked: bookmarkedIds, dismiss: true })).join('')
-            : '<li class="hs-empty">가점을 준 발주처의 진행 중인 새 공고가 없습니다.</li>';
+            ? groups.map(g => `<li class="hs-group-head">${safeHtml(g.name)}<small>새 공고 ${g.items.length}건</small></li>`
+                + _sorted(g.items).map(t => renderTenderRow(t, { keywords: includeKeywords, bookmarked: bookmarkedIds, dismiss: true, noAgencyChip: true })).join('')).join('')
+            : '<li class="hs-empty">중점 발주처의 진행 중인 새 공고가 없습니다.</li>';
         return;
     }
 

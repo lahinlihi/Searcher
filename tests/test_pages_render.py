@@ -76,20 +76,28 @@ def test_nav_admin_items_by_role(full_app, client, login, make_user):
     assert {'/admin/users', '/settings', '/logs', '/filters'} <= _menu_links(html)
 
 
-def test_detail_shows_new_score_parts(full_app, client, login, make_user, make_prefs, make_tender, add_adjust, fake_model):
-    """상세 화면의 점수 구성: 키워드·유형 / (사례가 있으면) 닮음 / (가감점이 있으면) 발주처. 예전 '기관 10점' 막대는 없다."""
+def test_detail_shows_score_parts_and_agency_mark_separately(full_app, client, login, make_user, make_prefs,
+                                                           make_tender, add_mark, fake_model):
+    """상세 화면: 점수 구성은 키워드·유형 / (사례가 있으면) 닮음. 발주처는 점수 밖의 표시로 따로 나온다."""
     u = make_user(); make_prefs(u, interest=['교육'])
-    add_adjust(u, '테스트기관', -30.0)
-    t = make_tender(title='AI 교육 운영 용역')
-    _, html = _get(client, login, u, f'/tender/{t.id}')
-    side = html[html.index('나와 맞는 정도'):]
-    side = side[:side.index('</aside>')]
-    assert '키워드·유형' in side and '발주처 −30' in side
-    assert '>기관<' not in side and '담은 공고와 닮음' not in side      # 담은 공고가 5건 미만이라 닮음 줄은 없다
+    add_mark(u, '후순위기관', 'low')
+    add_mark(u, '중점기관', 'key')
 
-    plain = make_tender(title='AI 교육 운영 용역', agency='다른기관')
-    _, html = _get(client, login, u, f'/tender/{plain.id}')
-    assert '발주처 −30' not in html and '발주처 +' not in html
+    def side(t):
+        _, html = _get(client, login, u, f'/tender/{t.id}')
+        part = html[html.index('나와 맞는 정도'):]
+        return part[:part.index('</aside>')]
+
+    low = side(make_tender(title='AI 교육 운영 용역', agency='후순위기관'))
+    assert '키워드·유형' in low and '후순위 발주처' in low and '중점 발주처' not in low
+    assert '>기관<' not in low and '담은 공고와 닮음' not in low       # 담은 공고가 5건 미만이라 닮음 줄은 없다
+    assert '발주처 +' not in low and '발주처 −' not in low            # 점수에 더하거나 빼는 숫자는 없다
+
+    key = side(make_tender(title='AI 교육 운영 용역', agency='중점기관'))
+    assert '중점 발주처' in key and '후순위 발주처' not in key
+
+    plain = side(make_tender(title='AI 교육 운영 용역', agency='다른기관'))
+    assert '중점 발주처' not in plain and '후순위 발주처' not in plain
 
 
 def test_cases_page_has_no_sort_switch(full_app, client, login, make_user):
@@ -98,9 +106,10 @@ def test_cases_page_has_no_sort_switch(full_app, client, login, make_user):
     assert '사례 점수는 적합도에 항상 절반 반영됩니다' in html
 
 
-def test_filters_page_has_adjust_input(full_app, client, login, make_user):
+def test_filters_page_has_mark_choice(full_app, client, login, make_user):
     _, html = _get(client, login, make_user(role='admin'), '/filters')
-    assert 'id="agency-adjust-input"' in html and 'agency-weight-selector' not in html
+    assert 'id="agency-mark-key"' in html and 'id="agency-mark-low"' in html
+    assert 'agency-adjust-input' not in html and 'agency-weight-selector' not in html
 
 
 def test_existing_badge_ids_kept(full_app, client, login, make_user):

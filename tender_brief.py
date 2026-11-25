@@ -103,7 +103,6 @@ DEFAULT_PRESET = {
     'section_days': {'pre': 7, 'normal': 7, 'support': 14},
     'core_keywords': [],       # 2배 가중. 비우면 scoring 기본값(AI·인공지능)
     'type_weights': {},        # 사업유형별 점수 45/35/25/15/0
-    'agency_adjusts': {},      # 기관명 → 가감점(−30 ~ +30). 없으면 공고검색기 설정을 따른다
     'use_embedding': True,     # 예전 설정 — 3부부터 쓰지 않는다 (저장된 프리셋과의 호환용으로 키만 남김)
     'min_score': 0,            # 이 점수 미만은 싣지 않는다
 }
@@ -289,7 +288,7 @@ def scoring_config(conn, preset):
     관심 있을 사업' 의 기준을 관리자가 공고검색기에서 이미 튜닝해 두었으므로
     그것을 출발점으로 쓴다. 프리셋에 값이 있으면 그쪽이 이긴다.
     """
-    base = {'core_keywords': [], 'type_weights': {}, 'agency_adjusts': {}}
+    base = {'core_keywords': [], 'type_weights': {}}
     try:
         row = conn.execute(
             'SELECT interest_keywords, type_weights, core_keywords '
@@ -299,26 +298,17 @@ def scoring_config(conn, preset):
             base['type_weights'] = json.loads(row['type_weights'] or '{}')
     except Exception as e:
         print(f'[입찰동향] 공고검색기 설정 상속 실패 — 기본값 사용: {e}')
-    try:    # 발주처 가감점(−30~+30). adjust 칸이 아직 없는 DB 면 가감점 없이 간다
-        for a in conn.execute(
-                'SELECT agency_name, adjust FROM agency_weights WHERE user_id=1 AND adjust IS NOT NULL'):
-            base['agency_adjusts'][a['agency_name']] = a['adjust']
-    except Exception as e:
-        print(f'[입찰동향] 발주처 가감점 상속 생략: {e}')
-
     return {
         'include_keywords': preset.get('include_keywords') or [],
         'core_keywords': preset.get('core_keywords') or base['core_keywords'],
         'type_weights': preset.get('type_weights') or base['type_weights'],
-        # 프리셋의 예전 키 agency_weights(0~10 눈금)는 읽지 않는다 — 눈금이 달라 섞어 쓰면 안 된다
-        'agency_adjusts': preset.get('agency_adjusts') or base['agency_adjusts'],
     }
 
 
 def score_rows(rows, cfg, use_embedding=True):
     """후보 전체에 적합도 점수를 매긴다. {id: (점수, 사업유형)} 반환.
 
-    공고검색기와 같은 100점 눈금이다: (키워드 + 유형)을 100점으로 환산한 뒤 발주처 가감점을 더한다.
+    공고검색기와 같은 100점 눈금이다: (키워드 + 유형)을 100점으로 환산한다. 발주처는 점수에 들어가지 않는다.
     사례 점수는 섞지 않는다 — 뉴스레터는 수신자별 담은 공고가 없다.
     use_embedding 은 예전 프리셋과의 호환용으로 받기만 한다 (3부부터 임베딩 혼합을 쓰지 않는다).
     """
@@ -330,17 +320,14 @@ def score_rows(rows, cfg, use_embedding=True):
         return {}
 
     tmax = relevance.type_max(cfg['type_weights'])
-    adjusts = cfg.get('agency_adjusts') or {}
     out = {}
     for o in objs:
         _, type_name, kw, ty, _ = scoring._score_and_type(
             o, kws, cfg['type_weights'], None, cfg['core_keywords'])
-        if type_name == '결과공고':
+        if type_name == '결과공고' or (kw == 0 and ty == 0):
             out[o.id] = (0.0, type_name)
             continue
-        base = relevance.base_score(kw, ty, tmax) if (kw or ty) else 0.0
-        total = relevance.combine(base, None, relevance.agency_adjust(o.agency, o.demand_agency, adjusts))
-        out[o.id] = (total, type_name)
+        out[o.id] = (relevance.combine(relevance.base_score(kw, ty, tmax), None), type_name)
     return out
 
 

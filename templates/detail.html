@@ -166,7 +166,7 @@
                     <span style="font-size: 13px; color: var(--hs-muted)">적합도 (100점){% if business_type and business_type != '기타' %} · {{ business_type }}{% endif %}</span>
                 </div>
                 {% if score_breakdown %}
-                {# 적합도 = 키워드·유형(100점 환산) — 담은 공고가 5건 이상이면 닮음 점수와 평균 — 에 등록한 발주처 가감점을 더한 값 #}
+                {# 적합도 = 키워드·유형(100점 환산) — 담은 공고가 5건 이상이면 닮음 점수와 평균. 발주처는 들어가지 않는다 #}
                 <div class="hs-bars">
                     <div class="hs-bar" title="키워드 {{ '%.1f' | format(score_breakdown.keyword) }} / 45 + 유형 {{ '%.1f' | format(score_breakdown.type) }} / {{ '%g' | format(type_max) }} 을 100점으로 환산"><span>키워드·유형</span><span class="hs-bar-track"><span style="width: {{ [100, score_breakdown.base | round(0)] | min }}%"></span></span><b>{{ '%.1f' | format(score_breakdown.base) }}</b></div>
                     {% if score_breakdown.case is not none %}
@@ -174,13 +174,22 @@
                     {% endif %}
                 </div>
                 <div style="font-size: 13px; color: var(--hs-muted); line-height: 1.6">
-                    {% if score_breakdown.case is not none %}위 두 점수의 평균{% else %}키워드·유형 점수{% endif %}{% if score_breakdown.agency %}에
-                    <span class="hs-chip {{ 'hs-chip-ok' if score_breakdown.agency > 0 else 'hs-chip-bad' }}">발주처 {{ '+' if score_breakdown.agency > 0 else '−' }}{{ '%g' | format(score_breakdown.agency | abs) }}</span>을 더한 값입니다.{% else %}입니다.{% endif %}
+                    {% if score_breakdown.case is not none %}위 두 점수의 평균입니다.{% else %}키워드·유형 점수입니다.{% endif %}
                     {% if nearest_case %}<br>가장 닮은 담은 공고: <a class="hs-link" href="/tender/{{ nearest_case.id }}" target="_blank" rel="noopener">{{ nearest_case.title }}</a>{% endif %}
                 </div>
                 {% endif %}
                 {% else %}
+                {% if relevance_score is none %}
                 <div style="font-size: 14px; color: var(--hs-muted)">관심 키워드를 설정하면 점수가 나옵니다. <a href="/filters" class="hs-link">설정</a></div>
+                {% else %}
+                <div style="font-size: 14px; color: var(--hs-muted)">관심 키워드와 사업 유형이 하나도 잡히지 않은 공고입니다 (적합도 0).</div>
+                {% endif %}
+                {% endif %}
+                {# 발주처 표시 — 점수와 별도 #}
+                {% if agency_mark == 'key' %}
+                <div style="font-size: 13px; line-height: 1.6; border-top: 1px solid var(--hs-line); padding-top: 10px"><span class="hs-chip hs-chip-key">중점 발주처</span> 중점으로 등록해 둔 발주처입니다. 적합도에는 들어가지 않습니다.</div>
+                {% elif agency_mark == 'low' %}
+                <div style="font-size: 13px; line-height: 1.6; border-top: 1px solid var(--hs-line); padding-top: 10px"><span class="hs-chip hs-chip-low">후순위 발주처</span> 후순위로 등록해 둔 발주처입니다. 적합도는 그대로이고 목록에서는 아래에 나옵니다.</div>
                 {% endif %}
             </div>
         </aside>

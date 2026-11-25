@@ -262,36 +262,36 @@ def _key_agency_candidates(names, now):
 @bp.route('/api/dashboard/key-agencies')
 @login_required
 def api_key_agencies():
-    """중점 발주처 칸 (제품 계약서 3부 22.5).
+    """중점 발주처 탭 (제품 계약서 3부 22.5): "이 발주처의 다른 사업들은 이렇다".
 
-    가점(+)을 준 발주처의 공고 가운데 아직 처리하지 않은 것을 적합도·관심 키워드와 상관없이 모은다.
-    수의계약도 넣는다 — 그 발주처의 움직임을 놓치지 않으려는 칸이다. 마감이 지난 공고와 결과공고는 뺀다.
-    수집일이 새로운 순, 최대 DASHBOARD_TOP_N 건.
+    중점으로 등록한 발주처의 공고 가운데 아직 처리하지 않은 것을 적합도·관심 키워드와 상관없이 모은다.
+    적합도는 일 기준 그대로 붙인다(맞지 않는 사업은 낮게 보인다). 수의계약도 넣는다.
+    마감이 지난 공고와 결과공고는 뺀다. 수집일이 새로운 순, 최대 DASHBOARD_TOP_N 건.
     """
     import relevance
     uid = g.user.id
     try:
-        plus = sorted(name for name, v in relevance.load_agency_adjusts(uid).items() if v > 0)
-        if not plus:
+        marks = relevance.load_agency_marks(uid)
+        keys = sorted(name for name, m in marks.items() if m == relevance.MARK_KEY)
+        if not keys:
             return jsonify({'agencies': [], 'items': []})
-        now = datetime.now()
         skip = _handled(uid) | {d.tender_id for d in DismissedTender.query.filter_by(user_id=uid).all()}
-        rows = [t for t in _key_agency_candidates(plus, now) if t.id not in skip]
-        prefs = load_user_prefs(uid)
-        scorer = Scorer(uid)
-        scores = scorer.score(rows)
-        items = []
-        for t in rows:
-            # 더 긴 이름으로 감점을 준 발주처면(예: '서울' 가점, '서울시교육청' 감점) 중점 발주처가 아니다
-            if scores[t.id]['agency'] <= 0:
+        picked = []
+        for t in _key_agency_candidates(keys, datetime.now()):
+            # 더 긴 이름으로 후순위에 둔 발주처면(예: '서울' 중점, '서울시교육청' 후순위) 중점 발주처가 아니다
+            if t.id in skip or relevance.agency_mark(t.agency, t.demand_agency, marks) != relevance.MARK_KEY:
                 continue
-            d = _scored_dict(t, prefs, scores[t.id])
-            text = f"{t.agency or ''} {t.demand_agency or ''}"
-            d['matched_agency'] = max((n for n in plus if n in text), key=len, default=None)
-            items.append(d)
-            if len(items) >= DASHBOARD_TOP_N:
+            picked.append(t)
+            if len(picked) >= DASHBOARD_TOP_N:
                 break
-        return jsonify({'agencies': plus, 'items': items})
+        prefs = load_user_prefs(uid)
+        scores = Scorer(uid).score(picked)          # 보여 줄 15건만 점수를 낸다
+        items = []
+        for t in picked:
+            d = _scored_dict(t, prefs, scores[t.id])
+            d['matched_agency'] = relevance.matched_agency_name(t.agency, t.demand_agency, keys)
+            items.append(d)
+        return jsonify({'agencies': keys, 'items': items})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
