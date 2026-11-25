@@ -26,6 +26,12 @@
     {% set p = request.path %}
     {% set is_admin = g.user and g.user.role == 'admin' %}
     {% set is_mod = g.user and g.user.role in ('admin', 'moderator') %}
+    {# 관리 메뉴의 묶음 두 개. 메뉴에는 묶음 이름만 두고, 그 안의 방은 화면 위 탭(hs-rooms)으로 오간다.
+       편집실은 발송까지 가는 순서다: 편집실 → 입찰동향 조건 → 발송 설정 → 발송 #}
+    {% set nl_rooms = [('/newsletter/review', '편집실'), ('/newsletter/brief', '입찰동향 조건'), ('/newsletter/settings', '발송 설정'), ('/newsletter/send', '발송')] %}
+    {% set ops_rooms = ([('/admin/users', '회원관리')] if is_mod else []) + ([('/settings', '설정'), ('/logs', '로그')] if is_admin else []) %}
+    {% set in_nl = p in nl_rooms | map(attribute=0) | list %}
+    {% set in_ops = p in ops_rooms | map(attribute=0) | list %}
     <header class="hs-topbar">
         <div class="hs-topbar-inner">
             <a href="/" class="hs-logo"><img src="{{ url_for('static', filename='img/logo.jfif') }}" alt="HIGH-SEARCH 대시보드"></a>
@@ -52,18 +58,9 @@
                     </summary>
                     <div class="hs-nav-menu">
                         <a href="/filters" class="{% if p == '/filters' %}active{% endif %}">필터관리</a>
-                        <div class="hs-menu-label">뉴스레터</div>
-                        <a href="/newsletter/review" class="{% if p == '/newsletter/review' %}active{% endif %}">편집실</a>
-                        <a href="/newsletter/send" class="{% if p == '/newsletter/send' %}active{% endif %}">발송</a>
-                        <a href="/newsletter/brief" class="{% if p == '/newsletter/brief' %}active{% endif %}">입찰동향 조건</a>
-                        <a href="/newsletter/settings" class="{% if p == '/newsletter/settings' %}active{% endif %}">발송 설정</a>
-                        {% if is_mod %}
-                        <div class="hs-menu-label">운영</div>
-                        <a href="/admin/users" class="{% if p == '/admin/users' %}active{% endif %}">회원관리</a>
-                        {% endif %}
-                        {% if is_admin %}
-                        <a href="/settings" class="{% if p == '/settings' %}active{% endif %}">설정</a>
-                        <a href="/logs" class="{% if p == '/logs' %}active{% endif %}">로그</a>
+                        <a href="/newsletter/review" class="{% if in_nl %}active{% endif %}">편집실</a>
+                        {% if ops_rooms %}
+                        <a href="{{ ops_rooms[0][0] }}" class="{% if in_ops %}active{% endif %}">운영</a>
                         {% endif %}
                     </div>
                 </details>
@@ -93,17 +90,10 @@
             {% if g.user %}
             <div class="hs-menu-label">관리</div>
             <a href="/filters" class="{% if p == '/filters' %}active{% endif %}">필터관리</a>
-            <a href="/newsletter/review" class="{% if p == '/newsletter/review' %}active{% endif %}">뉴스레터 편집실</a>
-            <a href="/newsletter/send" class="{% if p == '/newsletter/send' %}active{% endif %}">뉴스레터 발송</a>
-            <a href="/newsletter/brief" class="{% if p == '/newsletter/brief' %}active{% endif %}">입찰동향 조건</a>
-            <a href="/newsletter/settings" class="{% if p == '/newsletter/settings' %}active{% endif %}">발송 설정</a>
+            <a href="/newsletter/review" class="{% if in_nl %}active{% endif %}">편집실</a>
+            {% if ops_rooms %}
+            <a href="{{ ops_rooms[0][0] }}" class="{% if in_ops %}active{% endif %}">운영</a>
             {% endif %}
-            {% if is_mod %}
-            <a href="/admin/users" class="{% if p == '/admin/users' %}active{% endif %}">회원관리</a>
-            {% endif %}
-            {% if is_admin %}
-            <a href="/settings" class="{% if p == '/settings' %}active{% endif %}">설정</a>
-            <a href="/logs" class="{% if p == '/logs' %}active{% endif %}">로그</a>
             {% endif %}
             {% if g.user %}
             <div class="hs-menu-label">{{ g.user.display_name }}{% if g.user.role == 'admin' %} · Admin{% elif g.user.role == 'moderator' %} · 관리자{% endif %}</div>
@@ -115,6 +105,36 @@
 
     <!-- Main Content -->
     <main class="hs-main">
+        {# 묶음 안의 방 — 어느 방에서나 같은 탭이 보인다 #}
+        {% if g.user and in_nl %}
+        <nav class="hs-rooms" aria-label="편집실">
+            <div class="hs-rooms-head"><strong>편집실</strong><span>원고를 검수하고, 실을 입찰공고와 발송 조건을 정한 뒤, 마지막 방에서 발송합니다.</span></div>
+            <div class="hs-tabs">
+                {% for href, label in nl_rooms %}
+                <a class="hs-tab{% if p == href %} active{% endif %}{% if loop.last %} hs-tab-go{% endif %}" href="{{ href }}"{% if p == href %} aria-current="page"{% endif %}><i>{{ loop.index }}</i>{{ label }}</a>
+                {% endfor %}
+            </div>
+        </nav>
+        {% elif g.user and in_ops %}
+        <nav class="hs-rooms" aria-label="운영">
+            <div class="hs-rooms-head"><strong>운영</strong></div>
+            <div class="hs-tabs">
+                {% for href, label in ops_rooms %}
+                <a class="hs-tab{% if p == href %} active{% endif %}" href="{{ href }}"{% if p == href %} aria-current="page"{% endif %}>{{ label }}</a>
+                {% endfor %}
+            </div>
+        </nav>
+        {% endif %}
+        {% if g.user and (in_nl or in_ops) %}
+        <script>
+        // 좁은 화면에서는 탭이 옆으로 넘친다 — 지금 있는 방이 보이게 당겨 온다
+        (function () {
+            var on = document.querySelector('.hs-rooms .hs-tab.active');
+            var box = on && on.parentElement;
+            if (box && box.scrollWidth > box.clientWidth) box.scrollLeft = on.offsetLeft - (box.clientWidth - on.offsetWidth) / 2;
+        })();
+        </script>
+        {% endif %}
         {% block content %}{% endblock %}
     </main>
 

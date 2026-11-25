@@ -468,6 +468,40 @@ class AgencyWeight(db.Model):
         }
 
 
+# ── 이유 칩과 자격 확인 규칙 (docs/product-contract.md 5부) ───────────────────
+# 저장·조회·판단은 reasons.py 를 거친다. 둘 다 계정별 자료다.
+
+class TenderReason(db.Model):
+    """공고를 제외하거나 검토하면서 남긴 이유 (계정별, 한 공고에 여러 개)."""
+    __tablename__ = 'tender_reasons'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    tender_id = db.Column(db.Integer, db.ForeignKey('tenders.id'), nullable=False, index=True)
+    reason = db.Column(db.String(20), nullable=False)      # reasons.REASONS 의 코드
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint('user_id', 'tender_id', 'reason'),)
+
+    # 계정을 지우면 함께 지운다 — users.id 는 다시 쓰일 수 있어, 남겨 두면 새 계정이 물려받는다
+    user = db.relationship('User', backref=db.backref('tender_reasons', lazy=True, cascade='all, delete-orphan'))
+
+
+class ReasonRule(db.Model):
+    """확인받은 규칙: 제목에 이 낱말들이 든 공고에 '자격 확인 필요' 표시를 붙인다 (계정별)."""
+    __tablename__ = 'reason_rules'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    reason = db.Column(db.String(20), nullable=False)
+    words = db.Column(db.Text, nullable=False)              # JSON 목록. 모두 들어 있어야 걸린다
+    status = db.Column(db.String(10), nullable=False, default='on')   # on / off / rejected(후보를 거절함)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('reason_rules', lazy=True, cascade='all, delete-orphan'))
+
+
 # ── 사례로 배우는 점수 (docs/product-contract.md) ─────────────────────────────
 # 저장·조회는 case_store.py 를 거친다.
 

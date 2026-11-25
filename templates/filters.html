@@ -124,6 +124,25 @@
                 </div>
             </div>
 
+            <!-- 자격 확인 규칙 (제품 계약서 5부) -->
+            <div class="mb-6 mt-6 border-t pt-6" id="reason-rules">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="inline-block w-3 h-3 rounded-full bg-yellow-500"></span>
+                    <label class="font-semibold text-sm text-gray-800">자격 확인 규칙</label>
+                </div>
+                <p class="text-xs text-gray-500 mb-3">
+                    제외하거나 검토하면서 남긴 이유가 3건 이상 모이면, 같은 낱말이 든 공고를 미리 표시할지 여기서 묻습니다.
+                    표시만 붙고 점수와 순서는 바뀌지 않습니다. 이 규칙은 내 화면에만 적용됩니다.
+                </p>
+                <div class="text-xs font-semibold text-gray-700 mb-1">규칙 후보</div>
+                <div id="reason-candidates" class="space-y-2 mb-4"><p class="text-xs text-gray-400">불러오는 중…</p></div>
+                <div class="text-xs font-semibold text-gray-700 mb-1">켜 둔 규칙</div>
+                <div id="reason-rule-list" class="space-y-2 mb-4"></div>
+                <div class="text-xs font-semibold text-gray-700 mb-1">이유를 붙일 수 있는 예전 메모</div>
+                <p class="text-xs text-gray-500 mb-2">내가 쓴 메모 가운데 검토 결과로 보이는 것입니다. 맞는 이유를 누르면 그 공고에 붙습니다(자동으로 붙이지 않습니다).</p>
+                <div id="reason-memo-backlog" class="space-y-2"></div>
+            </div>
+
             <button type="button" onclick="saveKeywordFilters()" class="btn-primary">필터 저장</button>
             <span id="filter-save-msg" class="text-xs text-green-600 ml-2 hidden">저장되었습니다.</span>
         </div>
@@ -609,6 +628,113 @@ async function deleteAgencyWeight(id) {
     await fetch(`/api/agency-weights/${id}`, { method: 'DELETE' });
     loadAgencyWeights();
 }
+
+// ── 자격 확인 규칙 (5부) ─────────────────────────────────────────────────────
+let _reasonOptions = [];
+
+async function _rj(url, opts) {
+    const res = await fetch(url, opts);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || res.status);
+    return body;
+}
+const _jsonBody = (method, data) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+
+async function loadReasonRules() {
+    const cBox = document.getElementById('reason-candidates');
+    const rBox = document.getElementById('reason-rule-list');
+    if (!cBox || !rBox) return;
+    try {
+        const d = await _rj('/api/reason-rules');
+        cBox.innerHTML = d.candidates.length ? d.candidates.map((c, i) => {
+            const ev = c.evidence.map(e => `<li><a href="/tender/${e.id}" target="_blank" rel="noopener" class="hover:underline">${escHtml(e.title)}</a></li>`).join('');
+            const live = c.live_examples.map(e => escHtml(e.title)).join(' · ');
+            return `<div class="p-2.5 border rounded-lg bg-white text-sm">
+                <div class="flex flex-wrap items-center gap-2">
+                    <span><b>"${escHtml(c.words.join('" + "'))}"</b> 이(가) 든 공고 → <span class="hs-chip hs-chip-flag">${escHtml(c.label)}</span></span>
+                    <span class="text-xs text-gray-500">근거 ${c.evidence.length}건 · 지금 진행 중인 공고 ${c.live_count}건</span>
+                    <span class="ml-auto flex gap-1">
+                        <button type="button" class="btn-primary text-xs px-2.5 py-1" data-cand="${i}" data-act="add">표시하기</button>
+                        <button type="button" class="text-xs px-2.5 py-1 border rounded text-gray-600" data-cand="${i}" data-act="reject">아님</button>
+                    </span>
+                </div>
+                <details class="mt-1 text-xs text-gray-600"><summary class="cursor-pointer">근거가 된 공고 보기</summary><ul class="list-disc pl-5 mt-1">${ev}</ul></details>
+                ${live ? `<p class="text-xs text-gray-500 mt-1">지금 걸리는 공고 예: ${live}</p>` : ''}
+            </div>`;
+        }).join('') : '<p class="text-xs text-gray-400">아직 후보가 없습니다. 같은 이유를 준 공고가 3건 이상 모이면 여기에 나옵니다.</p>';
+        cBox._cands = d.candidates;
+        rBox.innerHTML = d.rules.length ? d.rules.map(r => {
+            const ce = (r.counterexamples || []);
+            return `<div class="p-2.5 border rounded-lg bg-white text-sm" data-rule="${r.id}">
+                <div class="flex flex-wrap items-center gap-2">
+                    <input type="text" class="form-input text-sm" style="width: 12rem" value="${escHtml(r.words.join(', '))}" aria-label="규칙의 낱말 (쉼표로 구분)" data-act="words">
+                    <span>→ <span class="hs-chip hs-chip-flag">${escHtml(r.label)}</span></span>
+                    <label class="ml-auto inline-flex items-center gap-1 text-xs cursor-pointer"><input type="checkbox" data-act="toggle" ${r.status === 'on' ? 'checked' : ''}> 표시 켜기</label>
+                </div>
+                ${ce.length ? `<p class="text-xs mt-1" style="color: var(--hs-warn)">이 규칙에 걸리는데 담았거나 '자격 가능'으로 남긴 공고 ${ce.length}건 — 계속 쓸지 확인해 주세요: ${ce.slice(0, 3).map(x => escHtml(x.title)).join(' · ')}</p>` : ''}
+            </div>`;
+        }).join('') : '<p class="text-xs text-gray-400">켜 둔 규칙이 없습니다.</p>';
+    } catch (e) {
+        cBox.innerHTML = `<p class="text-xs text-red-600">규칙을 불러오지 못했습니다: ${escHtml(e.message)}</p>`;
+    }
+}
+
+async function loadReasonBacklog() {
+    const box = document.getElementById('reason-memo-backlog');
+    if (!box) return;
+    try {
+        if (!_reasonOptions.length) _reasonOptions = (await _rj('/api/reasons/options')).options;
+        const items = (await _rj('/api/reasons/memo-backlog')).items;
+        const chips = _reasonOptions.filter(o => o.group !== 'like').map(o =>
+            `<button type="button" class="hs-reason-chip" data-reason="${escHtml(o.code)}">${escHtml(o.label)}</button>`).join('');
+        box.innerHTML = items.length ? items.map(m => `<div class="p-2.5 border rounded-lg bg-white text-sm" data-tender="${m.tender_id}">
+                <a href="/tender/${m.tender_id}" target="_blank" rel="noopener" class="font-semibold hover:underline">${escHtml(m.title)}</a>
+                <p class="text-xs text-gray-600 mt-0.5">${escHtml(m.memo)}</p>
+                <div class="hs-reason-group mt-1.5">${chips}</div>
+            </div>`).join('') : '<p class="text-xs text-gray-400">이유를 붙일 예전 메모가 없습니다.</p>';
+    } catch (e) {
+        box.innerHTML = `<p class="text-xs text-red-600">메모를 불러오지 못했습니다: ${escHtml(e.message)}</p>`;
+    }
+}
+
+function initReasonRules() {
+    const cBox = document.getElementById('reason-candidates');
+    const rBox = document.getElementById('reason-rule-list');
+    const mBox = document.getElementById('reason-memo-backlog');
+    if (!cBox || !rBox || !mBox) return;
+    cBox.addEventListener('click', async e => {
+        const btn = e.target.closest('[data-cand]');
+        if (!btn) return;
+        const c = cBox._cands[Number(btn.dataset.cand)];
+        try {
+            await _rj(btn.dataset.act === 'add' ? '/api/reason-rules' : '/api/reason-rules/reject', _jsonBody('POST', { reason: c.reason, words: c.words }));
+        } catch (err) { alert(err.message); }
+        loadReasonRules();
+    });
+    rBox.addEventListener('change', async e => {
+        const row = e.target.closest('[data-rule]');
+        if (!row) return;
+        const body = e.target.dataset.act === 'toggle'
+            ? { status: e.target.checked ? 'on' : 'off' }
+            : { words: e.target.value.split(',').map(w => w.trim()).filter(Boolean) };
+        try { await _rj(`/api/reason-rules/${row.dataset.rule}`, _jsonBody('PUT', body)); } catch (err) { alert(err.message); }
+        loadReasonRules();
+    });
+    mBox.addEventListener('click', async e => {
+        const chip = e.target.closest('[data-reason]');
+        const row = chip && chip.closest('[data-tender]');
+        if (!row) return;
+        chip.disabled = true;
+        try {
+            await _rj(`/api/tenders/${row.dataset.tender}/reasons`, _jsonBody('PUT', { reasons: [chip.dataset.reason] }));
+            row.remove();
+            loadReasonRules();          // 이유가 3건 모였으면 후보가 생긴다
+        } catch (err) { chip.disabled = false; alert(err.message); }
+    });
+    loadReasonRules();
+    loadReasonBacklog();
+}
+document.addEventListener('DOMContentLoaded', initReasonRules);
 
 // ── 초기화 ───────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {

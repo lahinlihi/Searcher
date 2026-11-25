@@ -144,6 +144,7 @@ def _scored_dict(tender, prefs, result):
     return d
 
 
+SECTION_NAMES = ('pre_tenders', 'urgent_tenders', 'recent_tenders')
 DASHBOARD_TOP_N = 15   # 대시보드 탭마다 보여 주는 건수 — 한 번에 볼 '진짜 중요한 것'만 (쪽 넘기기 없음)
 
 
@@ -241,6 +242,8 @@ def api_dashboard():
         summary['keyword_match'] = matched   # 관심 설정에 걸린 전체 건수 (배지용)
         response_data['include_keywords'] = include_keywords
         response_data['exclude_keywords'] = prefs['exclude_keywords']
+        import reasons          # 자격 확인 표시 (5부) — 순서와 점수가 정해진 뒤에 붙인다
+        reasons.attach_flags(uid, [d for name in SECTION_NAMES for d in response_data[name]])
         return jsonify(response_data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -289,6 +292,8 @@ def api_key_agencies():
             d = _scored_dict(t, prefs, scores[t.id])
             d['matched_agency'] = relevance.matched_agency_name(t.agency, t.demand_agency, keys)
             items.append(d)
+        import reasons
+        reasons.attach_flags(uid, items)
         return jsonify({'agencies': keys, 'items': items})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -343,6 +348,8 @@ def api_viewed_recent():
             d = _scored_dict(tender, prefs, scores[tender.id])
             d['viewed_at'] = view.viewed_at.isoformat(timespec='seconds') + 'Z'
             items.append(d)
+        import reasons
+        reasons.attach_flags(uid, items)
         return jsonify({'items': items, 'days': RECENT_VIEW_DAYS})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -584,6 +591,8 @@ def api_tenders():
             d['memo_count'] = memo_counts.get(t.id, 0)
             result.append(d)
 
+        import reasons
+        reasons.attach_flags(uid, result)
         return jsonify({
             'tenders': result,
             'total': total,
@@ -660,18 +669,31 @@ def api_tender_memo_edit_delete(tender_id, memo_id):
 @bp.route('/api/tenders/<int:tender_id>/dismiss', methods=['POST', 'DELETE'])
 @login_required
 def api_dismiss_tender(tender_id):
-    """공고 관심없음 처리 / 취소"""
+    """공고 관심없음 처리 / 취소.
+
+    제외할 때는 이유를 꼭 받는다 (제품 계약서 5부 36.2): body {"reasons": [코드...]}, 자격·기타 묶음에서 하나 이상.
+    이유가 없으면 제외하지 않는다. 이미 제외한 공고면 이유만 새 값으로 바꾼다.
+    담는 이유 칩과 '자격 가능'은 남긴다 ('자격이 안 됨'을 골랐을 때만 '자격 가능'을 지운다).
+    복원(DELETE)해도 이유는 남긴다 — 검토 기록이다."""
+    import reasons
     try:
         existing = DismissedTender.query.filter_by(
             user_id=g.user.id, tender_id=tender_id).first()
 
         if request.method == 'POST':
-            if existing:
-                return jsonify({'dismissed': True})  # 이미 처리됨
-            dismissed = DismissedTender(user_id=g.user.id, tender_id=tender_id)  # type: ignore[call-arg]
-            db.session.add(dismissed)
-            db.session.commit()
-            return jsonify({'dismissed': True})
+            body = request.get_json(silent=True)
+            try:
+                codes = reasons.clean(body.get('reasons') if isinstance(body, dict) else None,
+                                      groups=reasons.DISMISS_GROUPS)
+                if not codes:
+                    raise ValueError('이유 없음')
+            except ValueError:
+                return jsonify({'error': '제외하는 이유를 하나 이상 골라 주세요.'}), 400
+            if not existing:
+                db.session.add(DismissedTender(user_id=g.user.id, tender_id=tender_id))  # type: ignore[call-arg]
+            reasons.set_dismiss_reasons(g.user.id, tender_id, codes, commit=False)
+            db.session.commit()            # 제외와 이유를 한 번에 — 하나만 저장되는 일이 없게
+            return jsonify({'dismissed': True, 'reasons': codes})
 
         else:  # DELETE — 관심없음 취소
             if existing:
@@ -691,6 +713,8 @@ def api_dismissed_list():
         include_keywords = load_interest_keywords(g.user.id)
         dismissed = DismissedTender.query.filter_by(
             user_id=g.user.id).order_by(DismissedTender.created_at.desc()).all()
+        import reasons
+        why = reasons.get_reasons(g.user.id, [d.tender_id for d in dismissed])
         result = []
         for d in dismissed:
             tender = d.tender
@@ -699,6 +723,8 @@ def api_dismissed_list():
             td = tender.to_dict(interest_keywords=include_keywords)
             td['dismissed_at'] = d.created_at.isoformat()
             td['dismissed_id'] = d.id
+            td['reasons'] = why.get(d.tender_id, [])      # 이유를 받기 전에 제외한 기록은 빈 목록
+            td['reason_labels'] = [reasons.REASONS[c]['label'] for c in td['reasons']]
             result.append(td)
         return jsonify(result)
     except Exception as e:

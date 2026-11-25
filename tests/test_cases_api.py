@@ -166,7 +166,7 @@ def test_dismiss_hides_from_similar(user, client, make_tender, make_prefs, fake_
     _cases(user, make_tender)
     t = _fresh(make_tender, '공공앱 유지관리 용역')
     assert len(client.get('/api/cases/similar').get_json()['items']) == 1
-    client.post(f'/api/tenders/{t.id}/dismiss')
+    assert client.post(f'/api/tenders/{t.id}/dismiss', json={'reasons': ['etc']}).status_code == 200
     assert client.get('/api/cases/similar').get_json()['items'] == []
 
 

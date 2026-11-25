@@ -105,6 +105,72 @@ function hsRankSort(items) {
         .map(x => x[0]);
 }
 
+// ── 이유 칩과 자격 확인 표시 (제품 계약서 5부) ────────────────────────────────
+function hsEsc(v) {
+    return String(v === null || v === undefined ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// 내가 켜 둔 규칙에 걸린 공고의 표시. 표시만 붙는다 — 적합도와 순서는 그대로다.
+function hsFlagChip(t) {
+    const flags = t && t.eligibility_flags;
+    if (!flags || !flags.length) return '';
+    return `<span class="hs-chip hs-chip-flag" title="내가 켜 둔 규칙에 걸린 공고입니다 — 적합도와 순서는 그대로입니다">자격 확인 필요: ${flags.map(f => hsEsc(f.label)).join(', ')}</span>`;
+}
+const HS_REASON_GROUP_LABEL = { ineligible: '자격이 안 됨', other: '그 밖의 이유', like: '담는 이유', eligible: '검토 결과' };
+// 이유 칩 버튼들 (groups 에 든 묶음만, 묶음 순서대로)
+function hsReasonPickerHtml(options, groups) {
+    return groups.map(g => {
+        const chips = options.filter(o => o.group === g)
+            .map(o => `<button type="button" class="hs-reason-chip" data-reason="${hsEsc(o.code)}">${hsEsc(o.label)}</button>`).join('');
+        return chips ? `<div class="hs-reason-group"><span class="hs-reason-group-label">${hsEsc(HS_REASON_GROUP_LABEL[g] || g)}</span>${chips}</div>` : '';
+    }).join('');
+}
+let _hsReasonOptions = null;
+async function hsLoadReasonOptions() {
+    if (!_hsReasonOptions) {
+        const res = await fetch('/api/reasons/options');
+        if (!res.ok) throw new Error(res.status);
+        _hsReasonOptions = await res.json();
+    }
+    return _hsReasonOptions;
+}
+// anchorEl 아래에 이유 선택기를 띄운다. 칩을 누르면 onPick([코드]) 뒤 닫힌다. 바깥을 누르거나 Esc 면 그냥 닫힌다.
+function hsCloseReasonPicker() {
+    const old = document.getElementById('hs-reason-picker');
+    if (old) { if (old._cleanup) old._cleanup(); old.remove(); }
+}
+async function hsOpenReasonPicker(anchorEl, cfg) {
+    hsCloseReasonPicker();
+    let data;
+    try { data = await hsLoadReasonOptions(); } catch (e) { alert('이유 목록을 불러오지 못했습니다.'); return; }
+    const box = document.createElement('div');
+    box.id = 'hs-reason-picker';
+    box.className = 'hs-reason-picker';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', cfg.title || '이유 고르기');
+    box.innerHTML = `<div class="hs-reason-title">${hsEsc(cfg.title || '왜 제외하나요?')}</div>` + hsReasonPickerHtml(data.options, cfg.groups || data.dismiss_groups);
+    document.body.appendChild(box);
+    // 누른 단추 바로 아래, 화면 밖으로 나가지 않게
+    const r = anchorEl.getBoundingClientRect();
+    const w = Math.min(320, window.innerWidth - 16);
+    box.style.width = w + 'px';
+    box.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w)) + window.scrollX + 'px';
+    const below = r.bottom + 6 + box.offsetHeight <= window.innerHeight;
+    box.style.top = (below ? r.bottom + 6 : Math.max(8, r.top - box.offsetHeight - 6)) + window.scrollY + 'px';
+    const onDoc = e => { if (!box.contains(e.target) && e.target !== anchorEl && !anchorEl.contains(e.target)) hsCloseReasonPicker(); };
+    const onKey = e => { if (e.key === 'Escape') { hsCloseReasonPicker(); anchorEl.focus(); } };
+    box._cleanup = () => { document.removeEventListener('mousedown', onDoc, true); document.removeEventListener('keydown', onKey, true); };
+    setTimeout(() => { document.addEventListener('mousedown', onDoc, true); document.addEventListener('keydown', onKey, true); }, 0);
+    box.addEventListener('click', e => {
+        const chip = e.target.closest('[data-reason]');
+        if (!chip) return;
+        hsCloseReasonPicker();
+        cfg.onPick([chip.dataset.reason]);
+    });
+    const first = box.querySelector('[data-reason]');
+    if (first) first.focus();
+}
+
 // 공고 한 줄 — 항상 두 줄이다. 앞 칸: 적합도 / 첫 줄: 제목 / 둘째 줄: 구분·기관·금액·유형 … / 오른쪽: 마감·버튼
 // opts: { keywords, bookmarked:Set, dismiss:bool, announced:bool(공고일), origin:bool(원문 링크),
 //         metaHtml:string(둘째 줄 끝에 붙일, 이미 이스케이프된 HTML), actionsHtml:string,
@@ -142,7 +208,7 @@ function renderTenderRow(t, opts) {
                 <span class="hs-row-agency">${safeHtml(hsAgency(t))}</span>
                 <b class="hs-row-price${t.estimated_price ? '' : ' none'}">${hsPrice(t.estimated_price)}</b>
                 ${type ? `<span>${safeHtml(type)}</span>` : ''}
-                ${opts.noAgencyChip ? '' : hsAgencyChip(bd)}${announced}${origin}${memo}${opts.metaHtml || ''}
+                ${opts.noAgencyChip ? '' : hsAgencyChip(bd)}${hsFlagChip(t)}${announced}${origin}${memo}${opts.metaHtml || ''}
             </div>
         </div>
         <div class="hs-row-side">
@@ -169,4 +235,4 @@ async function hsToggleBookmark(tenderId, btn) {
     } catch (e) { console.error(e); }
 }
 
-if (typeof module !== 'undefined') module.exports = { hsPrice, hsDday, hsKind, hsAgency, hsIsNew, hsCollectedMs, hsScoreHue, hsScoreTip, hsAgencyChip, hsAgencyMark, hsRankSort };
+if (typeof module !== 'undefined') module.exports = { hsPrice, hsDday, hsKind, hsAgency, hsIsNew, hsCollectedMs, hsScoreHue, hsScoreTip, hsAgencyChip, hsAgencyMark, hsRankSort, hsFlagChip, hsReasonPickerHtml };

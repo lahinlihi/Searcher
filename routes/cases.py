@@ -131,6 +131,8 @@ def api_similar():
             d = _scored_dict(t, prefs, rel[t.id])   # 대시보드 카드와 같은 형태 (적합도·유형 포함)
             d.update(scores[t.id], section=section_of[t.id])
             items.append(d)
+        import reasons
+        reasons.attach_flags(uid, items)
         return jsonify({'enabled': True, 'cases': len(good), 'min_cases': case_scoring.MIN_CASES,
                         'items': items})
     except Exception as e:

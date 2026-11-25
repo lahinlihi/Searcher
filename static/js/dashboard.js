@@ -14,7 +14,9 @@ let viewedIds = new Set();
 let currentTab = 'all';
 
 const SECTION_KEY = { pre: 'pre_tenders', urgent: 'urgent_tenders', recent: 'recent_tenders' };
-const _DASH_CACHE_KEY = 'dashboard_cache_v4';
+// 계정마다 따로 둔다 — 같은 브라우저에서 다른 계정으로 들어왔을 때 앞 사람의 점수·표시가 비치지 않게
+const _DASH_CACHE_KEY = 'dashboard_cache_v5_u' + HS_USER_ID;
+try { ['dashboard_cache_v3', 'dashboard_cache_v4'].forEach(k => localStorage.removeItem(k)); } catch (_) { /* 계정 구분 없던 예전 캐시는 지운다 */ }
 const _SORT_KEY = 'dashboard_sort';
 let _lastFetchTime = 0;
 
@@ -402,11 +404,18 @@ function _agoText(iso) {
 
 // ── 동작 ───────────────────────────────────────────────────────────────────
 
-async function dismissTender(tenderId, btn) {
+// 관심없음: 이유를 하나 골라야 제외된다 (5부). X 를 누르면 그 자리에서 이유 칩이 펼쳐지고,
+// 칩 밖을 누르면 제외하지 않고 닫힌다.
+function dismissTender(tenderId, btn) {
+    hsOpenReasonPicker(btn, { title: '왜 제외하나요? (하나 누르면 제외됩니다)', onPick: reasons => _dismissWithReasons(tenderId, btn, reasons) });
+}
+
+async function _dismissWithReasons(tenderId, btn, reasons) {
     const row = btn.closest('.hs-row');
     if (row) { row.style.transition = 'opacity .25s'; row.style.opacity = '0.35'; }
     try {
-        const res = await fetch(`/api/tenders/${tenderId}/dismiss`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        const res = await fetch(`/api/tenders/${tenderId}/dismiss`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reasons }) });
         if (!res.ok) throw new Error(res.status);
         dismissedIds.add(tenderId);
         setTimeout(() => { if (row) row.remove(); updateCounts(); }, 200);
