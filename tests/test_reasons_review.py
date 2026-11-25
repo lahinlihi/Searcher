@@ -157,4 +157,5 @@ def test_dashboard_cache_key_is_per_user(app, client, login, make_user):
     html = client.get('/').get_data(as_text=True)
     assert f'const HS_USER_ID = {u.id};' in html
     js = open('static/js/dashboard.js', encoding='utf-8').read()
-    assert "'dashboard_cache_v5_u' + HS_USER_ID" in js and "'dashboard_cache_v4'" not in js
+    assert "const _DASH_CACHE_KEY = 'dashboard_cache_v5_u' + HS_USER_ID;" in js
+    assert "localStorage.removeItem(k)" in js and "'dashboard_cache_v4'" in js      # 계정 구분 없던 예전 캐시는 지운다
