@@ -346,20 +346,14 @@ function renderList() {
             list.innerHTML = '<li class="hs-empty">발주처를 중점으로 등록하면 그 발주처의 새 공고가 여기에 모입니다.<br><a href="/filters" class="hs-link">필터관리에서 등록</a></li>';
             return;
         }
-        // 발주처별로 묶는다 — "이 발주처의 다른 사업들은 이렇다". 묶음은 가장 최근 공고가 새로운 발주처부터,
-        // 묶음 안은 서버가 준 순서(수집일이 새로운 순). 정렬을 고르면 묶음 안에서만 바뀐다
-        const items = _tabItems('key').slice(0, MAX_ITEMS);
-        const groups = [];
-        items.forEach(t => {
-            const name = t.matched_agency || hsAgency(t);
-            let g = groups.find(x => x.name === name);
-            if (!g) { g = { name, items: [] }; groups.push(g); }
-            g.items.push(t);
-        });
-        cap.textContent = `${items.length}건 · 중점으로 등록한 발주처의 아직 안 본 공고 · 적합도·관심 키워드와 상관없이 모읍니다`;
+        // 모든 중점 발주처의 공고를 한데 모아 적합도 높은 순으로 (서버가 준 순서). 점수가 낮아도 빠지지 않는다.
+        // 본 목록과 달리 여기서는 발주처 이름이 중요하므로 줄마다 등록한 이름을 칩으로 보여 준다
+        const items = _sorted(_tabItems('key')).slice(0, MAX_ITEMS);
+        const names = keyData.agencies.slice(0, 4).join(', ') + (keyData.agencies.length > 4 ? ` 외 ${keyData.agencies.length - 4}곳` : '');
+        cap.textContent = `${items.length}건 · 중점 발주처(${names})의 아직 안 본 공고 · 관심 키워드와 상관없이 모아 적합도 높은 순으로`;
         list.innerHTML = items.length
-            ? groups.map(g => `<li class="hs-group-head">${safeHtml(g.name)}<small>새 공고 ${g.items.length}건</small></li>`
-                + _sorted(g.items).map(t => renderTenderRow(t, { keywords: includeKeywords, bookmarked: bookmarkedIds, dismiss: true, noAgencyChip: true })).join('')).join('')
+            ? items.map(t => renderTenderRow(t, { keywords: includeKeywords, bookmarked: bookmarkedIds, dismiss: true, noAgencyChip: true,
+                metaHtml: t.matched_agency ? `<span class="hs-chip hs-chip-key" title="중점으로 등록한 발주처">${safeHtml(t.matched_agency)}</span>` : '' })).join('')
             : '<li class="hs-empty">중점 발주처의 진행 중인 새 공고가 없습니다.</li>';
         return;
     }

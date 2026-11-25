@@ -266,7 +266,8 @@ def api_key_agencies():
 
     중점으로 등록한 발주처의 공고 가운데 아직 처리하지 않은 것을 적합도·관심 키워드와 상관없이 모은다.
     적합도는 일 기준 그대로 붙인다(맞지 않는 사업은 낮게 보인다). 수의계약도 넣는다.
-    마감이 지난 공고와 결과공고는 뺀다. 수집일이 새로운 순, 최대 DASHBOARD_TOP_N 건.
+    마감이 지난 공고와 결과공고는 뺀다. 적합도 높은 순(같으면 수집일이 새로운 순), 최대 DASHBOARD_TOP_N 건.
+    점수가 낮아도 빼지 않는다 — 중점 발주처의 공고는 "무조건" 나온다.
     """
     import relevance
     uid = g.user.id
@@ -276,16 +277,13 @@ def api_key_agencies():
         if not keys:
             return jsonify({'agencies': [], 'items': []})
         skip = _handled(uid) | {d.tender_id for d in DismissedTender.query.filter_by(user_id=uid).all()}
-        picked = []
-        for t in _key_agency_candidates(keys, datetime.now()):
-            # 더 긴 이름으로 후순위에 둔 발주처면(예: '서울' 중점, '서울시교육청' 후순위) 중점 발주처가 아니다
-            if t.id in skip or relevance.agency_mark(t.agency, t.demand_agency, marks) != relevance.MARK_KEY:
-                continue
-            picked.append(t)
-            if len(picked) >= DASHBOARD_TOP_N:
-                break
+        # 더 긴 이름으로 후순위에 둔 발주처면(예: '서울' 중점, '서울시교육청' 후순위) 중점 발주처가 아니다
+        rows = [t for t in _key_agency_candidates(keys, datetime.now())
+                if t.id not in skip and relevance.agency_mark(t.agency, t.demand_agency, marks) == relevance.MARK_KEY]
         prefs = load_user_prefs(uid)
-        scores = Scorer(uid).score(picked)          # 보여 줄 15건만 점수를 낸다
+        scores = Scorer(uid).score(rows)
+        # rows 는 수집일이 새로운 순 — 안정 정렬이라 점수가 같으면 그 순서가 남는다
+        picked = sorted(rows, key=lambda t: -scores[t.id]['total'])[:DASHBOARD_TOP_N]
         items = []
         for t in picked:
             d = _scored_dict(t, prefs, scores[t.id])

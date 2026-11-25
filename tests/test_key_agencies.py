@@ -105,6 +105,34 @@ def test_newest_collected_first_and_limit_15(api, make_tender, add_mark):
     assert _ids(get()) == [t.id for t in reversed(ts)][:15]
 
 
+def test_highest_score_first_across_agencies(api, make_tender, add_mark):
+    """중점 발주처들의 공고를 한데 모아 적합도 높은 순으로 (2026-11-25 사용자 결정). 점수가 같으면 새로 들어온 순.
+    0점 공고도 빠지지 않는다."""
+    u, get = api
+    add_mark(u, '가나기관', 'key')
+    add_mark(u, '다라기관', 'key')
+    now = datetime.utcnow()
+    zero_new = make_tender(title='청사 보안', agency='가나기관', created_at=now)
+    typed_old = make_tender(title='교육 운영 용역', agency='다라기관', created_at=now - timedelta(days=5))
+    plain_mid = make_tender(title='교육 자료', agency='가나기관', created_at=now - timedelta(days=1))
+    zero_old = make_tender(title='시설 점검', agency='다라기관', created_at=now - timedelta(days=2))
+    items = get()['items']
+    assert [i['id'] for i in items] == [typed_old.id, plain_mid.id, zero_new.id, zero_old.id]
+    scores = [i['relevance_score'] for i in items]
+    assert scores == sorted(scores, reverse=True) and scores[0] > scores[1] > 0 == scores[2]
+
+
+def test_limit_keeps_the_highest_scores(api, make_tender, add_mark):
+    u, get = api
+    add_mark(u, '중점기관', 'key')
+    now = datetime.utcnow()
+    best = make_tender(title='교육 운영 용역', agency='중점기관', created_at=now - timedelta(days=9))
+    for i in range(20):
+        make_tender(title=f'청사 보안 {i}', agency='중점기관', created_at=now - timedelta(hours=i))
+    ids = _ids(get())
+    assert len(ids) == 15 and ids[0] == best.id      # 오래됐어도 점수가 높으면 15건 안에 남는다
+
+
 def test_no_key_agencies_returns_empty(api, make_tender):
     _, get = api
     make_tender(title='교육 운영', agency='아무기관')
