@@ -76,7 +76,9 @@ async function onReasonChipClick(e) {
     const code = chip.dataset.reason;
     const next = new Set(_reasonPressed);
     next.has(code) ? next.delete(code) : next.add(code);
-    chip.disabled = true;
+    // 저장이 끝날 때까지 칩 전체를 잠근다 — 응답 전에 다른 칩을 누르면 앞의 선택이 덮여 사라진다
+    const all = [...document.querySelectorAll('#reason-chips [data-reason]')];
+    all.forEach(c => { c.disabled = true; });
     try {
         const res = await fetch(`/api/tenders/${TENDER_ID}/reasons`, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reasons: [...next] }) });
@@ -86,7 +88,7 @@ async function onReasonChipClick(e) {
     } catch (err) {
         alert('저장하지 못했습니다: ' + err.message);
     } finally {
-        chip.disabled = false;
+        all.forEach(c => { c.disabled = false; });
     }
 }
 

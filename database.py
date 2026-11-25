@@ -483,6 +483,9 @@ class TenderReason(db.Model):
 
     __table_args__ = (db.UniqueConstraint('user_id', 'tender_id', 'reason'),)
 
+    # 계정을 지우면 함께 지운다 — users.id 는 다시 쓰일 수 있어, 남겨 두면 새 계정이 물려받는다
+    user = db.relationship('User', backref=db.backref('tender_reasons', lazy=True, cascade='all, delete-orphan'))
+
 
 class ReasonRule(db.Model):
     """확인받은 규칙: 제목에 이 낱말들이 든 공고에 '자격 확인 필요' 표시를 붙인다 (계정별)."""
@@ -495,6 +498,8 @@ class ReasonRule(db.Model):
     status = db.Column(db.String(10), nullable=False, default='on')   # on / off / rejected(후보를 거절함)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('reason_rules', lazy=True, cascade='all, delete-orphan'))
 
 
 # ── 사례로 배우는 점수 (docs/product-contract.md) ─────────────────────────────

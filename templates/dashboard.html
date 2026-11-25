@@ -82,6 +82,7 @@ function gotoSearch(filter) {
     window.open('/search?filter=' + filter, '_blank');
 }
 </script>
+<script>const HS_USER_ID = {{ g.user.id }};</script>
 <script src="{{ url_for('static', filename='js/tender-row.js') }}"></script>
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 {% endblock %}

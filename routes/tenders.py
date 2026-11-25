@@ -673,6 +673,7 @@ def api_dismiss_tender(tender_id):
 
     제외할 때는 이유를 꼭 받는다 (제품 계약서 5부 36.2): body {"reasons": [코드...]}, 자격·기타 묶음에서 하나 이상.
     이유가 없으면 제외하지 않는다. 이미 제외한 공고면 이유만 새 값으로 바꾼다.
+    담는 이유 칩과 '자격 가능'은 남긴다 ('자격이 안 됨'을 골랐을 때만 '자격 가능'을 지운다).
     복원(DELETE)해도 이유는 남긴다 — 검토 기록이다."""
     import reasons
     try:
@@ -690,7 +691,7 @@ def api_dismiss_tender(tender_id):
                 return jsonify({'error': '제외하는 이유를 하나 이상 골라 주세요.'}), 400
             if not existing:
                 db.session.add(DismissedTender(user_id=g.user.id, tender_id=tender_id))  # type: ignore[call-arg]
-            reasons.set_reasons(g.user.id, tender_id, codes, commit=False)
+            reasons.set_dismiss_reasons(g.user.id, tender_id, codes, commit=False)
             db.session.commit()            # 제외와 이유를 한 번에 — 하나만 저장되는 일이 없게
             return jsonify({'dismissed': True, 'reasons': codes})
 

@@ -14,7 +14,9 @@ let viewedIds = new Set();
 let currentTab = 'all';
 
 const SECTION_KEY = { pre: 'pre_tenders', urgent: 'urgent_tenders', recent: 'recent_tenders' };
-const _DASH_CACHE_KEY = 'dashboard_cache_v4';
+// 계정마다 따로 둔다 — 같은 브라우저에서 다른 계정으로 들어왔을 때 앞 사람의 점수·표시가 비치지 않게
+const _DASH_CACHE_KEY = 'dashboard_cache_v5_u' + HS_USER_ID;
+try { ['dashboard_cache_v3', 'dashboard_cache_v4'].forEach(k => localStorage.removeItem(k)); } catch (_) { /* 계정 구분 없던 예전 캐시는 지운다 */ }
 const _SORT_KEY = 'dashboard_sort';
 let _lastFetchTime = 0;
 

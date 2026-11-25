@@ -42,7 +42,7 @@ def norm(text):
     s = (text or '').lower()
     for ch in _STRIP_CHARS:
         s = s.replace(ch, '')
-    return s
+    return re.sub(r'\s+', '', s)      # 탭·개행·전각 공백도 — 공백뿐인 낱말이 '모든 공고'에 걸리는 규칙이 되지 않게
 
 
 def title_words(title):
@@ -87,6 +87,17 @@ def set_reasons(user_id, tender_id, codes, commit=True):
     return codes
 
 
+def set_dismiss_reasons(user_id, tender_id, codes, commit=True):
+    """제외할 때 받은 이유를 넣는다. 예전 제외 이유(자격·기타 묶음)만 바꾸고, 담는 이유 칩은 남긴다.
+    '자격 가능'은 규칙의 반례 기록이라 남기되, 이번에 '자격이 안 됨' 묶음을 골랐으면 모순이므로 지운다."""
+    codes = clean(codes, groups=DISMISS_GROUPS)
+    kept = [c for c in get_reasons(user_id, [tender_id]).get(tender_id, []) if REASONS[c]['group'] not in DISMISS_GROUPS]
+    if any(REASONS[c]['group'] == 'ineligible' for c in codes):
+        kept = [c for c in kept if c != 'eligible']
+    set_reasons(user_id, tender_id, codes + kept, commit=commit)
+    return codes
+
+
 def get_reasons(user_id, tender_ids):
     """{공고 id: [이유 코드]} — 이유가 있는 공고만. 코드는 REASONS 의 순서."""
     from database import TenderReason
@@ -123,24 +134,31 @@ def _counter_titles(user_id):
     return out
 
 
-def _live_matches(words, now):
-    """대시보드 구역(관심 설정 적용 전)의 진행 중 공고 가운데 제목에 낱말이 모두 든 것. 새로 들어온 순."""
+def _live_titles(now):
+    """대시보드 구역(관심 설정 적용 전)의 진행 중 공고 [(id, 제목, 수집 시각, 맞춤한 제목)], 새로 들어온 순.
+    한 번만 읽고 낱말은 파이썬에서 센다 — 후보 낱말마다 DB 를 다시 훑지 않는다."""
     from database import Tender
-    from routes.tenders import dashboard_section_queries, _title_contains
+    from routes.tenders import dashboard_section_queries
     seen = {}
     for q in dashboard_section_queries(now).values():
-        for w in words:
-            q = q.filter(_title_contains(w))
         for t in q.with_entities(Tender.id, Tender.title, Tender.created_at).all():
-            seen[t[0]] = t
+            seen[t[0]] = (t[0], t[1] or '', t[2], norm(t[1]))
     return sorted(seen.values(), key=lambda t: (t[2] is None, t[2]), reverse=True)
+
+
+def _live_matches(words, now, live=None):
+    """진행 중 공고 가운데 제목에 낱말이 모두 든 것. 새로 들어온 순."""
+    ws = [norm(w) for w in words]
+    return [t for t in (live if live is not None else _live_titles(now)) if all(w in t[3] for w in ws)]
 
 
 def mine_words(docs_by_reason, counter_norms=(), interest_norms=(), known=()):
     """이유별 공고 제목에서 규칙이 될 낱말을 찾는다 (DB 를 모르는 순수 함수 — 정확도 도구도 이것을 쓴다).
 
-    docs_by_reason: {이유: [(식별값, 제목)]}. 반환: [(이유, 낱말, [근거 식별값])].
-    근거가 MIN_EVIDENCE 건 이상이고, 반례 제목(counter_norms)에 없고, 관심 키워드와 겹치지 않고, 이미 있는 규칙이 아닌 것.
+    docs_by_reason: {이유: [(식별값, 제목)]}. 반환: [(이유, [낱말...], [근거 식별값])].
+    - 근거가 MIN_EVIDENCE 건 이상인 낱말만. 관심 키워드와 겹치는 낱말은 뺀다.
+    - 근거가 똑같은 낱말들은 한 규칙으로 묶는다 ("국외" + "연수" — 낱말이 모두 든 공고에만 걸리는 더 좁은 규칙).
+    - 묶은 낱말이 모두 든 반례 제목(counter_norms)이 있으면 버린다. 이미 있는 규칙(known)도 버린다.
     """
     out = []
     for reason in RULE_REASONS:
@@ -150,18 +168,21 @@ def mine_words(docs_by_reason, counter_norms=(), interest_norms=(), known=()):
         vocab = set()
         for _, title, _ in docs:
             vocab |= title_words(title)
+        groups = {}
         for word in sorted(vocab):
             w = norm(word)
-            evidence = [key for key, _, n in docs if w in n]
-            if len(evidence) < MIN_EVIDENCE:
-                continue
-            if any(w in c for c in counter_norms):
-                continue
             if any(k in w or w in k for k in interest_norms):
                 continue
-            if (reason, (w,)) in known:
+            evidence = tuple(key for key, _, n in docs if w in n)
+            if len(evidence) >= MIN_EVIDENCE:
+                groups.setdefault(evidence, []).append(word)
+        for evidence, words in groups.items():
+            ws = [norm(w) for w in words]
+            if any(all(w in c for w in ws) for c in counter_norms):
                 continue
-            out.append((reason, word, evidence))
+            if (reason, tuple(sorted(ws))) in known:
+                continue
+            out.append((reason, words, list(evidence)))
     return out
 
 
@@ -192,11 +213,12 @@ def candidates(user_id, now=None):
     out = []
     mined = mine_words({r: [(tid, title) for tid, title, _ in docs] for r, docs in by_reason.items()},
                        counter, interest, known)
-    for reason, word, evidence in mined:
-        live = _live_matches([word], now)
+    live_all = _live_titles(now)
+    for reason, words, evidence in mined:
+        live = _live_matches(words, now, live_all)
         if len(live) > GENERIC_LIVE_MAX:
             continue        # '위탁용역'처럼 흔한 낱말 (2026-11-25 사본: 근거 3건인데 진행 중 92건에 걸렸다)
-        out.append({'reason': reason, 'label': REASONS[reason]['label'], 'words': [word],
+        out.append({'reason': reason, 'label': REASONS[reason]['label'], 'words': words,
                     'evidence': [{'id': tid, 'title': titles[tid]} for tid in evidence],
                     'live_count': len(live),
                     'live_examples': [{'id': t[0], 'title': t[1]} for t in live[:3]]})
@@ -213,11 +235,12 @@ def clean_words(words):
         raise ValueError('규칙의 낱말을 하나 이상 넣어 주세요.')
     out, seen = [], set()
     for w in words:
+        w = w.strip() if isinstance(w, str) else w        # 먼저 다듬고 잰다 — '시\n' 이 한 글자 규칙으로 저장되지 않게
         if not isinstance(w, str) or len(norm(w)) < 2:
             raise ValueError('규칙의 낱말은 두 글자 이상이어야 합니다.')
         if norm(w) not in seen:
             seen.add(norm(w))
-            out.append(w.strip())
+            out.append(w)
     return out
 
 
