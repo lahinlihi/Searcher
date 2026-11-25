@@ -136,6 +136,35 @@ def _live_matches(words, now):
     return sorted(seen.values(), key=lambda t: (t[2] is None, t[2]), reverse=True)
 
 
+def mine_words(docs_by_reason, counter_norms=(), interest_norms=(), known=()):
+    """이유별 공고 제목에서 규칙이 될 낱말을 찾는다 (DB 를 모르는 순수 함수 — 정확도 도구도 이것을 쓴다).
+
+    docs_by_reason: {이유: [(식별값, 제목)]}. 반환: [(이유, 낱말, [근거 식별값])].
+    근거가 MIN_EVIDENCE 건 이상이고, 반례 제목(counter_norms)에 없고, 관심 키워드와 겹치지 않고, 이미 있는 규칙이 아닌 것.
+    """
+    out = []
+    for reason in RULE_REASONS:
+        docs = [(key, title or '', norm(title)) for key, title in docs_by_reason.get(reason, [])]
+        if len(docs) < MIN_EVIDENCE:
+            continue
+        vocab = set()
+        for _, title, _ in docs:
+            vocab |= title_words(title)
+        for word in sorted(vocab):
+            w = norm(word)
+            evidence = [key for key, _, n in docs if w in n]
+            if len(evidence) < MIN_EVIDENCE:
+                continue
+            if any(w in c for c in counter_norms):
+                continue
+            if any(k in w or w in k for k in interest_norms):
+                continue
+            if (reason, (w,)) in known:
+                continue
+            out.append((reason, word, evidence))
+    return out
+
+
 def candidates(user_id, now=None):
     """규칙 후보. 같은 이유를 준 공고 MIN_EVIDENCE 건 이상의 제목에 공통으로 든 낱말.
 
@@ -159,32 +188,18 @@ def candidates(user_id, now=None):
     interest = [norm(k) for k in scoring.load_user_prefs(user_id)['interest_keywords'] if norm(k)]
     known = {(r.reason, _words_key(json.loads(r.words))) for r in ReasonRule.query.filter_by(user_id=user_id).all()}
 
+    titles = {tid: title for docs in by_reason.values() for tid, title, _ in docs}
     out = []
-    for reason in RULE_REASONS:
-        docs = by_reason.get(reason, [])
-        if len(docs) < MIN_EVIDENCE:
-            continue
-        vocab = set()
-        for _, title, _ in docs:
-            vocab |= title_words(title)
-        for word in sorted(vocab):
-            w = norm(word)
-            evidence = [(tid, title) for tid, title, n in docs if w in n]
-            if len(evidence) < MIN_EVIDENCE:
-                continue
-            if any(w in c for c in counter):
-                continue
-            if any(k in w or w in k for k in interest):
-                continue
-            if (reason, (w,)) in known:
-                continue
-            live = _live_matches([word], now)
-            if len(live) > GENERIC_LIVE_MAX:
-                continue        # '위탁용역'처럼 흔한 낱말 (2026-11-25 사본: 근거 3건인데 진행 중 92건에 걸렸다)
-            out.append({'reason': reason, 'label': REASONS[reason]['label'], 'words': [word],
-                        'evidence': [{'id': tid, 'title': title} for tid, title in evidence],
-                        'live_count': len(live),
-                        'live_examples': [{'id': t[0], 'title': t[1]} for t in live[:3]]})
+    mined = mine_words({r: [(tid, title) for tid, title, _ in docs] for r, docs in by_reason.items()},
+                       counter, interest, known)
+    for reason, word, evidence in mined:
+        live = _live_matches([word], now)
+        if len(live) > GENERIC_LIVE_MAX:
+            continue        # '위탁용역'처럼 흔한 낱말 (2026-11-25 사본: 근거 3건인데 진행 중 92건에 걸렸다)
+        out.append({'reason': reason, 'label': REASONS[reason]['label'], 'words': [word],
+                    'evidence': [{'id': tid, 'title': titles[tid]} for tid in evidence],
+                    'live_count': len(live),
+                    'live_examples': [{'id': t[0], 'title': t[1]} for t in live[:3]]})
     # 근거가 많은 순, 같으면 더 좁게 걸리는(진행 중 건수가 적은) 낱말 먼저
     out.sort(key=lambda c: (-len(c['evidence']), c['live_count'], _ORDER[c['reason']], c['words']))
     return out

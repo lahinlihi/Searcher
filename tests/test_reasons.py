@@ -163,6 +163,26 @@ def test_candidate_hidden_once_rule_exists(app, make_user, make_tender, make_pre
         assert RS.candidates(u.id) == [], status
 
 
+# ── 7단계: 규칙 후보의 정확도 재기 (시간 순으로 나눠서) ──────────────────────
+
+def test_evaluate_counts_precision_on_later_tenders():
+    from tools.reason_rule_eval import evaluate
+    train = [(t, 'license') for t in TRIPS]
+    test = [('교직원 국외연수 운영', True), ('청년 국외 연수 지원', True), ('임직원 국외연수 위탁', False), ('소상공인 컨설팅', True)]
+    r = evaluate(train, [], test)
+    assert (r['caught'], r['bad'], r['precision']) == (3, 2, 0.667)
+    assert [(x['reason'], x['word'], x['evidence'], x['caught'], x['bad']) for x in r['rules']] == [('license', '국외연수', 3, 3, 2)]
+
+
+def test_evaluate_respects_counterexamples_and_empty_cases():
+    from tools.reason_rule_eval import evaluate
+    train = [(t, 'license') for t in TRIPS]
+    assert evaluate(train, ['공무원 국외연수 (담았던 공고)'], [('교직원 국외연수', True)])['rules'] == []
+    r = evaluate(train[:2], [], [('교직원 국외연수', True)])          # 근거 2건 — 규칙이 안 생긴다
+    assert r == {'rules': [], 'caught': 0, 'bad': 0, 'precision': None}
+    assert evaluate(train, [], [])['precision'] is None
+
+
 # ── 4단계: 규칙·표시·반례 ────────────────────────────────────────────────────
 
 @pytest.mark.parametrize('bad', [[], [''], [' '], ['시'], ['·'], ['국외연수', '-'], 'abc', None, [3]])
