@@ -387,6 +387,19 @@ def _call(prompt, api_key=None):
     return None, None
 
 
+def _class_items(out):
+    """AI 응답에서 분류 항목(dict)들을 꺼낸다.
+
+    프롬프트는 {"items": [...]} 를 요구하지만 모델이 목록만 돌려줄 때가 있다
+    (2026-11-25 운영: 'list' object has no attribute 'get' 로 그날 분류와 메일용 저장이 통째로 멈췄다).
+    어떤 모양이 와도 예외를 내지 않고, 쓸 수 있는 항목만 돌려준다.
+    """
+    items = out.get('items') if isinstance(out, dict) else out
+    if not isinstance(items, list):
+        return []
+    return [it for it in items if isinstance(it, dict)]
+
+
 def classify(conn, rows, batch=40, api_key=None, quiet=False):
     """
     미분류 공고를 배치로 분류해 tender_classes 에 저장.
@@ -412,10 +425,10 @@ def classify(conn, rows, batch=40, api_key=None, quiet=False):
         calls += 1
         if not out:
             continue
-        for it in out.get('items', []):
+        for it in _class_items(out):
             n = it.get('n')
-            cls = str(it.get('class', '')).upper()[:1]
-            if not isinstance(n, int) or not (1 <= n <= len(chunk)) or cls not in 'ABC':
+            cls = str(it.get('class') or '').upper()[:1]
+            if type(n) is not int or not (1 <= n <= len(chunk)) or cls not in ('A', 'B', 'C'):
                 continue
             conn.execute(
                 'INSERT OR REPLACE INTO tender_classes '
