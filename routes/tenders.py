@@ -246,6 +246,19 @@ def api_dashboard():
         return jsonify({'error': str(e)}), 500
 
 
+def _key_agency_candidates(names, now):
+    """등록 이름이 발주기관·수요기관에 들어 있는 진행 중 공고, 수집일이 새로운 순.
+    이름의 % 와 _ 는 글자 그대로 찾는다 (autoescape) — 그렇지 않으면 '%' 한 글자가 전 공고를 읽어 온다."""
+    name_match = db.or_(*[c.contains(name, autoescape=True)
+                          for name in names for c in (Tender.agency, Tender.demand_agency)])
+    return (Tender.query
+            .filter(name_match,
+                    db.or_(Tender.deadline_date == None, Tender.deadline_date >= now),
+                    db.or_(Tender.status == None, Tender.status != '결과공고'),
+                    db.or_(Tender.is_duplicate == None, Tender.is_duplicate == False))
+            .order_by(Tender.created_at.desc(), Tender.id.desc()).all())
+
+
 @bp.route('/api/dashboard/key-agencies')
 @login_required
 def api_key_agencies():
@@ -263,15 +276,7 @@ def api_key_agencies():
             return jsonify({'agencies': [], 'items': []})
         now = datetime.now()
         skip = _handled(uid) | {d.tender_id for d in DismissedTender.query.filter_by(user_id=uid).all()}
-        name_match = db.or_(*[c.contains(name, autoescape=True)
-                              for name in plus for c in (Tender.agency, Tender.demand_agency)])
-        rows = (Tender.query
-                .filter(name_match,
-                        db.or_(Tender.deadline_date == None, Tender.deadline_date >= now),
-                        db.or_(Tender.status == None, Tender.status != '결과공고'),
-                        db.or_(Tender.is_duplicate == None, Tender.is_duplicate == False))
-                .order_by(Tender.created_at.desc(), Tender.id.desc()).all())
-        rows = [t for t in rows if t.id not in skip]
+        rows = [t for t in _key_agency_candidates(plus, now) if t.id not in skip]
         prefs = load_user_prefs(uid)
         scorer = Scorer(uid)
         scores = scorer.score(rows)

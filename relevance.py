@@ -16,9 +16,11 @@ VEC_CHUNK = 2000         # 사례 점수를 낼 때 한 번에 읽는 벡터 수
 
 
 def type_max(type_weights):
-    """계정의 유형 만점. 사용자가 정한 유형 점수(2.0 초과) 가운데 가장 큰 값, 없으면 25."""
+    """계정의 유형 만점. 사용자가 정한 유형 점수(2.0 초과) 가운데 가장 큰 값, 다만 25 아래로는 내려가지 않는다.
+    가중치를 주지 않은 유형은 25점을 받으므로, 유형 하나만 '낮음 15'로 둔 계정의 만점을 15로 잡으면
+    다른 모든 공고의 점수가 올라 버린다."""
     vals = [float(v) for v in (type_weights or {}).values() if v is not None and float(v) > 2.0]
-    return max(vals) if vals else TYPE_DEFAULT_MAX
+    return max(vals + [TYPE_DEFAULT_MAX])
 
 
 def base_score(keyword_raw, type_score, tmax):
@@ -156,7 +158,10 @@ class Scorer:
                 t, self.keywords, self.type_weights, None, self.core_keywords)
             adjust = agency_adjust(t.agency, getattr(t, 'demand_agency', None), self.adjusts)
             case100, near = cases.get(t.id, (None, None))
-            if type_name == '결과공고':
+            if not self.keywords:
+                # 관심 키워드가 없는 계정은 점수를 내지 않는다 (상세 화면도 "관심 키워드를 설정하면…" 이라고 답한다)
+                base, total, case100, near, adjust = 0.0, 0.0, None, None, 0.0
+            elif type_name == '결과공고':
                 base, total, case100, near = 0.0, 0.0, None, None
             elif kw_raw == 0 and type_score == 0:
                 # 키워드도 유형도 잡히지 않은 공고(제외 패턴 포함): 닮음만으로는 살리지 않는다.
