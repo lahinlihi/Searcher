@@ -60,20 +60,80 @@ def _menu_links(html):
     return set(re.findall(r'href="(/[^"#?]*)"', html[start:end]))
 
 
-def test_nav_admin_items_by_role(full_app, client, login, make_user):
+def _room_tabs(html):
+    """화면 위 '방' 탭: (묶음 이름, [(주소, 이름, 지금 방인가)])"""
+    import re
+    if 'class="hs-rooms"' not in html:
+        return None, []
+    part = html[html.index('class="hs-rooms"'):]
+    part = part[:part.index('</nav>')]
+    name = re.search(r'aria-label="([^"]+)"', part).group(1)
+    tabs = [(m.group(2), re.sub(r'<[^>]+>|\s+', '', m.group(3)), 'active' in m.group(1))
+            for m in re.finditer(r'<a class="(hs-tab[^"]*)" href="([^"]+)"[^>]*>(.*?)</a>', part, re.S)]
+    return name, tabs
+
+
+NEWSLETTER = ['/newsletter/review', '/newsletter/brief', '/newsletter/settings', '/newsletter/send']
+OPS = ['/admin/users', '/settings', '/logs']
+
+
+def test_nav_has_one_entry_per_hub(full_app, client, login, make_user):
+    """관리 메뉴에서 고르는 것은 '편집실' 하나, '운영' 하나다. 그 안의 방은 메뉴에 늘어놓지 않는다."""
     base = {'/', '/search', '/bookmarks', '/cases', '/review-tenders'}
+    inner = {'/newsletter/brief', '/newsletter/settings', '/newsletter/send', '/settings', '/logs'}
+
     _, html = _get(client, login, make_user(role='user'), '/')
     links = _menu_links(html)
-    assert base <= links
-    assert not ({'/admin/users', '/settings', '/logs'} & links)
+    assert base <= links and '/newsletter/review' in links and '/filters' in links
+    assert not (({'/admin/users'} | inner) & links)
 
     _, html = _get(client, login, make_user(role='moderator'), '/')
     links = _menu_links(html)
-    assert '/admin/users' in links and '/newsletter/review' in links
-    assert not ({'/settings', '/logs'} & links)
+    assert {'/admin/users', '/newsletter/review', '/filters'} <= links and not (inner & links)
 
     _, html = _get(client, login, make_user(role='admin'), '/')
-    assert {'/admin/users', '/settings', '/logs', '/filters'} <= _menu_links(html)
+    links = _menu_links(html)
+    assert {'/admin/users', '/newsletter/review', '/filters'} <= links and not (inner & links)
+    head = html[html.index('class="hs-topbar'):html.index('</header>')]
+    assert head.count('>편집실<') == 2 and head.count('>운영<') == 2          # 넓은 화면 메뉴 + 휴대폰 메뉴에 하나씩
+
+
+@pytest.mark.parametrize('path', NEWSLETTER)
+def test_newsletter_rooms_are_tabs_in_one_hub(full_app, client, login, make_user, path):
+    """편집실 안의 방 네 개: 편집실 → 입찰동향 조건 → 발송 설정 → 발송. 어느 방에서나 같은 탭이 보인다."""
+    _, html = _get(client, login, make_user(role='admin'), path)
+    name, tabs = _room_tabs(html)
+    assert name == '편집실'
+    assert [(href, label) for href, label, _ in tabs] == [
+        ('/newsletter/review', '1편집실'), ('/newsletter/brief', '2입찰동향조건'),
+        ('/newsletter/settings', '3발송설정'), ('/newsletter/send', '4발송')]
+    assert [href for href, _, on in tabs if on] == [path]
+    head = html[html.index('class="hs-topbar'):html.index('</header>')]
+    assert 'href="/newsletter/review" class="active"' in head               # 메뉴의 '편집실'이 켜져 있다
+
+
+@pytest.mark.parametrize('path', OPS)
+def test_ops_rooms_are_tabs_in_one_hub(full_app, client, login, make_user, path):
+    _, html = _get(client, login, make_user(role='admin'), path)
+    name, tabs = _room_tabs(html)
+    assert name == '운영'
+    assert [(href, label) for href, label, _ in tabs] == [('/admin/users', '회원관리'), ('/settings', '설정'), ('/logs', '로그')]
+    assert [href for href, _, on in tabs if on] == [path]
+    head = html[html.index('class="hs-topbar'):html.index('</header>')]
+    assert 'href="/admin/users" class="active"' in head
+
+
+def test_ops_tabs_show_only_rooms_the_role_can_open(full_app, client, login, make_user):
+    _, html = _get(client, login, make_user(role='moderator'), '/admin/users')
+    name, tabs = _room_tabs(html)
+    assert name == '운영' and [href for href, _, _ in tabs] == ['/admin/users']      # 설정·로그는 Admin 만
+
+
+def test_pages_outside_hubs_have_no_room_tabs(full_app, client, login, make_user):
+    u = make_user(role='admin')
+    for path in ('/', '/search', '/bookmarks', '/filters', '/cases', '/me'):
+        _, html = _get(client, login, u, path)
+        assert _room_tabs(html) == (None, []), path
 
 
 def test_detail_shows_score_parts_and_agency_mark_separately(full_app, client, login, make_user, make_prefs,

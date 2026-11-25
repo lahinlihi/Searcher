@@ -456,3 +456,17 @@ button, input, select, textarea { font-family: inherit; }
 .hs-reason-chip[aria-pressed="true"] { background: var(--hs-brand); border-color: var(--hs-brand); color: #fff; }
 .hs-reason-chip:disabled { opacity: .5; cursor: default; }
 .hs-reason-inline { display: flex; flex-direction: column; gap: 8px; }
+
+/* ── 묶음 안의 방 (편집실·운영) — 관리 메뉴에는 묶음 하나만 두고 방은 이 탭으로 오간다 ── */
+.hs-rooms { margin: 0 0 20px; }
+.hs-rooms-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 8px; }
+.hs-rooms-head strong { font-size: 20px; font-weight: 700; }
+.hs-rooms-head span { font-size: 13px; color: var(--hs-muted); }
+.hs-rooms .hs-tab { text-decoration: none; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; min-height: 44px; }
+.hs-rooms .hs-tab i {
+    font-style: normal; font-size: 12px; font-weight: 700; width: 20px; height: 20px; border-radius: 10px;
+    display: inline-flex; align-items: center; justify-content: center; background: var(--hs-surface2, #eee); color: var(--hs-muted);
+}
+.hs-rooms .hs-tab.active i { background: var(--hs-brand); color: #fff; }
+.hs-rooms .hs-tab-go { margin-left: auto; color: var(--hs-brand); font-weight: 700; }      /* 마지막 방: 발송 */
+@media (max-width: 640px) { .hs-rooms .hs-tab-go { margin-left: 0; } }
