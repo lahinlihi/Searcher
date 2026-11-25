@@ -143,35 +143,51 @@ def api_stats():
         return jsonify({'error': str(e)}), 500
 
 
-# ── 기관별 가중치 API ─────────────────────────────────────────────────────────
+# ── 발주처 가감점 API (제품 계약서 3부 22.4) ─────────────────────────────────
+# 등록하지 않은 발주처는 점수에 영향이 없다. 등록한 곳만 −30 ~ +30 을 더하거나 뺀다.
+
+def _parse_adjust(value):
+    """가감점 값을 검사한다. (값, None) 또는 (None, 오류 문구)."""
+    import math
+    import relevance
+    if value is None or isinstance(value, bool):
+        return None, '가감점을 숫자로 입력해주세요.'
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None, '가감점을 숫자로 입력해주세요.'
+    if not math.isfinite(v):
+        return None, '가감점을 숫자로 입력해주세요.'
+    if v < relevance.ADJUST_MIN or v > relevance.ADJUST_MAX:
+        return None, '가감점은 -30 ~ +30 사이여야 합니다.'
+    return v, None
+
 
 @bp.route('/api/agency-weights', methods=['GET'])
 @login_required
 def get_agency_weights():
-    """사용자의 기관별 가중치 목록 조회"""
-    weights = AgencyWeight.query.filter_by(user_id=g.user.id)\
-                .order_by(AgencyWeight.agency_name).all()
+    """사용자가 등록한 발주처 가감점 목록"""
+    weights = AgencyWeight.query.filter_by(user_id=g.user.id)                .order_by(AgencyWeight.agency_name).all()
     return jsonify([w.to_dict() for w in weights])
 
 
 @bp.route('/api/agency-weights', methods=['POST'])
 @login_required
 def add_agency_weight():
-    """기관별 가중치 등록 또는 수정"""
-    data = request.json or {}
+    """발주처 가감점 등록. 같은 이름이 있으면 값을 바꾼다."""
+    data = request.get_json(silent=True) or {}
     agency_name = (data.get('agency_name') or '').strip()
-    weight = float(data.get('weight', 5.0))
-
     if not agency_name:
         return jsonify({'error': '기관명을 입력해주세요.'}), 400
-    if weight not in (0, 2.5, 5.0, 7.5, 10.0):
-        return jsonify({'error': '가중치는 0 / 2.5 / 5 / 7.5 / 10 중 하나여야 합니다.'}), 400
+    adjust, err = _parse_adjust(data.get('adjust'))
+    if err:
+        return jsonify({'error': err}), 400
 
     existing = AgencyWeight.query.filter_by(user_id=g.user.id, agency_name=agency_name).first()
     if existing:
-        existing.weight = weight
+        existing.adjust = adjust
     else:
-        existing = AgencyWeight(user_id=g.user.id, agency_name=agency_name, weight=weight)
+        existing = AgencyWeight(user_id=g.user.id, agency_name=agency_name, weight=5.0, adjust=adjust)
         db.session.add(existing)
 
     db.session.commit()
@@ -181,13 +197,13 @@ def add_agency_weight():
 @bp.route('/api/agency-weights/<int:weight_id>', methods=['PUT'])
 @login_required
 def update_agency_weight(weight_id):
-    """기관별 가중치 수정"""
+    """발주처 가감점 수정"""
     aw = AgencyWeight.query.filter_by(id=weight_id, user_id=g.user.id).first_or_404()
-    data = request.json or {}
-    weight = float(data.get('weight', aw.weight))
-    if weight not in (0, 2.5, 5.0, 7.5, 10.0):
-        return jsonify({'error': '가중치는 0 / 2.5 / 5 / 7.5 / 10 중 하나여야 합니다.'}), 400
-    aw.weight = weight
+    data = request.get_json(silent=True) or {}
+    adjust, err = _parse_adjust(data.get('adjust'))
+    if err:
+        return jsonify({'error': err}), 400
+    aw.adjust = adjust
     db.session.commit()
     return jsonify(aw.to_dict())
 

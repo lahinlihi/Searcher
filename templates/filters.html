@@ -81,7 +81,8 @@
                     <label class="font-semibold text-sm text-gray-800">사업 유형 가중치</label>
                 </div>
                 <p class="text-xs text-gray-500 mb-3">
-                    적합도 = 키워드(45) + <strong>사업유형</strong> + 기관가중치(10) · 기본값 <strong>보통 25점</strong><br>
+                    적합도 = (키워드 + <strong>사업유형</strong>)을 100점으로 환산 · 담은 공고가 5건 이상이면 담은 공고와 닮은 정도를 절반 반영 · 발주처 가감점<br>
+                    사업유형 기본값 <strong>보통 25점</strong><br>
                     <span class="font-semibold text-blue-700">주력 45</span> · <span class="text-blue-500">선호 35</span> · 보통 25 · <span class="text-gray-400">낮음 15</span> · <span class="text-red-400">제외 0</span>
                 </p>
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-2" id="type-weights-grid">
@@ -89,15 +90,16 @@
                 </div>
             </div>
 
-            <!-- 기관별 가중치 -->
+            <!-- 발주처 가감점 -->
             <div class="mb-6 mt-6 border-t pt-6">
                 <div class="flex items-center gap-2 mb-1">
                     <span class="inline-block w-3 h-3 rounded-full bg-orange-400"></span>
-                    <label class="font-semibold text-sm text-gray-800">기관별 가중치</label>
+                    <label class="font-semibold text-sm text-gray-800">발주처 가감점</label>
                 </div>
                 <p class="text-xs text-gray-500 mb-3">
-                    기본 <strong>5점</strong>. 등록된 기관명은 매칭 시 지정 점수로 계산됩니다.<br>
-                    0점 등록 시 해당 기관 공고의 점수를 낮출 수 있습니다.
+                    등록하지 않은 발주처는 점수에 영향이 없습니다.
+                    <strong>더 신경 쓸 발주처는 가점(+)</strong>, <strong>꺼리는 발주처는 감점(−)</strong>을 넣습니다 (−30 ~ +30).<br>
+                    가점을 준 발주처의 새 공고는 대시보드 '중점 발주처'에 따로 모입니다. 감점을 준 발주처의 공고는 숨기지 않고 점수만 낮춥니다.
                 </p>
 
                 <!-- 등록 폼 -->
@@ -107,14 +109,17 @@
                                placeholder="기관명 입력 (예: 한국콘텐츠진흥원)"
                                onkeydown="if(event.key==='Enter') addAgencyWeight()">
                     </div>
-                    <div class="flex gap-1" id="agency-weight-selector">
-                        <!-- 0 / 2.5 / 5 / 7.5 / 10 버튼 -->
+                    <div class="flex items-center gap-1">
+                        <input type="number" id="agency-adjust-input" class="form-input text-sm" style="width:6.5rem"
+                               min="-30" max="30" step="5" value="20" aria-label="가감점 (−30 ~ +30)"
+                               onkeydown="if(event.key==='Enter') addAgencyWeight()">
+                        <span class="text-xs text-gray-500">점</span>
                     </div>
                     <button onclick="addAgencyWeight()" class="btn-primary text-sm px-3 py-1.5">등록</button>
                 </div>
                 <span id="agency-save-msg" class="text-xs text-green-600 hidden">저장되었습니다.</span>
 
-                <!-- 등록된 기관 목록 -->
+                <!-- 등록된 발주처 목록 -->
                 <div id="agency-weights-list" class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
                     <!-- JS로 채워짐 -->
                 </div>
@@ -519,79 +524,51 @@ async function deleteFilter(filterId) {
 
 function closeFilterModal() { document.getElementById('filter-modal').classList.add('hidden'); }
 
-// ── 기관별 가중치 ─────────────────────────────────────────────────────────────
-const AGENCY_WEIGHT_OPTIONS = [0, 2.5, 5, 7.5, 10];
-let selectedAgencyWeight = 5.0;
-
-function initAgencyWeightSelector() {
-    const container = document.getElementById('agency-weight-selector');
-    if (!container) return;
-    container.innerHTML = AGENCY_WEIGHT_OPTIONS.map(w => {
-        const isSelected = w === selectedAgencyWeight;
-        const label = w === 5.0 ? `${w} (기본)` : String(w);
-        return `<button type="button"
-            onclick="selectAgencyWeight(${w})"
-            id="awbtn-${w.toString().replace('.', '_')}"
-            class="text-xs font-semibold px-2.5 py-1 rounded border transition-colors
-                   ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'}"
-        >${label}</button>`;
-    }).join('');
-}
-
-function selectAgencyWeight(w) {
-    selectedAgencyWeight = w;
-    AGENCY_WEIGHT_OPTIONS.forEach(opt => {
-        const btn = document.getElementById(`awbtn-${opt.toString().replace('.', '_')}`);
-        if (!btn) return;
-        if (opt === w) {
-            btn.className = btn.className.replace('bg-white text-gray-600 border-gray-300 hover:border-blue-400', 'bg-blue-600 text-white border-blue-600');
-        } else {
-            btn.className = btn.className.replace('bg-blue-600 text-white border-blue-600', 'bg-white text-gray-600 border-gray-300 hover:border-blue-400');
-        }
-    });
-}
-
+// ── 발주처 가감점 ─────────────────────────────────────────────────────────────
 async function loadAgencyWeights() {
     try {
         const res = await fetch('/api/agency-weights');
         const list = await res.json();
         renderAgencyWeights(list);
-    } catch (e) { console.error('기관별 가중치 로드 실패:', e); }
+    } catch (e) { console.error('발주처 가감점 로드 실패:', e); }
 }
 
-function _agencyBadgeCls(weight) {
-    if (weight >= 10)  return 'bg-blue-700 text-white';
-    if (weight >= 7.5) return 'bg-blue-500 text-white';
-    if (weight >= 5)   return 'bg-gray-200 text-gray-700';
-    if (weight > 0)    return 'bg-gray-100 text-gray-400';
-    return 'bg-red-50 text-red-400';
+function _adjustLabel(v) {
+    if (v === null || v === undefined) return '미정';
+    if (v > 0) return '+' + v;
+    if (v < 0) return '−' + Math.abs(v);
+    return '0';
+}
+
+function _adjustStyle(v) {
+    if (v > 0) return 'background:var(--hs-ok-soft, #dcfce7);color:var(--hs-ok, #166534)';
+    if (v < 0) return 'background:var(--hs-bad-soft, #fee2e2);color:var(--hs-bad, #991b1b)';
+    return 'background:#f3f4f6;color:#6b7280';
 }
 
 function renderAgencyWeights(list) {
     const container = document.getElementById('agency-weights-list');
     if (!container) return;
     if (!list || list.length === 0) {
-        container.innerHTML = '<p class="text-xs text-gray-400 col-span-full">등록된 기관이 없습니다. 기본값(5점)이 적용됩니다.</p>';
+        container.innerHTML = '<p class="text-xs text-gray-400 col-span-full">등록된 발주처가 없습니다. 어떤 발주처도 점수를 움직이지 않습니다.</p>';
         return;
     }
     container.innerHTML = list.map(aw => {
-        const badgeCls = _agencyBadgeCls(aw.weight);
-        const opts = AGENCY_WEIGHT_OPTIONS.map(w => {
-            const active = aw.weight === w;
-            const btnCls = active
-                ? 'bg-blue-600 text-white border-blue-700 font-bold shadow-sm'
-                : 'bg-white text-gray-400 border-gray-200 hover:border-gray-400 hover:text-gray-600';
-            return `<button type="button"
-                onclick="updateAgencyWeight(${aw.id}, ${w})"
-                class="py-1.5 text-xs font-medium rounded border transition-all ${btnCls}"
-                >${w}</button>`;
-        }).join('');
+        const pending = aw.adjust === null || aw.adjust === undefined;
+        const note = pending
+            ? `<p class="text-xs text-gray-400 mt-1">예전 값 ${aw.weight}점 — 아직 가감점을 정하지 않아 점수에 영향이 없습니다.</p>` : '';
         return `<div class="p-2.5 border rounded-lg bg-white shadow-sm relative">
             <div class="flex items-start justify-between mb-1 pr-5">
                 <span class="text-sm font-bold text-gray-900 leading-snug break-all">${escHtml(aw.agency_name)}</span>
-                <span class="text-sm font-bold px-2 py-0.5 rounded-full whitespace-nowrap ml-1 shrink-0 ${badgeCls}">${aw.weight}점</span>
+                <span class="text-sm font-bold px-2 py-0.5 rounded-full whitespace-nowrap ml-1 shrink-0" style="${_adjustStyle(aw.adjust)}">${_adjustLabel(aw.adjust)}</span>
             </div>
-            <div class="grid grid-cols-5 gap-1 mt-2">${opts}</div>
+            <div class="flex items-center gap-1 mt-2">
+                <input type="number" min="-30" max="30" step="5" value="${pending ? '' : aw.adjust}"
+                       class="form-input text-sm" style="width:5.5rem" aria-label="${escHtml(aw.agency_name)} 가감점"
+                       onchange="updateAgencyWeight(${aw.id}, this.value)">
+                <span class="text-xs text-gray-500">점</span>
+            </div>
+            ${note}
             <button onclick="deleteAgencyWeight(${aw.id})"
                 class="absolute top-2 right-2 text-gray-300 hover:text-red-500 transition-colors text-lg leading-none"
                 title="삭제">×</button>
@@ -599,15 +576,26 @@ function renderAgencyWeights(list) {
     }).join('');
 }
 
+function _readAdjust(raw) {
+    const v = Number(raw);
+    if (raw === '' || raw === null || !Number.isFinite(v) || v < -30 || v > 30) {
+        alert('가감점은 -30 ~ +30 사이의 숫자로 넣어 주세요.');
+        return null;
+    }
+    return v;
+}
+
 async function addAgencyWeight() {
     const nameInput = document.getElementById('agency-name-input');
     const agency_name = (nameInput.value || '').trim();
     if (!agency_name) { nameInput.focus(); return; }
+    const adjust = _readAdjust(document.getElementById('agency-adjust-input').value);
+    if (adjust === null) return;
 
     const res = await fetch('/api/agency-weights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agency_name, weight: selectedAgencyWeight })
+        body: JSON.stringify({ agency_name, adjust })
     });
     if (res.ok) {
         nameInput.value = '';
@@ -616,17 +604,24 @@ async function addAgencyWeight() {
         setTimeout(() => msg.classList.add('hidden'), 2000);
         loadAgencyWeights();
     } else {
-        const err = await res.json();
+        const err = await res.json().catch(() => ({}));
         alert(err.error || '등록 실패');
     }
 }
 
-async function updateAgencyWeight(id, weight) {
-    await fetch(`/api/agency-weights/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ weight })
-    });
+async function updateAgencyWeight(id, raw) {
+    const adjust = _readAdjust(raw);
+    if (adjust !== null) {
+        const res = await fetch(`/api/agency-weights/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ adjust })
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.error || '저장 실패');
+        }
+    }
     loadAgencyWeights();
 }
 
@@ -639,7 +634,6 @@ async function deleteAgencyWeight(id) {
 document.addEventListener('DOMContentLoaded', () => {
     loadInterestKeywords();
     loadFilters();
-    initAgencyWeightSelector();
     loadAgencyWeights();
 });
 </script>
