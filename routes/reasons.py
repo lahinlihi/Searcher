@@ -91,3 +91,13 @@ def api_reason_rule_update(rule_id):
         return jsonify(reasons.rule_dict(rule))
     except Exception as e:
         return _error(e)
+
+
+@bp.route('/api/reasons/memo-backlog')
+@login_required
+def api_reason_memo_backlog():
+    """이유 칩을 붙일 수 있는 내 예전 메모."""
+    try:
+        return jsonify({'items': reasons.memo_backlog(g.user.id)})
+    except Exception as e:
+        return _error(e)

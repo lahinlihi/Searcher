@@ -139,6 +139,20 @@ def test_candidate_counts_live_tenders(app, make_user, make_tender, make_prefs):
     assert c['live_count'] == 2 and {e['id'] for e in c['live_examples']} == {t.id for t in live}
 
 
+def test_candidate_dropped_when_word_is_too_common_among_live_tenders(app, make_user, make_tender, make_prefs, monkeypatch):
+    """시험 서버에서 본 문제: '위탁용역' 같은 흔한 낱말이 후보로 올라와 진행 중 공고 92건에 걸렸다.
+    한 번에 너무 많은 공고에 표시가 붙는 낱말은 겨냥한 규칙이 아니다 — 후보로 올리지 않는다."""
+    u = make_user(); make_prefs(u, interest=['교육'])
+    old = datetime.now() - timedelta(days=40)
+    _tag(u, make_tender, TRIPS, 'license', announced_date=old, deadline_date=old + timedelta(days=5))
+    for i in range(3):
+        make_tender(title=f'공무원 국외연수 {i}')
+    assert len(RS.candidates(u.id)) == 1                    # 진행 중 3건 — 문턱 아래
+    monkeypatch.setattr(RS, 'GENERIC_LIVE_MAX', 2)
+    assert RS.candidates(u.id) == []                        # 문턱을 넘으면 후보가 아니다
+    assert '위탁용역' in RS.STOP_WORDS
+
+
 def test_candidate_hidden_once_rule_exists(app, make_user, make_tender, make_prefs):
     from database import ReasonRule
     u = make_user(); make_prefs(u, interest=['교육'])

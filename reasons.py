@@ -29,10 +29,11 @@ DISMISS_GROUPS = ('ineligible', 'other')      # 제외할 때 받을 수 있는 
 
 RULE_REASONS = tuple(c for c, v in REASONS.items() if v['group'] == 'ineligible') + ('field',)   # 규칙을 만들 수 있는 이유
 MIN_EVIDENCE = 3                               # 같은 이유를 준 공고가 이만큼 모여야 규칙 후보가 된다
+GENERIC_LIVE_MAX = 30                          # 진행 중 공고가 이보다 많이 걸리는 낱말은 후보로 올리지 않는다 (겨냥한 규칙이 아니다)
 _STRIP_CHARS = (' ', '·', '/', '-', '~', '(', ')', '[', ']')    # routes.tenders._TITLE_SEARCH_STRIP_CHARS 와 같다 (제목 검색과 같은 맞춤)
 STOP_WORDS = frozenset('''용역 사업 운영 위탁 지원 공고 입찰 재공고 긴급 모집 추진 계획 관련 사전규격 제안요청서 년 년도 차
     위한 통한 대한 기반 구축 개발 수립 수행 시행 선정 안내 변경 정정 취소 관리 프로그램 과정 제안서 평가 계약 협상 의한 등 및 외
-    제출 참여 참가'''.split())
+    제출 참여 참가 위탁용역 용역사업 위탁운영 운영용역 지원사업'''.split())
 _NUMBERISH = re.compile(r'^(제)?\d+(년|년도|차|단계|회|기|호|급|개월|일|억|만원|건)?$')
 
 
@@ -139,7 +140,7 @@ def candidates(user_id, now=None):
     """규칙 후보. 같은 이유를 준 공고 MIN_EVIDENCE 건 이상의 제목에 공통으로 든 낱말.
 
     버리는 경우: 반례가 있다(담았거나 '자격 가능'으로 남긴 공고에 그 낱말이 있다), 관심 키워드와 겹친다,
-    같은 규칙이 이미 있다(켬·끔·거절 모두). 근거가 많은 순으로 돌려준다.
+    같은 규칙이 이미 있다(켬·끔·거절 모두), 진행 중 공고가 GENERIC_LIVE_MAX 건보다 많이 걸린다. 근거가 많은 순으로 돌려준다.
     """
     from datetime import datetime
     import scoring
@@ -178,11 +179,14 @@ def candidates(user_id, now=None):
             if (reason, (w,)) in known:
                 continue
             live = _live_matches([word], now)
+            if len(live) > GENERIC_LIVE_MAX:
+                continue        # '위탁용역'처럼 흔한 낱말 (2026-11-25 사본: 근거 3건인데 진행 중 92건에 걸렸다)
             out.append({'reason': reason, 'label': REASONS[reason]['label'], 'words': [word],
                         'evidence': [{'id': tid, 'title': title} for tid, title in evidence],
                         'live_count': len(live),
                         'live_examples': [{'id': t[0], 'title': t[1]} for t in live[:3]]})
-    out.sort(key=lambda c: (-len(c['evidence']), _ORDER[c['reason']], c['words']))
+    # 근거가 많은 순, 같으면 더 좁게 걸리는(진행 중 건수가 적은) 낱말 먼저
+    out.sort(key=lambda c: (-len(c['evidence']), c['live_count'], _ORDER[c['reason']], c['words']))
     return out
 
 
@@ -313,3 +317,29 @@ def attach_flags(user_id, dicts):
     found = flags(user_id, {d.get('id'): d.get('title') for d in dicts}) if dicts else {}
     for d in dicts:
         d['eligibility_flags'] = found.get(d.get('id'), [])
+
+
+# ── 예전 메모 되짚기 (5부 36.5) ──────────────────────────────────────────────
+MEMO_HINTS = ('불가', '만 가능', '만가능', '미달', '미충족', '상이', '맞지 않', '대상')
+
+
+def memo_backlog(user_id, limit=50):
+    """내가 쓴 메모 가운데 검토 결과로 보이는 것(MEMO_HINTS)이면서, 그 공고에 내 이유가 아직 없는 것. 최신순.
+    칩은 사용자가 고른다 — 여기서는 붙일 만한 메모를 찾아 줄 뿐이다."""
+    from database import db, Tender, TenderMemo, TenderReason
+    done = {r[0] for r in TenderReason.query.filter(TenderReason.user_id == user_id)
+            .with_entities(TenderReason.tender_id).distinct().all()}
+    hint = db.or_(*[TenderMemo.content.contains(h) for h in MEMO_HINTS])
+    rows = (db.session.query(TenderMemo, Tender.title).join(Tender, Tender.id == TenderMemo.tender_id)
+            .filter(TenderMemo.user_id == user_id, hint).order_by(TenderMemo.created_at.desc()).all())
+    out, seen = [], set()
+    for memo, title in rows:
+        if memo.tender_id in done or memo.tender_id in seen:
+            continue
+        seen.add(memo.tender_id)
+        out.append({'tender_id': memo.tender_id, 'title': title or '',
+                    'memo': ' '.join((memo.content or '').split())[:120],
+                    'created_at': memo.created_at.isoformat() if memo.created_at else None})
+        if len(out) >= limit:
+            break
+    return out

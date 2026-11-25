@@ -114,6 +114,13 @@ def test_detail_has_reason_chips_and_flag_line(full_app, client, login, make_use
     assert 'id="reason-chips"' in html and '자격 확인 필요:' not in html      # 안내 문구에는 이 말이 있고, 표시 줄은 없다
 
 
+def test_filters_page_has_reason_rules_section(full_app, client, login, make_user):
+    _, html = _get(client, login, make_user(role='admin'), '/filters')
+    for i in ('id="reason-rules"', 'id="reason-candidates"', 'id="reason-rule-list"', 'id="reason-memo-backlog"'):
+        assert i in html, i
+    assert '표시만 붙고 점수와 순서는 바뀌지 않습니다' in html and '내 화면에만 적용' in html
+
+
 def test_cases_page_has_no_sort_switch(full_app, client, login, make_user):
     _, html = _get(client, login, make_user(role='admin'), '/cases')
     assert 'id="sort-toggle"' not in html

@@ -173,6 +173,31 @@ def test_bookmark_and_similar_lists_carry_flags(reasons_app, client, login, make
     assert sim['enabled'] is False and sim['items'] == []          # 꺼져 있어도 오류 없이 응답한다
 
 
+# ── 6단계: 예전 메모 되짚기 ──────────────────────────────────────────────────
+
+def test_memo_backlog_lists_only_my_hinted_memos_without_reasons(me, client, login, make_user, make_tender):
+    from database import TenderMemo
+    other = make_user()
+    a = make_tender(title='국외연수 운영')
+    b = make_tender(title='교육 운영')
+    c = make_tender(title='남이 검토한 공고')
+    d = make_tender(title='소상공인 지원')
+    db.session.add_all([
+        TenderMemo(tender_id=a.id, user_id=me.id, content='참가자격 불가 : 여행업 등록 업체만 가능'),
+        TenderMemo(tender_id=b.id, user_id=me.id, content='검토 중입니다'),
+        TenderMemo(tender_id=c.id, user_id=other.id, content='참가자격 불가 : 지역 제한'),
+        TenderMemo(tender_id=d.id, user_id=me.id, content='소기업만 가능\n' + '가' * 300),
+    ])
+    db.session.commit()
+    items = client.get('/api/reasons/memo-backlog').get_json()['items']
+    assert {i['tender_id'] for i in items} == {a.id, d.id}
+    one = next(i for i in items if i['tender_id'] == a.id)
+    assert one['title'] == '국외연수 운영' and one['memo'].startswith('참가자격 불가')
+    assert all(len(i['memo']) <= 120 for i in items)
+    client.put(f'/api/tenders/{a.id}/reasons', json={'reasons': ['license']})       # 이유를 붙이면 목록에서 빠진다
+    assert {i['tender_id'] for i in client.get('/api/reasons/memo-backlog').get_json()['items']} == {d.id}
+
+
 def test_reason_api_requires_login(reasons_app, client, make_tender):
     t = make_tender()
     assert client.get('/api/reasons/options').status_code == 401
