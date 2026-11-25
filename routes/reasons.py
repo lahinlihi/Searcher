@@ -42,3 +42,52 @@ def api_tender_reasons(tender_id):
         return jsonify({'reasons': reasons.get_reasons(g.user.id, [tender_id]).get(tender_id, [])})
     except Exception as e:
         return _error(e)
+
+
+# ── 자격 확인 규칙 ───────────────────────────────────────────────────────────
+
+@bp.route('/api/reason-rules', methods=['GET', 'POST'])
+@login_required
+def api_reason_rules():
+    """GET: 내 규칙과 규칙 후보. POST: 후보를 규칙으로 켠다 (사용자가 [표시하기]를 눌렀을 때만)."""
+    try:
+        if request.method == 'POST':
+            body = _body() or {}
+            try:
+                rule = reasons.add_rule(g.user.id, body.get('reason'), body.get('words'))
+            except ValueError as e:
+                return jsonify({'error': str(e)}), 400
+            return jsonify(reasons.rule_dict(rule))
+        return jsonify({'rules': reasons.list_rules(g.user.id), 'candidates': reasons.candidates(g.user.id)})
+    except Exception as e:
+        return _error(e)
+
+
+@bp.route('/api/reason-rules/reject', methods=['POST'])
+@login_required
+def api_reason_rule_reject():
+    try:
+        body = _body() or {}
+        try:
+            reasons.reject(g.user.id, body.get('reason'), body.get('words'))
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+        return jsonify({'rejected': True})
+    except Exception as e:
+        return _error(e)
+
+
+@bp.route('/api/reason-rules/<int:rule_id>', methods=['PUT'])
+@login_required
+def api_reason_rule_update(rule_id):
+    try:
+        body = _body() or {}
+        try:
+            rule = reasons.update_rule(g.user.id, rule_id, words=body.get('words'), status=body.get('status'))
+        except LookupError as e:
+            return jsonify({'error': str(e)}), 404
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+        return jsonify(reasons.rule_dict(rule))
+    except Exception as e:
+        return _error(e)

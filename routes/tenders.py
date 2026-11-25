@@ -144,6 +144,7 @@ def _scored_dict(tender, prefs, result):
     return d
 
 
+SECTION_NAMES = ('pre_tenders', 'urgent_tenders', 'recent_tenders')
 DASHBOARD_TOP_N = 15   # 대시보드 탭마다 보여 주는 건수 — 한 번에 볼 '진짜 중요한 것'만 (쪽 넘기기 없음)
 
 
@@ -241,6 +242,8 @@ def api_dashboard():
         summary['keyword_match'] = matched   # 관심 설정에 걸린 전체 건수 (배지용)
         response_data['include_keywords'] = include_keywords
         response_data['exclude_keywords'] = prefs['exclude_keywords']
+        import reasons          # 자격 확인 표시 (5부) — 순서와 점수가 정해진 뒤에 붙인다
+        reasons.attach_flags(uid, [d for name in SECTION_NAMES for d in response_data[name]])
         return jsonify(response_data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -289,6 +292,8 @@ def api_key_agencies():
             d = _scored_dict(t, prefs, scores[t.id])
             d['matched_agency'] = relevance.matched_agency_name(t.agency, t.demand_agency, keys)
             items.append(d)
+        import reasons
+        reasons.attach_flags(uid, items)
         return jsonify({'agencies': keys, 'items': items})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -343,6 +348,8 @@ def api_viewed_recent():
             d = _scored_dict(tender, prefs, scores[tender.id])
             d['viewed_at'] = view.viewed_at.isoformat(timespec='seconds') + 'Z'
             items.append(d)
+        import reasons
+        reasons.attach_flags(uid, items)
         return jsonify({'items': items, 'days': RECENT_VIEW_DAYS})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -584,6 +591,8 @@ def api_tenders():
             d['memo_count'] = memo_counts.get(t.id, 0)
             result.append(d)
 
+        import reasons
+        reasons.attach_flags(uid, result)
         return jsonify({
             'tenders': result,
             'total': total,

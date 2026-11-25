@@ -56,6 +56,8 @@ def api_bookmarks():
             d['bookmarked_at'] = b.created_at.isoformat()
             d['memo_count'] = _bm_memo_counts.get(tender.id, 0)
             result.append(d)
+        import reasons
+        reasons.attach_flags(uid, result)
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500

@@ -147,3 +147,123 @@ def test_candidate_hidden_once_rule_exists(app, make_user, make_tender, make_pre
         ReasonRule.query.delete()
         db.session.add(ReasonRule(user_id=u.id, reason='license', words='["국외연수"]', status=status)); db.session.commit()
         assert RS.candidates(u.id) == [], status
+
+
+# ── 4단계: 규칙·표시·반례 ────────────────────────────────────────────────────
+
+@pytest.mark.parametrize('bad', [[], [''], [' '], ['시'], ['·'], ['국외연수', '-'], 'abc', None, [3]])
+def test_clean_words_rejects_empty_and_one_char(bad):
+    with pytest.raises(ValueError):
+        RS.clean_words(bad)
+
+
+def test_clean_words_trims_and_dedupes():
+    assert RS.clean_words([' 국외연수 ', '국외 연수', '참가기업']) == ['국외연수', '참가기업']
+
+
+def test_rule_matches_ignores_spacing_and_case():
+    assert RS.rule_matches('2027 교직원 국외 연수 운영', ['국외연수'])
+    assert RS.rule_matches('AI·빅데이터 인재양성', ['ai 빅데이터'])
+    assert RS.rule_matches('참가기업 모집 공고 (국외연수)', ['국외연수', '참가기업'])
+    assert not RS.rule_matches('국외연수 운영', ['국외연수', '참가기업'])        # 모두 들어 있어야 한다
+    assert not RS.rule_matches(None, ['국외연수'])
+
+
+def test_add_rule_validates_reason_and_words(app, make_user):
+    u = make_user()
+    for reason in ('budget', 'etc', 'like_field', 'eligible', 'nope'):
+        with pytest.raises(ValueError):
+            RS.add_rule(u.id, reason, ['국외연수'])
+    with pytest.raises(ValueError):
+        RS.add_rule(u.id, 'license', ['시'])
+    assert RS.list_rules(u.id) == []
+
+
+def test_flags_only_for_on_rules(app, make_user, make_tender):
+    u = make_user()
+    t = make_tender(title='교직원 국외 연수 운영')
+    titles = {t.id: t.title}
+    rule = RS.add_rule(u.id, 'license', ['국외연수'])
+    assert RS.flags(u.id, titles) == {t.id: [{'reason': 'license', 'label': '업종·등록 요건', 'rule_id': rule.id}]}
+    RS.update_rule(u.id, rule.id, status='off')
+    assert RS.flags(u.id, titles) == {}
+    RS.reject(u.id, 'size', ['교직원'])
+    assert RS.flags(u.id, titles) == {}
+
+
+def test_flags_dedupe_same_reason_and_keep_order(app, make_user, make_tender):
+    u = make_user()
+    t = make_tender(title='소상공인 국외연수 해외탐방 지원')
+    first = RS.add_rule(u.id, 'license', ['국외연수'])
+    RS.add_rule(u.id, 'license', ['해외탐방'])
+    RS.add_rule(u.id, 'size', ['소상공인'])
+    got = RS.flags(u.id, {t.id: t.title})[t.id]
+    assert [f['reason'] for f in got] == ['size', 'license']           # 이유마다 하나, 정해진 순서
+    assert got[1]['rule_id'] == first.id                               # 같은 이유는 먼저 만든 규칙
+
+
+def test_flags_are_per_user(app, make_user, make_tender):
+    a, b = make_user(), make_user()
+    t = make_tender(title='국외연수 운영')
+    RS.add_rule(a.id, 'license', ['국외연수'])
+    assert RS.flags(b.id, {t.id: t.title}) == {}
+    with pytest.raises(LookupError):
+        RS.update_rule(b.id, RS.list_rules(a.id)[0]['id'], status='off')
+
+
+def test_counterexample_listed_when_flagged_tender_bookmarked(app, make_user, make_tender):
+    u = make_user()
+    RS.add_rule(u.id, 'license', ['국외연수'])
+    kept, ok, plain = (make_tender(title=f'국외연수 {x}') for x in ('가', '나', '다'))
+    db.session.add(Bookmark(user_id=u.id, tender_id=kept.id)); db.session.commit()
+    RS.set_reasons(u.id, ok.id, ['eligible'])
+    rule = RS.list_rules(u.id)[0]
+    assert {c['id'] for c in rule['counterexamples']} == {kept.id, ok.id}
+    assert rule['words'] == ['국외연수'] and rule['status'] == 'on' and rule['label'] == '업종·등록 요건'
+
+
+def test_rule_survives_evidence_removal(app, make_user, make_tender, make_prefs):
+    u = make_user(); make_prefs(u, interest=['교육'])
+    ts = _tag(u, make_tender, TRIPS, 'license')
+    RS.add_rule(u.id, 'license', ['국외연수'])
+    for t in ts:
+        RS.set_reasons(u.id, t.id, [])
+    assert len(RS.list_rules(u.id)) == 1
+    assert RS.flags(u.id, {ts[0].id: ts[0].title}) != {}
+
+
+def test_rejected_candidate_never_returns_and_is_not_listed(app, make_user, make_tender, make_prefs):
+    u = make_user(); make_prefs(u, interest=['교육'])
+    _tag(u, make_tender, TRIPS, 'license')
+    RS.reject(u.id, 'license', ['국외연수'])
+    assert RS.candidates(u.id) == [] and RS.list_rules(u.id) == []
+
+
+def test_add_rule_revives_same_rule_instead_of_duplicating(app, make_user):
+    from database import ReasonRule
+    u = make_user()
+    r1 = RS.add_rule(u.id, 'license', ['국외연수'])
+    RS.update_rule(u.id, r1.id, status='off')
+    r2 = RS.add_rule(u.id, 'license', ['국외 연수'])
+    assert r2.id == r1.id and r2.status == 'on' and ReasonRule.query.count() == 1
+
+
+def test_update_rule_words(app, make_user, make_tender):
+    u = make_user()
+    r = RS.add_rule(u.id, 'license', ['국외연수'])
+    RS.update_rule(u.id, r.id, words=['해외연수'])
+    t = make_tender(title='해외연수 운영')
+    assert RS.flags(u.id, {t.id: t.title}) != {}
+    with pytest.raises(ValueError):
+        RS.update_rule(u.id, r.id, words=['시'])
+    with pytest.raises(ValueError):
+        RS.update_rule(u.id, r.id, status='rejected')
+
+
+def test_attach_flags_fills_every_dict(app, make_user, make_tender):
+    u = make_user()
+    RS.add_rule(u.id, 'license', ['국외연수'])
+    dicts = [{'id': 1, 'title': '국외연수 운영'}, {'id': 2, 'title': '교육 운영'}, {'id': 3, 'title': None}]
+    RS.attach_flags(u.id, dicts)
+    assert [bool(d['eligibility_flags']) for d in dicts] == [True, False, False]
+    assert dicts[0]['eligibility_flags'][0]['label'] == '업종·등록 요건'

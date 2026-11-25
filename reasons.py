@@ -184,3 +184,132 @@ def candidates(user_id, now=None):
                         'live_examples': [{'id': t[0], 'title': t[1]} for t in live[:3]]})
     out.sort(key=lambda c: (-len(c['evidence']), _ORDER[c['reason']], c['words']))
     return out
+
+
+# ── 규칙·표시·반례 (5부 36.3, 36.4) ──────────────────────────────────────────
+
+def clean_words(words):
+    """규칙의 낱말을 다듬는다. 맞춤한 뒤 두 글자 미만이면 거절한다 — 한 글자는 거의 모든 공고에 걸린다."""
+    if not isinstance(words, (list, tuple)) or not words:
+        raise ValueError('규칙의 낱말을 하나 이상 넣어 주세요.')
+    out, seen = [], set()
+    for w in words:
+        if not isinstance(w, str) or len(norm(w)) < 2:
+            raise ValueError('규칙의 낱말은 두 글자 이상이어야 합니다.')
+        if norm(w) not in seen:
+            seen.add(norm(w))
+            out.append(w.strip())
+    return out
+
+
+def rule_matches(title, words):
+    """제목에 낱말이 모두 들어 있으면 참 (공백·가운뎃점·대소문자 무시)."""
+    n = norm(title)
+    return bool(n) and bool(words) and all(norm(w) in n for w in words)
+
+
+def _find_rule(user_id, reason, words):
+    from database import ReasonRule
+    key = _words_key(words)
+    for r in ReasonRule.query.filter_by(user_id=user_id, reason=reason).all():
+        if _words_key(json.loads(r.words)) == key:
+            return r
+    return None
+
+
+def _save_rule(user_id, reason, words, status):
+    from database import db, ReasonRule
+    if reason not in RULE_REASONS:
+        raise ValueError('이 이유로는 규칙을 만들 수 없습니다.')
+    words = clean_words(words)
+    rule = _find_rule(user_id, reason, words)
+    if rule is None:
+        rule = ReasonRule(user_id=user_id, reason=reason, words=json.dumps(words, ensure_ascii=False), status=status)
+        db.session.add(rule)
+    else:
+        rule.status = status
+    db.session.commit()
+    return rule
+
+
+def add_rule(user_id, reason, words):
+    """규칙을 켠다. 같은 규칙이 이미 있으면(꺼 둔 것, 거절한 것 포함) 그것을 다시 켠다."""
+    return _save_rule(user_id, reason, words, 'on')
+
+
+def reject(user_id, reason, words):
+    """후보를 거절한다 — 다시 후보로 올리지 않는다."""
+    return _save_rule(user_id, reason, words, 'rejected')
+
+
+def update_rule(user_id, rule_id, words=None, status=None):
+    from database import db, ReasonRule
+    rule = ReasonRule.query.filter_by(id=rule_id, user_id=user_id).first()
+    if rule is None or rule.status == 'rejected':
+        raise LookupError('규칙을 찾을 수 없습니다.')
+    if words is None and status is None:
+        raise ValueError('바꿀 내용이 없습니다.')
+    if status is not None and status not in ('on', 'off'):
+        raise ValueError("상태는 on 또는 off 여야 합니다.")
+    if words is not None:
+        rule.words = json.dumps(clean_words(words), ensure_ascii=False)
+    if status is not None:
+        rule.status = status
+    db.session.commit()
+    return rule
+
+
+def rule_dict(rule, counter=None):
+    words = json.loads(rule.words)
+    d = {'id': rule.id, 'reason': rule.reason, 'label': REASONS[rule.reason]['label'], 'words': words, 'status': rule.status}
+    if counter is not None:
+        d['counterexamples'] = [{'id': tid, 'title': title} for tid, (title, n) in sorted(counter.items())
+                                if all(norm(w) in n for w in words)]
+    return d
+
+
+def list_rules(user_id):
+    """켜 둔·꺼 둔 규칙 (거절한 후보는 빼고). 반례 = 규칙에 걸리는데 담았거나 '자격 가능'으로 남긴 공고."""
+    from database import ReasonRule
+    rules = (ReasonRule.query.filter(ReasonRule.user_id == user_id, ReasonRule.status.in_(('on', 'off')))
+             .order_by(ReasonRule.id).all())
+    if not rules:
+        return []
+    counter = _counter_titles(user_id)
+    return [rule_dict(r, counter) for r in rules]
+
+
+def _on_rules(user_id):
+    from database import ReasonRule
+    if user_id is None:
+        return []
+    rules = ReasonRule.query.filter_by(user_id=user_id, status='on').order_by(ReasonRule.id).all()
+    return [(r.id, r.reason, [norm(w) for w in json.loads(r.words)]) for r in rules if r.reason in REASONS]
+
+
+def flags(user_id, titles):
+    """{공고 id: [{'reason', 'label', 'rule_id'}]} — 켜 둔 규칙에 걸린 공고만. 같은 이유는 먼저 만든 규칙 하나만."""
+    rules = _on_rules(user_id)
+    if not rules:
+        return {}
+    out = {}
+    for tid, title in titles.items():
+        n = norm(title)
+        if not n:
+            continue
+        hit = {}
+        for rid, reason, words in rules:
+            if reason not in hit and words and all(w in n for w in words):
+                hit[reason] = rid
+        if hit:
+            out[tid] = [{'reason': r, 'label': REASONS[r]['label'], 'rule_id': hit[r]} for r in sorted(hit, key=_ORDER.get)]
+    return out
+
+
+def attach_flags(user_id, dicts):
+    """공고 dict 목록의 각 항목에 eligibility_flags 를 넣는다 (걸린 것이 없으면 빈 목록).
+    표시만 붙인다 — 적합도와 순서는 건드리지 않는다."""
+    dicts = [d for d in dicts if isinstance(d, dict)]
+    found = flags(user_id, {d.get('id'): d.get('title') for d in dicts}) if dicts else {}
+    for d in dicts:
+        d['eligibility_flags'] = found.get(d.get('id'), [])

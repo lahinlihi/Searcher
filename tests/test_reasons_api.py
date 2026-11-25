@@ -93,6 +93,86 @@ def test_options_endpoint(me, client):
     assert body['dismiss_groups'] == ['ineligible', 'other']
 
 
+# ── 4단계: 규칙 API 와 목록의 표시 ───────────────────────────────────────────
+
+def _urgent(client):
+    return client.get('/api/dashboard').get_json()['urgent_tenders']
+
+
+def test_flags_do_not_change_score_or_order(me, client, make_tender):
+    for i, title in enumerate(['교육 국외연수 운영 용역', '교육 운영 용역', '교육 자료 국외연수']):
+        make_tender(title=title, tender_number=f'F{i:07d}')
+    before = _urgent(client)
+    assert all(x['eligibility_flags'] == [] for x in before)
+    r = client.post('/api/reason-rules', json={'reason': 'license', 'words': ['국외연수']})
+    assert r.status_code == 200 and r.get_json()['status'] == 'on'
+    after = _urgent(client)
+    assert [(x['id'], x['relevance_score']) for x in after] == [(x['id'], x['relevance_score']) for x in before]
+    assert [bool(x['eligibility_flags']) for x in after] == ['국외연수' in x['title'] for x in after]
+    assert sum(bool(x['eligibility_flags']) for x in after) == 2
+
+
+def test_api_rules_crud_and_isolation(me, client, login, make_user, make_tender):
+    t = make_tender(title='교육 국외연수 운영')
+    rid = client.post('/api/reason-rules', json={'reason': 'license', 'words': ['국외연수']}).get_json()['id']
+    body = client.get('/api/reason-rules').get_json()
+    assert [r['id'] for r in body['rules']] == [rid] and body['candidates'] == []
+    assert client.put(f'/api/reason-rules/{rid}', json={'status': 'off'}).get_json()['status'] == 'off'
+    assert all(x['eligibility_flags'] == [] for x in _urgent(client))
+    assert client.put(f'/api/reason-rules/{rid}', json={'status': 'on', 'words': ['국외']}).get_json()['words'] == ['국외']
+    for bad in ({'status': 'rejected'}, {'words': ['시']}, {'words': []}, {}):
+        assert client.put(f'/api/reason-rules/{rid}', json=bad).status_code == 400, bad
+    for bad in ({'reason': 'etc', 'words': ['국외연수']}, {'reason': 'license', 'words': ['시']}, {'reason': 'license'}, ['x']):
+        assert client.post('/api/reason-rules', json=bad).status_code == 400, bad
+    login(make_user())
+    assert client.get('/api/reason-rules').get_json()['rules'] == []
+    assert client.put(f'/api/reason-rules/{rid}', json={'status': 'off'}).status_code == 404
+    assert all(x['eligibility_flags'] == [] for x in client.get('/api/tenders').get_json()['tenders'])
+
+
+def test_api_candidates_and_reject(me, client, make_tender):
+    for title in ('6급 핵심인재 국외연수', '담당교원 국외연수', '우수강사 국외연수'):
+        t = make_tender(title=title)
+        client.put(f'/api/tenders/{t.id}/reasons', json={'reasons': ['license']})
+    cands = client.get('/api/reason-rules').get_json()['candidates']
+    assert [(c['reason'], c['words'], len(c['evidence'])) for c in cands] == [('license', ['국외연수'], 3)]
+    assert client.post('/api/reason-rules/reject', json={'reason': 'license', 'words': ['국외연수']}).get_json() == {'rejected': True}
+    body = client.get('/api/reason-rules').get_json()
+    assert body['candidates'] == [] and body['rules'] == []
+
+
+def test_every_list_api_carries_flags(me, client, make_tender, make_prefs):
+    from datetime import datetime
+    from database import AgencyWeight, Bookmark, TenderView
+    client.post('/api/reason-rules', json={'reason': 'license', 'words': ['국외연수']})
+    t = make_tender(title='교육 국외연수 운영', agency='중점기관')
+    seen = make_tender(title='교육 국외연수 과정', agency='중점기관', tender_number='SEEN0001')
+    kept = make_tender(title='교육 국외연수 캠프', tender_number='KEPT0001')
+    db.session.add_all([AgencyWeight(user_id=me.id, agency_name='중점기관', mark='key'),
+                        TenderView(user_id=me.id, tender_id=seen.id, viewed_at=datetime.utcnow()),
+                        Bookmark(user_id=me.id, tender_id=kept.id)])
+    db.session.commit()
+    flagged = lambda items, tid: next(x for x in items if x['id'] == tid)['eligibility_flags'][0]['reason']
+    assert flagged(_urgent(client), t.id) == 'license'
+    assert flagged(client.get('/api/dashboard/key-agencies').get_json()['items'], t.id) == 'license'
+    assert flagged(client.get('/api/tenders?keyword=국외연수').get_json()['tenders'], t.id) == 'license'
+    assert flagged(client.get('/api/viewed/recent').get_json()['items'], seen.id) == 'license'
+
+
+def test_bookmark_and_similar_lists_carry_flags(reasons_app, client, login, make_user, make_prefs, make_tender, fake_model):
+    from routes.bookmarks import bp as bookmarks_bp
+    from routes.cases import bp as cases_bp
+    from database import Bookmark
+    reasons_app.register_blueprint(bookmarks_bp); reasons_app.register_blueprint(cases_bp)
+    u = make_user(); make_prefs(u, interest=['교육']); login(u)
+    client.post('/api/reason-rules', json={'reason': 'license', 'words': ['국외연수']})
+    kept = make_tender(title='교육 국외연수 캠프')
+    db.session.add(Bookmark(user_id=u.id, tender_id=kept.id)); db.session.commit()
+    assert client.get('/api/bookmarks').get_json()[0]['eligibility_flags'][0]['reason'] == 'license'
+    sim = client.get('/api/cases/similar').get_json()
+    assert sim['enabled'] is False and sim['items'] == []          # 꺼져 있어도 오류 없이 응답한다
+
+
 def test_reason_api_requires_login(reasons_app, client, make_tender):
     t = make_tender()
     assert client.get('/api/reasons/options').status_code == 401
