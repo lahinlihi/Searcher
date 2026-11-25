@@ -12,6 +12,7 @@ CASE_SIM_HI = 0.80       # 이 값이면 100
 CASE_MIX = 0.5           # 사례 점수가 차지하는 몫
 ADJUST_MIN = -30.0
 ADJUST_MAX = 30.0
+VEC_CHUNK = 2000         # 사례 점수를 낼 때 한 번에 읽는 벡터 수
 
 
 def type_max(type_weights):
@@ -121,21 +122,28 @@ class Scorer:
         import numpy as np
         import case_scoring
         import tender_vectors
+        pos = {t.id: j for j, t in enumerate(self._good)}
+        out = {}
+
+        def run(conn):
+            # 검색은 조건에 맞는 공고를 전부 점수 낸다(수만 건일 수 있다) — 벡터를 한꺼번에 쌓지 않고 나눠 읽는다
+            for k in range(0, len(tenders), VEC_CHUNK):
+                chunk = tenders[k:k + VEC_CHUNK]
+                vecs = tender_vectors.load(conn, [t.id for t in chunk])
+                cands = [t for t in chunk if t.id in vecs]
+                if not cands:
+                    continue
+                C = np.stack([vecs[t.id] for t in cands]).astype(np.float32)
+                sims, nearest = case_scoring.knn_scores(C, self._G, exclude=[pos.get(t.id, -1) for t in cands])
+                for t, s, j in zip(cands, sims, nearest):
+                    if j >= 0 and np.isfinite(s):
+                        out[t.id] = (round(case_to_100(float(s)), 1), self._good[int(j)])
+
         try:
-            vecs = self._with_conn(lambda c: tender_vectors.load(c, [t.id for t in tenders]))
-            cands = [t for t in tenders if t.id in vecs]
-            if not cands:
-                return {}
-            C = np.stack([vecs[t.id] for t in cands]).astype(np.float32)
-            pos = {t.id: j for j, t in enumerate(self._good)}
-            sims, nearest = case_scoring.knn_scores(C, self._G, exclude=[pos.get(t.id, -1) for t in cands])
+            self._with_conn(run)
         except Exception as e:
             print(f'[적합도] 사례 점수 생략: {e}', flush=True)
             return {}
-        out = {}
-        for t, s, j in zip(cands, sims, nearest):
-            if j >= 0 and np.isfinite(s):
-                out[t.id] = (round(case_to_100(float(s)), 1), self._good[int(j)])
         return out
 
     def score(self, tenders):

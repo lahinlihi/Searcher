@@ -103,7 +103,7 @@ DEFAULT_PRESET = {
     'section_days': {'pre': 7, 'normal': 7, 'support': 14},
     'core_keywords': [],       # 2배 가중. 비우면 scoring 기본값(AI·인공지능)
     'type_weights': {},        # 사업유형별 점수 45/35/25/15/0
-    'agency_weights': {},      # 기관명 → 점수(기본 5)
+    'agency_adjusts': {},      # 기관명 → 가감점(−30 ~ +30). 없으면 공고검색기 설정을 따른다
     'use_embedding': True,     # 제목 임베딩 유사도 혼합 (규칙 60 : 임베딩 40)
     'min_score': 0,            # 이 점수 미만은 싣지 않는다
 }
@@ -265,9 +265,9 @@ class _Row:
     """scoring.py 는 SQLAlchemy Tender 객체를 받는다. sqlite3.Row 를 그 모양으로 감싼다.
 
     별도 점수 로직을 새로 만들지 않는 이유는, 공고검색기에서 이미 쓰이며
-    튜닝된 규칙(키워드 밀도·경계 가중치·핵심어 2배·사업유형·기관 가중치·
-    임베딩 혼합)을 뉴스레터에서도 똑같이 적용해야 두 화면의 순위가
-    어긋나지 않기 때문이다.
+    튜닝된 규칙(키워드 밀도·경계 가중치·핵심어 2배·사업유형)과 100점 눈금
+    (relevance.py, 제품 계약서 3부)을 뉴스레터에서도 똑같이 적용해야 두 화면의
+    순위가 어긋나지 않기 때문이다.
     """
     __slots__ = ('id', 'title', 'agency', 'demand_agency', 'status',
                  'estimated_price', 'announced_date')
@@ -289,7 +289,7 @@ def scoring_config(conn, preset):
     관심 있을 사업' 의 기준을 관리자가 공고검색기에서 이미 튜닝해 두었으므로
     그것을 출발점으로 쓴다. 프리셋에 값이 있으면 그쪽이 이긴다.
     """
-    base = {'core_keywords': [], 'type_weights': {}, 'agency_weights': {}}
+    base = {'core_keywords': [], 'type_weights': {}, 'agency_adjusts': {}}
     try:
         row = conn.execute(
             'SELECT interest_keywords, type_weights, core_keywords '
@@ -297,44 +297,49 @@ def scoring_config(conn, preset):
         if row:
             base['core_keywords'] = json.loads(row['core_keywords'] or '[]')
             base['type_weights'] = json.loads(row['type_weights'] or '{}')
-        for a in conn.execute(
-                'SELECT agency_name, weight FROM agency_weights WHERE user_id=1'):
-            base['agency_weights'][a['agency_name']] = a['weight']
     except Exception as e:
         print(f'[입찰동향] 공고검색기 설정 상속 실패 — 기본값 사용: {e}')
+    try:    # 발주처 가감점(−30~+30). adjust 칸이 아직 없는 DB 면 가감점 없이 간다
+        for a in conn.execute(
+                'SELECT agency_name, adjust FROM agency_weights WHERE user_id=1 AND adjust IS NOT NULL'):
+            base['agency_adjusts'][a['agency_name']] = a['adjust']
+    except Exception as e:
+        print(f'[입찰동향] 발주처 가감점 상속 생략: {e}')
 
     return {
         'include_keywords': preset.get('include_keywords') or [],
         'core_keywords': preset.get('core_keywords') or base['core_keywords'],
         'type_weights': preset.get('type_weights') or base['type_weights'],
-        'agency_weights': preset.get('agency_weights') or base['agency_weights'],
+        # 프리셋의 예전 키 agency_weights(0~10 눈금)는 읽지 않는다 — 눈금이 달라 섞어 쓰면 안 된다
+        'agency_adjusts': preset.get('agency_adjusts') or base['agency_adjusts'],
     }
 
 
 def score_rows(rows, cfg, use_embedding=True):
     """후보 전체에 적합도 점수를 매긴다. {id: (점수, 사업유형)} 반환.
 
-    임베딩은 요청당 1회 배치 인코딩이다(compute_embed_sims). 모델이 아직
-    로딩 중이면 빈 dict 가 돌아오고 규칙 점수만 쓴다 — 느려지지 않는다.
+    공고검색기와 같은 100점 눈금이다: (키워드 + 유형)을 100점으로 환산한 뒤 발주처 가감점을 더한다.
+    사례 점수는 섞지 않는다 — 뉴스레터는 수신자별 담은 공고가 없다.
+    use_embedding 은 예전 프리셋과의 호환용으로 받기만 한다 (3부부터 임베딩 혼합을 쓰지 않는다).
     """
+    import relevance
     import scoring
     objs = [_Row(r) for r in rows]
     kws = cfg['include_keywords']
     if not kws or not objs:
         return {}
 
-    sims = {}
-    if use_embedding:
-        try:
-            sims = scoring.compute_embed_sims(objs, kws, cfg['core_keywords'])
-        except Exception as e:
-            print(f'[입찰동향] 임베딩 생략 — 규칙 점수만 사용: {e}')
-
+    tmax = relevance.type_max(cfg['type_weights'])
+    adjusts = cfg.get('agency_adjusts') or {}
     out = {}
     for o in objs:
-        total, type_name, *_ = scoring._score_and_type(
-            o, kws, cfg['type_weights'], cfg['agency_weights'],
-            cfg['core_keywords'], sims.get(o.id))
+        _, type_name, kw, ty, _ = scoring._score_and_type(
+            o, kws, cfg['type_weights'], None, cfg['core_keywords'])
+        if type_name == '결과공고' or (kw == 0 and ty == 0):
+            out[o.id] = (0.0, type_name)
+            continue
+        total = relevance.combine(relevance.base_score(kw, ty, tmax), None,
+                                  relevance.agency_adjust(o.agency, o.demand_agency, adjusts))
         out[o.id] = (total, type_name)
     return out
 

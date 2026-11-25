@@ -2,7 +2,7 @@
 
 - 후보: 정답 공고마다 그 공고가 적재된 날 앞뒤 7일 안에 적재된 공고 (결과공고 제외, 마감 여부 무관).
   그 공고가 실제로 화면에서 경쟁하던 공고들이다.
-- 현재 방식: 관심 설정 필터를 통과하면 기존 규칙 점수, 못 하면 0점 (대시보드에 아예 안 나오므로).
+- 현재 방식: 관심 설정 필터를 통과하면 사례를 섞기 전의 적합도(기본 점수 + 발주처 가감점), 못 하면 0점.
 - 사례 방식: 그 정답을 뺀 나머지 사례와의 상위 3건 평균 유사도 (자기 자신과 비교하면 늘 1등이라서).
 - 숫자 두 가지: all = 전체 후보 중 등수, filtered = 관심 필터를 통과한 후보 중 등수 (정답도 통과한 것만).
   대시보드 정렬 전환은 filtered 로 판정한다 (켜도 관심 필터는 그대로이므로).
@@ -17,7 +17,8 @@ import case_scoring
 import case_store
 import tender_vectors
 from database import Tender
-from routes.tenders import _agency_weights, _apply_interest_filters
+import relevance
+from routes.tenders import _apply_interest_filters
 from scoring import load_user_prefs, _score_and_type
 
 WINDOW_DAYS = 7
@@ -34,8 +35,9 @@ def _rank(answer_score, cand_scores):
 
 def evaluate(user_id, vec_conn=None, encoder=None, save=True):
     prefs = load_user_prefs(user_id)
-    aw = _agency_weights(user_id)
     core = prefs.get('core_keywords', [])
+    tmax = relevance.type_max(prefs['type_weights'])
+    adjusts = relevance.load_agency_adjusts(user_id)
     answers = Tender.query.filter(Tender.id.in_(case_scoring.good_case_ids(user_id))).all()
 
     conn = vec_conn or tender_vectors.connect()
@@ -45,7 +47,11 @@ def evaluate(user_id, vec_conn=None, encoder=None, save=True):
         if not passed:
             return 0.0
         if t.id not in rule_cache:
-            rule_cache[t.id] = _score_and_type(t, prefs['interest_keywords'], prefs['type_weights'], aw, core)[0]
+            # "현재 방식" = 사례를 섞기 전의 적합도 (기본 점수 + 발주처 가감점). 사례 방식과 견주려는 것이라 섞지 않는다
+            _, _, kw, ty, _ = _score_and_type(t, prefs['interest_keywords'], prefs['type_weights'], None, core)
+            rule_cache[t.id] = relevance.combine(
+                relevance.base_score(kw, ty, tmax), None,
+                relevance.agency_adjust(t.agency, t.demand_agency, adjusts)) if (kw or ty) else 0.0
         return rule_cache[t.id]
 
     ranks = {'all': {'current': [], 'case': []}, 'filtered': {'current': [], 'case': []}}

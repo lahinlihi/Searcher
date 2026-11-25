@@ -2,7 +2,7 @@ from flask import Blueprint, render_template, g
 from database import db, Tender, UserPreference, AgencyWeight, TenderView
 from decorators import login_required, admin_required, moderator_required
 from datetime import datetime
-from scoring import load_interest_keywords, _score_and_type
+from scoring import load_interest_keywords
 
 bp = Blueprint('pages', __name__)
 
@@ -95,17 +95,14 @@ def tender_detail(tender_id):
     # 매칭 점수 계산
     uid = g.user.id if g.user else None
     interest_keywords = load_interest_keywords(uid)
-    _pref = UserPreference.query.filter_by(user_id=uid).first() if uid else None
-    user_type_weights = _pref.get_type_weights() if _pref else {}
-    try:
-        _aw_rows = AgencyWeight.query.filter_by(user_id=uid).all() if uid else []
-        user_agency_weights = {r.agency_name: r.weight for r in _aw_rows}
-    except Exception:
-        user_agency_weights = {}
+    nearest_case, type_max = None, 25.0
     if interest_keywords:
-        relevance_score, business_type, kw_s, t_s, a_s = _score_and_type(
-            tender, interest_keywords, user_type_weights, user_agency_weights)
-        score_breakdown = {'keyword': kw_s, 'type': t_s, 'agency': a_s}
+        from relevance import Scorer
+        _scorer = Scorer(uid)
+        _r = _scorer.score([tender])[tender.id]
+        relevance_score, business_type = _r['total'], _r['business_type']
+        score_breakdown = Scorer.breakdown(_r)
+        nearest_case, type_max = _r['nearest_case'], _scorer.tmax
     else:
         relevance_score, business_type = None, '기타'
         score_breakdown = None
@@ -126,4 +123,5 @@ def tender_detail(tender_id):
     return render_template('detail.html', tender=tender, days_left=days_left,
                            is_expired=is_expired, extra=extra,
                            relevance_score=relevance_score, business_type=business_type,
-                           score_breakdown=score_breakdown)
+                           score_breakdown=score_breakdown,
+                           nearest_case=nearest_case, type_max=type_max)

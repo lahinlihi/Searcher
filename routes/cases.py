@@ -9,7 +9,8 @@ import case_store
 import missed_diagnosis
 from database import db, Tender, DismissedTender
 from decorators import login_required
-from routes.tenders import _agency_weights, _apply_interest_filters, _scored_dict, dashboard_section_queries
+from relevance import Scorer
+from routes.tenders import _apply_interest_filters, _scored_dict, dashboard_section_queries
 from scoring import load_user_prefs
 
 bp = Blueprint('cases', __name__)
@@ -125,9 +126,9 @@ def api_similar():
         picked = sorted((t for t in cands if scores.get(t.id, {}).get('case_score', -1) >= SIMILAR_MIN_SCORE),
                         key=lambda t: -scores[t.id]['case_score'])[:SIMILAR_LIMIT]
         items = []
-        aw = _agency_weights(uid)
+        rel = Scorer(uid).score(picked)
         for t in picked:
-            d = _scored_dict(t, prefs, aw)          # 대시보드 카드와 같은 형태 (규칙 점수·유형 포함)
+            d = _scored_dict(t, prefs, rel[t.id])   # 대시보드 카드와 같은 형태 (적합도·유형 포함)
             d.update(scores[t.id], section=section_of[t.id])
             items.append(d)
         return jsonify({'enabled': True, 'cases': len(good), 'min_cases': case_scoring.MIN_CASES,
@@ -154,37 +155,12 @@ def api_eval():
 
 
 # ── 사례 점수로 정렬 ────────────────────────────────────────────────────────
+# 3부부터 사례 점수는 적합도에 항상 절반 섞인다. 켜고 끄는 전환은 없어졌고, 예전 화면이 부르던 주소만 남긴다.
 
-def _sort_allowed(user_id):
-    """최신 채점(관심 필터 통과 기준)에서 사례 방식이 현재 방식보다 좋을 때만 켤 수 있다."""
-    latest = case_store.latest_eval(user_id)
-    if latest is None:
-        return False, '아직 채점한 적이 없습니다. 먼저 채점해 주세요.'
-    missing = (latest['metrics'] or {}).get('missing_vectors') or 0
-    if missing:
-        return False, (f'최근 채점에서 제목 벡터가 없는 공고 {missing}건을 비교에서 뺐습니다. '
-                       '벡터를 채운 뒤 다시 채점해 주세요.')
-    f = (latest['metrics'] or {}).get('filtered') or {}
-    cur, case = f.get('current') or {}, f.get('case') or {}
-    if (case.get('n') or 0) < case_scoring.MIN_CASES or case.get('median') is None or cur.get('median') is None:
-        return False, f"관심 키워드를 통과한 정답이 {case_scoring.MIN_CASES}건 이상 있어야 비교할 수 있습니다."
-    if case['median'] >= cur['median']:
-        return False, (f"최근 채점에서 사례 방식(순위 중앙값 {case['median']:g}등)이 "
-                       f"현재 방식({cur['median']:g}등)보다 좋지 않습니다.")
-    return True, None
+SORT_FIXED = {'enabled': True, 'allowed': True, 'reason': '사례 점수는 적합도에 항상 절반 반영됩니다.'}
 
 
 @bp.route('/api/cases/sort-setting', methods=['GET', 'POST'])
 @login_required
 def api_sort_setting():
-    uid = g.user.id
-    try:
-        allowed, reason = _sort_allowed(uid)
-        if request.method == 'POST':
-            enabled = bool((request.get_json(silent=True) or {}).get('enabled'))
-            if enabled and not allowed:
-                return jsonify({'error': reason, 'reason': reason}), 409
-            case_store.set_sort_enabled(uid, enabled)
-        return jsonify({'enabled': case_store.get_sort_enabled(uid), 'allowed': allowed, 'reason': reason})
-    except Exception as e:
-        return _error(e)
+    return jsonify(SORT_FIXED)

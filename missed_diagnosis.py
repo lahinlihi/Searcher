@@ -7,9 +7,10 @@
 from datetime import datetime, timedelta
 
 from database import Tender, DismissedTender
-from routes.tenders import (DASHBOARD_TOP_N, _agency_weights, _apply_interest_filters, _title_contains,
+from relevance import Scorer
+from routes.tenders import (DASHBOARD_TOP_N, _apply_interest_filters, _title_contains,
                             dashboard_section_conditions, dashboard_section_queries)
-from scoring import load_user_prefs, smart_sort_tenders_by_keyword_count, _score_and_type
+from scoring import load_user_prefs
 
 VERDICTS = ('수집 안 됨', '묶임', '걸러짐', '순위 낮음', '표시 범위 안')
 
@@ -86,15 +87,13 @@ def diagnose(tender, user_id):
         result.update(verdict='걸러짐', reasons=reasons)
         return result
 
-    aw = _agency_weights(user_id)
-    core = prefs.get('core_keywords', [])
     pool = [t for t in _apply_interest_filters(dashboard_section_queries(as_of)[section], prefs).all()
             if t.id not in dismissed]
-    ranked = smart_sort_tenders_by_keyword_count(pool, prefs['interest_keywords'], prefs['type_weights'], aw, core)
+    scorer = Scorer(user_id)
+    scores = scorer.score(pool)
+    ranked = scorer.sort(pool, scores)
     rank = next(i for i, t in enumerate(ranked, 1) if t.id == tender.id)
-    score, _, kw_s, type_s, agency_s = _score_and_type(tender, prefs['interest_keywords'],
-                                                       prefs['type_weights'], aw, core)
     result.update(verdict='순위 낮음' if rank > DASHBOARD_TOP_N else '표시 범위 안',
-                  rank=rank, pool=len(ranked), score=score,
-                  breakdown={'keyword': kw_s, 'type': type_s, 'agency': agency_s})
+                  rank=rank, pool=len(ranked), score=scores[tender.id]['total'],
+                  breakdown=Scorer.breakdown(scores[tender.id]))
     return result

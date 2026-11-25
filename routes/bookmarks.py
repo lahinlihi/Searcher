@@ -1,7 +1,8 @@
 from flask import Blueprint, request, jsonify, g
 from database import db, Tender, Bookmark, TenderMemo, AgencyWeight, UserPreference
 from decorators import login_required
-from scoring import load_user_prefs, _score_and_type
+from scoring import load_user_prefs
+from relevance import Scorer
 from sqlalchemy.orm import joinedload
 from datetime import datetime
 
@@ -16,12 +17,6 @@ def api_bookmarks():
         uid = g.user.id
         _uprefs = load_user_prefs(uid)
         include_keywords = _uprefs['interest_keywords']
-        user_type_weights = _uprefs['type_weights']
-        try:
-            _aw_rows = AgencyWeight.query.filter_by(user_id=uid).all()
-            user_agency_weights = {r.agency_name: r.weight for r in _aw_rows}
-        except Exception:
-            user_agency_weights = {}
         bookmarks = (
             Bookmark.query
             .filter_by(user_id=uid)
@@ -40,18 +35,21 @@ def api_bookmarks():
             ).filter(TenderMemo.tender_id.in_(_bm_ids)).group_by(TenderMemo.tender_id).all()
             _bm_memo_counts = {r[0]: r[1] for r in _bm_rows}
 
+        _scores = Scorer(uid).score([b.tender for b in bookmarks if b.tender])
         result = []
         for b in bookmarks:
             tender = b.tender
             if not tender:
                 continue
-            score, btype, kw_s, t_s, a_s = _score_and_type(tender, include_keywords, user_type_weights, user_agency_weights)
+            r = _scores[tender.id]
             label_bonus = Bookmark.LABEL_BONUS.get(b.label or '', 0)
             d = tender.to_dict(interest_keywords=include_keywords)
-            d['relevance_score'] = min(100.0, round(score + label_bonus, 1))
+            d['relevance_score'] = min(100.0, round(r['total'] + label_bonus, 1))   # 라벨 보너스는 100 에서 자른다
             d['label_bonus'] = label_bonus
-            d['business_type'] = btype
-            d['score_breakdown'] = {'keyword': kw_s, 'type': t_s, 'agency': a_s}
+            d['business_type'] = r['business_type']
+            d['score_breakdown'] = Scorer.breakdown(r)
+            if r.get('nearest_case'):
+                d['nearest_case'] = r['nearest_case']
             d['bookmark_id'] = b.id
             d['bookmark_label'] = b.label or ''
             d['bookmark_note'] = b.user_note or ''
@@ -75,12 +73,6 @@ def api_memo_tenders():
         # 사용자 선호도 (점수 계산용)
         _uprefs = load_user_prefs(uid)
         include_keywords = _uprefs['interest_keywords']
-        user_type_weights = _uprefs['type_weights']
-        try:
-            _aw_rows = AgencyWeight.query.filter_by(user_id=uid).all()
-            user_agency_weights = {r.agency_name: r.weight for r in _aw_rows}
-        except Exception:
-            user_agency_weights = {}
 
         subq = db.session.query(
             TenderMemo.tender_id,
@@ -115,6 +107,7 @@ def api_memo_tenders():
                     _latest_memos[m.tender_id] = m.to_dict()
                     _seen.add(m.tender_id)
 
+        _scores = Scorer(uid).score([r[0] for r in rows])
         data = []
         for tender, memo_count, latest_memo_at in rows:
             d = tender.to_dict(interest_keywords=include_keywords)
@@ -126,9 +119,9 @@ def api_memo_tenders():
             d['is_unread'] = (viewed_at is None) or (latest_memo_at and latest_memo_at > viewed_at)
             d['viewed_at'] = (viewed_at.isoformat() + 'Z') if viewed_at else None
             # 적합도 점수
-            score, btype, *_ = _score_and_type(tender, include_keywords, user_type_weights, user_agency_weights)
-            d['relevance_score'] = round(score, 1)
-            d['business_type'] = btype
+            d['relevance_score'] = _scores[tender.id]['total']
+            d['business_type'] = _scores[tender.id]['business_type']
+            d['score_breakdown'] = Scorer.breakdown(_scores[tender.id])
             data.append(d)
 
         return jsonify(data)
