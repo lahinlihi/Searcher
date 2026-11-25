@@ -104,7 +104,7 @@ DEFAULT_PRESET = {
     'core_keywords': [],       # 2배 가중. 비우면 scoring 기본값(AI·인공지능)
     'type_weights': {},        # 사업유형별 점수 45/35/25/15/0
     'agency_adjusts': {},      # 기관명 → 가감점(−30 ~ +30). 없으면 공고검색기 설정을 따른다
-    'use_embedding': True,     # 제목 임베딩 유사도 혼합 (규칙 60 : 임베딩 40)
+    'use_embedding': True,     # 예전 설정 — 3부부터 쓰지 않는다 (저장된 프리셋과의 호환용으로 키만 남김)
     'min_score': 0,            # 이 점수 미만은 싣지 않는다
 }
 
@@ -562,7 +562,7 @@ def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
         'class_counts': counts,
         'dropped': dropped,
         'scored': len(scores),
-        'embedding_used': bool(scores) and preset.get('use_embedding', True),
+        'embedding_used': False,      # 3부부터 임베딩 혼합을 쓰지 않는다 (화면 호환용으로 키만 남김)
         'keywords_used': cfg['include_keywords'],
         'core_keywords_used': cfg['core_keywords'],
         'sections': sections,
@@ -639,16 +639,7 @@ def build_section_cached(conn, force=False):
     created = now.isoformat(timespec='seconds')
     out = {**tb, 'computed_at': created, 'cached': False}
 
-    # 임베딩 모델이 아직 로딩 중이면 규칙 점수만으로 순위가 매겨진다(scoring 의 폴백).
-    # 그 결과를 저장하면 하루 종일 덜 정확한 순위가 굳는다. 이때는 저장하지 않는다.
-    try:
-        import scoring
-        preset = get_preset(conn)
-        if preset.get('use_embedding', True) and not scoring._embed_model_ready:
-            out['degraded'] = True
-            return out
-    except Exception:
-        pass
+    # (3부부터 점수에 임베딩을 쓰지 않는다 — 모델 로딩 여부와 상관없이 순위가 같으므로 늘 저장한다.)
 
     conn.execute(
         """INSERT INTO brief_snapshots (snap_date, payload, created_at)

@@ -1,5 +1,5 @@
 // 대시보드 (2026-11 디자인 개편, B 목록형)
-// 데이터: /api/dashboard (구역 3개), /api/embed-scores (적합도 보정), /api/cases/similar (비슷한 공고)
+// 데이터: /api/dashboard (구역 3개 — 점수와 순서는 서버가 준 그대로 쓴다), /api/cases/similar (비슷한 공고)
 // 공고 한 줄은 tender-row.js 의 renderTenderRow 가 그린다.
 
 let includeKeywords = [];
@@ -12,9 +12,8 @@ let viewedIds = new Set();
 let currentTab = 'all';
 
 const SECTION_KEY = { pre: 'pre_tenders', urgent: 'urgent_tenders', recent: 'recent_tenders' };
-const _DASH_CACHE_KEY = 'dashboard_cache_v3';
+const _DASH_CACHE_KEY = 'dashboard_cache_v4';
 const _SORT_KEY = 'dashboard_sort';
-const _embedLoaded = { pre: false, urgent: false, recent: false };
 let _lastFetchTime = 0;
 
 // ── 불러오기 ────────────────────────────────────────────────────────────────
@@ -76,14 +75,10 @@ async function loadDismissedIds() {
 
 async function loadDashboardData() {
     // 저장해 둔 지난 응답을 먼저 보여 주고(끊김 방지), 새 응답이 오면 바꾼다
-    let hadCache = false;
     try {
         const cached = localStorage.getItem(_DASH_CACHE_KEY);
         if (cached) {
-            const c = JSON.parse(cached);
-            if (c._embedLoaded) Object.assign(_embedLoaded, c._embedLoaded);
-            hadCache = true;
-            applyDashboardData(c);
+            applyDashboardData(JSON.parse(cached));
         }
     } catch (_) { /* 저장소를 못 쓰면 바로 새 응답 */ }
 
@@ -91,13 +86,8 @@ async function loadDashboardData() {
         const data = await (await fetch('/api/dashboard?fresh=1')).json();
         if (data.error) { console.error('Error:', data.error); return; }
         _lastFetchTime = Date.now();
-        if (!hadCache) Object.keys(_embedLoaded).forEach(k => { _embedLoaded[k] = false; });
-        _mergeEmbedScores(data);
         try { localStorage.setItem(_DASH_CACHE_KEY, JSON.stringify(data)); } catch (_) { /* 무시 */ }
         applyDashboardData(data);
-        for (const sec of Object.keys(SECTION_KEY)) {
-            if (!_embedLoaded[sec]) fetchEmbedScores(sec);
-        }
     } catch (error) {
         console.error('Failed to load dashboard data:', error);
         if (!dashData) document.getElementById('list-caption').textContent = '공고를 불러오지 못했습니다.';
@@ -116,42 +106,6 @@ function applyDashboardData(data) {
     document.getElementById('total-tenders').textContent = fmt(s.total);
     renderKeywords();
     renderList();
-}
-
-// 이미 받은 임베딩 보정 점수를 새 응답에도 옮긴다 (점수 깜빡임 방지)
-function _mergeEmbedScores(newData) {
-    if (!dashData) return;
-    for (const [sec, key] of Object.entries(SECTION_KEY)) {
-        if (!_embedLoaded[sec] || !dashData[key] || !newData[key]) continue;
-        const m = {};
-        for (const t of dashData[key]) m[t.id] = t.relevance_score;
-        for (const t of newData[key]) if (m[t.id] != null) t.relevance_score = m[t.id];
-        if (!newData.case_sort) newData[key].sort((a, b) => (b.relevance_score ?? 0) - (a.relevance_score ?? 0));
-    }
-}
-
-// 적합도 보정(임베딩) — 구역마다 한 번. 사례 점수로 정렬된 상태면 순서는 그대로 두고 점수만 바꾼다
-async function fetchEmbedScores(sec) {
-    const key = SECTION_KEY[sec];
-    const ids = ((dashData && dashData[key]) || []).map(t => t.id);
-    if (!ids.length) return;
-    try {
-        const resp = await fetch('/api/embed-scores', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tender_ids: ids })
-        });
-        if (!resp.ok) return;
-        const scores = (await resp.json()).scores || {};
-        for (const t of dashData[key]) {
-            const info = scores[String(t.id)];
-            if (info) t.relevance_score = info.score;
-        }
-        if (!dashData.case_sort) dashData[key].sort((a, b) => (b.relevance_score ?? 0) - (a.relevance_score ?? 0));
-        _embedLoaded[sec] = true;
-        dashData._embedLoaded = { ..._embedLoaded };
-        try { localStorage.setItem(_DASH_CACHE_KEY, JSON.stringify(dashData)); } catch (_) { /* 무시 */ }
-        renderList();
-    } catch (_) { /* 실패하면 규칙 점수 순서 그대로 */ }
 }
 
 async function loadSimilar() {
@@ -272,13 +226,13 @@ function _sectionItems(sec) {
 function _tabItems(tab) {
     if (tab === 'similar') return similarData && similarData.items ? _visible(similarData.items) : [];
     if (tab !== 'all') return _sectionItems(tab);
-    // 전체: 세 구역을 합쳐 추천순(사례 점수 정렬이 켜져 있으면 사례 점수, 아니면 적합도)으로
+    // 전체: 세 구역을 합쳐 적합도 순으로 (같으면 받은 순서)
     const all = [..._sectionItems('pre'), ..._sectionItems('urgent'), ..._sectionItems('recent')];
-    const key = (dashData && dashData.case_sort) ? 'case_score' : 'relevance_score';
-    return all.map((t, i) => [t, i]).sort((a, b) => ((b[0][key] ?? -1) - (a[0][key] ?? -1)) || (a[1] - b[1])).map(x => x[0]);
+    return all.map((t, i) => [t, i])
+        .sort((a, b) => ((b[0].relevance_score ?? -1) - (a[0].relevance_score ?? -1)) || (a[1] - b[1])).map(x => x[0]);
 }
 
-// 수집한 날(현지 날짜) — '신규 먼저'는 날짜 단위로 묶고 그 안에서는 받은 순서(적합도·사례 점수)를 지킨다
+// 수집한 날(현지 날짜) — '신규 먼저'는 날짜 단위로 묶고 그 안에서는 받은 순서(적합도)를 지킨다
 function _dayOf(t) {
     const ms = hsCollectedMs(t);
     if (ms === null) return 0;
@@ -328,8 +282,7 @@ function renderToday(items) {
     if (by.pre) parts.push(`사전규격 ${by.pre}`);
     if (by.g2b) parts.push(`나라장터 입찰 ${by.g2b}`);
     if (by.other) parts.push(`기타 채널 ${by.other}`);
-    const key = dashData.case_sort ? 'case_score' : 'relevance_score';
-    const best = fresh.reduce((m, t) => ((t[key] ?? -1) > (m[key] ?? -1) ? t : m));
+    const best = fresh.reduce((m, t) => ((t.relevance_score ?? -1) > (m.relevance_score ?? -1) ? t : m));
     const title = typeof cleanNoticeTitle === 'function' ? cleanNoticeTitle(best.title || '') : (best.title || '');
     const why = [];
     if (best.relevance_score !== undefined && best.relevance_score !== null) why.push(`적합도 ${Number(best.relevance_score).toFixed(1)}`);

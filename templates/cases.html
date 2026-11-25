@@ -38,18 +38,15 @@
         </div>
     </div>
 
-    <!-- ════════ 사례 점수로 정렬 ════════ -->
+    <!-- ════════ 사례 점수가 쓰이는 곳 ════════ -->
     <div class="card">
         <div class="card-header">
-            <h3 class="card-title">사례 점수로 정렬</h3>
-            <p class="text-xs text-gray-500 mt-1">켜면 대시보드 목록을 사례 점수 순으로 보여 줍니다. 관심 키워드 조건은 그대로이고 순서만 바뀝니다. 채점에서 사례 방식이 더 좋게 나왔을 때만 켤 수 있습니다.</p>
+            <h3 class="card-title">사례 점수가 쓰이는 곳</h3>
         </div>
         <div class="card-body">
-            <label class="inline-flex items-center gap-2 text-sm">
-                <input id="sort-toggle" type="checkbox" class="w-4 h-4" onchange="toggleSort(this)">
-                <span>대시보드를 사례 점수 순으로</span>
-            </label>
-            <p id="sort-reason" class="text-xs text-gray-500 mt-2"></p>
+            <p class="text-sm text-gray-700">사례 점수는 적합도에 항상 절반 반영됩니다. 담은 공고와 정답에 넣은 공고가 합쳐 5건 이상이면,
+                적합도는 키워드·유형 점수와 "담은 공고와 닮은 정도"의 평균이 됩니다. 5건이 안 되면 키워드·유형 점수만 씁니다.</p>
+            <p class="text-xs text-gray-500 mt-2">예전의 "대시보드를 사례 점수 순으로" 스위치는 이 방식으로 바뀌어 없어졌습니다.</p>
         </div>
     </div>
 

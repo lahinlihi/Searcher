@@ -241,7 +241,7 @@ def test_cases_page_renders(cases_app, client, login, make_user):
     r = client.get('/cases')
     assert r.status_code == 200
     html = r.get_data(as_text=True)
-    for text in ('놓친 공고 신고', '채점', '사례 점수로 정렬', 'js/cases.js'):
+    for text in ('놓친 공고 신고', '채점', '사례 점수가 쓰이는 곳', 'js/cases.js'):
         assert text in html
 
 

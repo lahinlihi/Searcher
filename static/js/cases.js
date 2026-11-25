@@ -90,6 +90,15 @@ async function diagnose(tenderId) {
     }
 }
 
+function fmtPart(v) {
+    return (v === null || v === undefined) ? '-' : Number(v).toFixed(1);
+}
+
+// 저장해 둔 예전 신고 결과에는 hsSigned 가 필요 없지만, tender-row.js 를 싣지 않는 화면이라 여기에도 둔다
+if (typeof hsSigned === 'undefined') {
+    var hsSigned = n => (Number(n) > 0 ? '+' : Number(n) < 0 ? '−' : '') + String(Math.abs(Number(n)));
+}
+
 function renderVerdict(r) {
     const style = VERDICT_STYLE[r.verdict] || 'bg-gray-100 text-gray-700';
     const section = r.section ? SECTION_LABELS[r.section] || r.section : '-';
@@ -97,9 +106,9 @@ function renderVerdict(r) {
     if (r.rank) {
         detail = `<p>${safeHtml(section)} 구역, 같은 시점 관심 키워드 통과 공고 ${r.pool}건 중 <b>${r.rank}등</b> (${Number(r.score).toFixed(1)}점, 대시보드에는 15등까지 나옵니다)</p>
             <table class="text-xs text-gray-600 mt-1"><tbody>
-                <tr><td class="pr-3">키워드</td><td class="text-right">${r.breakdown.keyword}</td></tr>
-                <tr><td class="pr-3">유형</td><td class="text-right">${r.breakdown.type}</td></tr>
-                <tr><td class="pr-3">기관</td><td class="text-right">${r.breakdown.agency}</td></tr>
+                <tr><td class="pr-3">키워드·유형 (100점 환산)</td><td class="text-right">${fmtPart(r.breakdown.base)}</td></tr>
+                <tr><td class="pr-3">담은 공고와 닮음</td><td class="text-right">${r.breakdown.case === null || r.breakdown.case === undefined ? '반영 안 함 (사례 5건 미만이거나 벡터 없음)' : fmtPart(r.breakdown.case)}</td></tr>
+                <tr><td class="pr-3">발주처 가감점</td><td class="text-right">${r.breakdown.agency ? hsSigned(r.breakdown.agency) : '없음'}</td></tr>
             </tbody></table>`;
     }
     const reasons = (r.reasons || []).length
@@ -158,7 +167,7 @@ async function loadEval() {
             const m = d.latest.metrics;
             latest.innerHTML = `<p class="text-xs text-gray-500 mb-2">${safeHtml(d.latest.run_at.replace('T', ' '))} 채점 · 정답 ${m.answers}건${m.missing_vectors ? ` · 비교에서 뺀 공고 ${m.missing_vectors}건(제목 벡터 없음)` : ''}</p>
                 <div class="grid gap-4 md:grid-cols-2">
-                    ${metricTable('관심 키워드를 통과한 공고 중 (정렬 전환 판정 기준)', m.filtered)}
+                    ${metricTable('관심 키워드를 통과한 공고 중', m.filtered)}
                     ${metricTable('전체 공고 중 (키워드에 없는 정답은 현재 방식에서 맨 뒤)', m.all)}
                 </div>`;
         }
@@ -182,7 +191,6 @@ async function runEval() {
     try {
         await api('/api/cases/eval', {method: 'POST'});
         await loadEval();
-        await loadSort();
     } catch (e) {
         alert('채점하지 못했습니다: ' + e.message);
     } finally {
@@ -190,27 +198,4 @@ async function runEval() {
     }
 }
 
-// ── 사례 점수로 정렬 ────────────────────────────────────────────────────────
-
-function showSort(s) {
-    const t = document.getElementById('sort-toggle');
-    t.checked = s.enabled;
-    t.disabled = !s.enabled && !s.allowed;
-    document.getElementById('sort-reason').textContent = s.enabled ? '켜져 있습니다.' : (s.reason || '켤 수 있습니다.');
-}
-
-async function loadSort() {
-    try { showSort(await api('/api/cases/sort-setting')); }
-    catch (e) { document.getElementById('sort-reason').textContent = '설정을 불러오지 못했습니다.'; }
-}
-
-async function toggleSort(el) {
-    try {
-        showSort(await api('/api/cases/sort-setting', {method: 'POST', body: {enabled: el.checked}}));
-    } catch (e) {
-        el.checked = !el.checked;
-        document.getElementById('sort-reason').textContent = e.message;
-    }
-}
-
-document.addEventListener('DOMContentLoaded', () => { loadEval(); loadSort(); });
+document.addEventListener('DOMContentLoaded', () => { loadEval(); });

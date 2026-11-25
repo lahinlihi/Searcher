@@ -18,29 +18,6 @@ function isMobile() {
     return window.innerWidth < 640;
 }
 
-// ── 임베딩 점수 on-demand 로딩 ───────────────────────────────────────────────
-async function fetchEmbedScores(tenderIds) {
-    if (!tenderIds || tenderIds.length === 0) return;
-    try {
-        const resp = await fetch('/api/embed-scores', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tender_ids: tenderIds })
-        });
-        if (!resp.ok) return;
-        const data = await resp.json();
-        for (const [id, info] of Object.entries(data.scores || {})) {
-            const el = document.querySelector(`[data-score="${id}"]`);
-            if (el) {
-                el.textContent = Number(info.score).toFixed(1);
-                if (el.parentElement) el.parentElement.style.cssText = hsScoreStyle(info.score);   // 숫자가 바뀌면 색도 따라간다
-            }
-            const t = currentResults.find(x => String(x.id) === String(id));
-            if (t) t.relevance_score = info.score;
-        }
-    } catch (_) { /* 실패 시 규칙 점수 그대로 유지 */ }
-}
-
 let currentPage = 1;
 let currentFilters = {};
 let currentKeywords = []; // 현재 검색한 키워드들
@@ -497,8 +474,7 @@ function renderResults(tenders) {
     if (expiredPre.length) html += label('마감된 사전규격', expiredPre.length) + expiredPre.map(rowOf).join('');
     if (expiredGeneral.length) html += label('마감된 일반공고', expiredGeneral.length) + expiredGeneral.map(rowOf).join('');
 
-    container.innerHTML = `<ul class="hs-list">${html}</ul>`;
-    fetchEmbedScores(tenders.map(t => t.id));
+    container.innerHTML = `<ul class="hs-list">${html}</ul>`;     // 점수는 서버가 준 값이 최종이다 (나중에 고치지 않는다)
 }
 
 // 페이징 렌더링

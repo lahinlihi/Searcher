@@ -62,8 +62,6 @@ function hsStarButton(t, bookmarked) {
     </button>`;
 }
 
-// 적합도 색: 목록에서 가장 높은 점수가 녹색, 낮아질수록 노랑을 거쳐 붉은색으로 조금씩 바뀐다.
-// range({min,max})가 없으면 0~60 점을 기준으로 삼는다.
 // 색은 화면에 나온 공고끼리 견주지 않고 100점 만점 기준으로 정한다 — 같은 점수는 어느 화면에서나 같은 색.
 // 30점 이하 빨강 → 60점 노랑 → 90점 이상 녹색
 const HS_SCORE_RED = 30, HS_SCORE_GREEN = 90;
@@ -75,6 +73,28 @@ function hsScoreStyle(score) {
     if (score === null || score === undefined) return 'background: var(--hs-surface); color: var(--hs-muted)';
     const h = hsScoreHue(Number(score));
     return `background: hsl(${h}, 75%, 89%); color: hsl(${h}, 80%, 23%)`;
+}
+
+// 적합도 구성 설명 (숫자 위에 마우스를 올리면 보인다). bd = score_breakdown {keyword, type, case, agency, base}
+// 적합도 = 키워드·유형 점수(100점 환산) — 담은 공고가 5건 이상이면 닮음 점수와 평균 — 에 등록한 발주처 가감점을 더한 값.
+function hsSigned(n) {
+    const v = Number(n);
+    return (v > 0 ? '+' : v < 0 ? '−' : '') + String(Math.abs(v));
+}
+function hsScoreTip(score, bd) {
+    if (score === null || score === undefined) return '적합도 없음';
+    let tip = '적합도 ' + Number(score).toFixed(1);
+    if (!bd || bd.base === undefined || bd.base === null) return tip;
+    tip += ' = 키워드·유형 ' + Number(bd.base).toFixed(1);
+    if (bd.case !== null && bd.case !== undefined) tip += ' 와 담은 공고 닮음 ' + Number(bd.case).toFixed(1) + ' 의 평균';
+    if (bd.agency) tip += ' + 발주처 ' + hsSigned(bd.agency);
+    return tip;
+}
+// 등록한 발주처의 가감점 칩 (가감점이 없으면 빈 문자열)
+function hsAdjustChip(bd) {
+    if (!bd || !bd.agency) return '';
+    const plus = Number(bd.agency) > 0;
+    return `<span class="hs-chip ${plus ? 'hs-chip-ok' : 'hs-chip-bad'}" title="등록한 발주처 ${plus ? '가점' : '감점'}">발주처 ${hsSigned(bd.agency)}</span>`;
 }
 
 // 공고 한 줄 — 항상 두 줄이다. 앞 칸: 적합도 / 첫 줄: 제목 / 둘째 줄: 구분·기관·금액·유형 … / 오른쪽: 마감·버튼
@@ -90,7 +110,7 @@ function renderTenderRow(t, opts) {
     const badges = typeof getNoticeBadgesHtml === 'function' ? getNoticeBadgesHtml(t.title || '') : '';
     const score = (t.relevance_score !== undefined && t.relevance_score !== null) ? Number(t.relevance_score) : null;
     const bd = t.score_breakdown;
-    const scoreTip = score === null ? '적합도 없음' : '적합도 ' + score.toFixed(1) + (bd ? ` = 키워드 ${bd.keyword} + 유형 ${bd.type} + 기관 ${bd.agency}` : '');
+    const scoreTip = hsScoreTip(score, bd);
     const type = (t.business_type && t.business_type !== '기타') ? t.business_type : '';
     const dismiss = opts.dismiss
         ? `<button type="button" class="hs-icon-btn" aria-label="관심없음 — 목록에서 숨기기" title="관심없음" onclick="dismissTender(${t.id}, this)">
@@ -113,7 +133,7 @@ function renderTenderRow(t, opts) {
                 <span class="hs-row-agency">${safeHtml(hsAgency(t))}</span>
                 <b class="hs-row-price${t.estimated_price ? '' : ' none'}">${hsPrice(t.estimated_price)}</b>
                 ${type ? `<span>${safeHtml(type)}</span>` : ''}
-                ${announced}${origin}${memo}${opts.metaHtml || ''}
+                ${hsAdjustChip(bd)}${announced}${origin}${memo}${opts.metaHtml || ''}
             </div>
         </div>
         <div class="hs-row-side">
@@ -140,4 +160,4 @@ async function hsToggleBookmark(tenderId, btn) {
     } catch (e) { console.error(e); }
 }
 
-if (typeof module !== 'undefined') module.exports = { hsPrice, hsDday, hsKind, hsAgency, hsIsNew, hsCollectedMs, hsScoreHue };
+if (typeof module !== 'undefined') module.exports = { hsPrice, hsDday, hsKind, hsAgency, hsIsNew, hsCollectedMs, hsScoreHue, hsScoreTip, hsAdjustChip };

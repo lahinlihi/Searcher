@@ -166,10 +166,17 @@
                     <span style="font-size: 13px; color: var(--hs-muted)">적합도 (100점){% if business_type and business_type != '기타' %} · {{ business_type }}{% endif %}</span>
                 </div>
                 {% if score_breakdown %}
+                {# 적합도 = 키워드·유형(100점 환산) — 담은 공고가 5건 이상이면 닮음 점수와 평균 — 에 등록한 발주처 가감점을 더한 값 #}
                 <div class="hs-bars">
-                    {% for _lbl, _val, _max in [('키워드', score_breakdown.keyword, 45), ('유형', score_breakdown.type, 45), ('기관', score_breakdown.agency, 10)] %}
-                    <div class="hs-bar"><span>{{ _lbl }}</span><span class="hs-bar-track"><span style="width: {{ [100, (_val / _max * 100) | round(0)] | min }}%"></span></span><b>{{ '%.1f' | format(_val) }}</b></div>
-                    {% endfor %}
+                    <div class="hs-bar" title="키워드 {{ '%.1f' | format(score_breakdown.keyword) }} / 45 + 유형 {{ '%.1f' | format(score_breakdown.type) }} / {{ '%g' | format(type_max) }} 을 100점으로 환산"><span>키워드·유형</span><span class="hs-bar-track"><span style="width: {{ [100, score_breakdown.base | round(0)] | min }}%"></span></span><b>{{ '%.1f' | format(score_breakdown.base) }}</b></div>
+                    {% if score_breakdown.case is not none %}
+                    <div class="hs-bar"><span>담은 공고와 닮음</span><span class="hs-bar-track"><span style="width: {{ [100, score_breakdown.case | round(0)] | min }}%"></span></span><b>{{ '%.1f' | format(score_breakdown.case) }}</b></div>
+                    {% endif %}
+                </div>
+                <div style="font-size: 13px; color: var(--hs-muted); line-height: 1.6">
+                    {% if score_breakdown.case is not none %}위 두 점수의 평균{% else %}키워드·유형 점수{% endif %}{% if score_breakdown.agency %}에
+                    <span class="hs-chip {{ 'hs-chip-ok' if score_breakdown.agency > 0 else 'hs-chip-bad' }}">발주처 {{ '+' if score_breakdown.agency > 0 else '−' }}{{ '%g' | format(score_breakdown.agency | abs) }}</span>을 더한 값입니다.{% else %}입니다.{% endif %}
+                    {% if nearest_case %}<br>가장 닮은 담은 공고: <a class="hs-link" href="/tender/{{ nearest_case.id }}" target="_blank" rel="noopener">{{ nearest_case.title }}</a>{% endif %}
                 </div>
                 {% endif %}
                 {% else %}

@@ -76,6 +76,33 @@ def test_nav_admin_items_by_role(full_app, client, login, make_user):
     assert {'/admin/users', '/settings', '/logs', '/filters'} <= _menu_links(html)
 
 
+def test_detail_shows_new_score_parts(full_app, client, login, make_user, make_prefs, make_tender, add_adjust, fake_model):
+    """상세 화면의 점수 구성: 키워드·유형 / (사례가 있으면) 닮음 / (가감점이 있으면) 발주처. 예전 '기관 10점' 막대는 없다."""
+    u = make_user(); make_prefs(u, interest=['교육'])
+    add_adjust(u, '테스트기관', -30.0)
+    t = make_tender(title='AI 교육 운영 용역')
+    _, html = _get(client, login, u, f'/tender/{t.id}')
+    side = html[html.index('나와 맞는 정도'):]
+    side = side[:side.index('</aside>')]
+    assert '키워드·유형' in side and '발주처 −30' in side
+    assert '>기관<' not in side and '담은 공고와 닮음' not in side      # 담은 공고가 5건 미만이라 닮음 줄은 없다
+
+    plain = make_tender(title='AI 교육 운영 용역', agency='다른기관')
+    _, html = _get(client, login, u, f'/tender/{plain.id}')
+    assert '발주처 −30' not in html and '발주처 +' not in html
+
+
+def test_cases_page_has_no_sort_switch(full_app, client, login, make_user):
+    _, html = _get(client, login, make_user(role='admin'), '/cases')
+    assert 'id="sort-toggle"' not in html
+    assert '사례 점수는 적합도에 항상 절반 반영됩니다' in html
+
+
+def test_filters_page_has_adjust_input(full_app, client, login, make_user):
+    _, html = _get(client, login, make_user(role='admin'), '/filters')
+    assert 'id="agency-adjust-input"' in html and 'agency-weight-selector' not in html
+
+
 def test_existing_badge_ids_kept(full_app, client, login, make_user):
     _, html = _get(client, login, make_user(role='admin'), '/')
     for i in ('id="memo-badge"', 'id="nl-badge"', 'id="nav-search-input"'):
