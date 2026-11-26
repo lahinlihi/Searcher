@@ -135,7 +135,7 @@ async function loadSubs() {
         <thead><tr class="text-gray-500 border-b">
           <th class="text-left py-1.5">상태</th><th class="text-left">이메일</th>
           <th class="text-left">이름</th><th class="text-left">회사</th>
-          <th class="text-left">수신동의</th></tr></thead>
+          <th class="text-left">수신동의</th><th></th></tr></thead>
         <tbody>${rows.map(r => `<tr class="border-b border-gray-50">
           <td class="py-1.5"><span class="px-1.5 py-0.5 rounded text-xs
             ${r.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-500'}">
@@ -143,7 +143,26 @@ async function loadSubs() {
           <td>${esc(r.email)}</td><td>${esc(r.name || '')}</td>
           <td>${esc(r.company || '')}</td>
           <td class="text-gray-500">${esc((r.consent_at || '').slice(0, 10))}
-            ${esc(r.consent_source || '')}</td></tr>`).join('')}</tbody></table>`;
+            ${esc(r.consent_source || '')}</td>
+          <td class="text-right">${r.status === 'active'
+            ? `<button type="button" class="text-xs text-red-600 hover:underline px-1.5 py-1"
+                       data-del="${r.id}" data-email="${esc(r.email)}">삭제</button>`
+            : '<span class="text-xs text-gray-400" title="수신거부 기록은 지우지 않습니다">기록 보존</span>'}</td></tr>`).join('')}</tbody></table>`;
+    // 잘못 등록한 주소 지우기 (수신거부한 주소는 서버가 막는다)
+    el.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => delSub(b.dataset.del, b.dataset.email)));
+}
+
+async function delSub(id, email) {
+    if (!confirm(`${email}
+
+이 구독자를 지울까요? 수신동의 기록도 함께 지워지며 되돌릴 수 없습니다.`)) return;
+    try {
+        await api(`/api/newsletter/subscribers/${id}`, { method: 'DELETE' });
+        toast('구독자를 지웠습니다.');
+        loadSubs();
+    } catch (e) {
+        toast(e.message, true);
+    }
 }
 
 async function addSub(reconsent) {

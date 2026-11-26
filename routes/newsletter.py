@@ -323,6 +323,7 @@ def preview_page():
                 '<p style="font-family:sans-serif;padding:40px;color:#555">'
                 '실을 시사점이 없습니다. 편집실에서 먼저 생성·승인하세요.</p>',
                 mimetype='text/html')
+        nl.archive_tenders(conn, data, 'preview')       # 미리보기의 '외 N건' 링크도 열리게 (정식 발송분은 덮지 않는다)
         html = nl.render_html(data, unsubscribe_url='#', is_test=True)
         if draft:
             html = html.replace('<body', '<body data-draft="1"', 1)
@@ -414,6 +415,24 @@ def api_subscribers():
         conn.close()
 
 
+@bp.route('/api/newsletter/subscribers/<int:subscriber_id>', methods=['DELETE'])
+@moderator_required
+def api_subscriber_delete(subscriber_id):
+    """잘못 등록한 구독자 삭제. 수신거부한 주소는 기록을 남겨야 해서 지우지 않는다."""
+    import newsletter as nl
+    conn = _conn()
+    try:
+        result = nl.remove_subscriber(conn, subscriber_id)
+        if result == 'not_found':
+            return jsonify({'error': '구독자를 찾을 수 없습니다.'}), 404
+        if result == 'unsubscribed':
+            return jsonify({'error': '수신거부한 주소는 지울 수 없습니다. 기록을 지우면 같은 주소가 '
+                                     '재동의 확인 없이 다시 등록될 수 있습니다.'}), 409
+        return jsonify({'deleted': True})
+    finally:
+        conn.close()
+
+
 @bp.route('/api/newsletter/history')
 @moderator_required
 def api_history():
@@ -423,6 +442,79 @@ def api_history():
         return jsonify(nl.send_history(conn))
     finally:
         conn.close()
+
+
+@bp.route('/newsletter/tenders/<run_date>')
+def tenders_list_page(run_date):
+    """메일의 '외 N건' 이 여는 페이지 — 그 구분의 전체 목록. 로그인 없이 접근한다.
+
+    메일을 보낸 날 보관해 둔 목록을 그대로 보여 준다. 공공 공고의 제목·기관·금액·마감뿐이다.
+    7일이 지나면 지워지고, 그 뒤에는 안내만 한다.
+    """
+    import re
+    from datetime import datetime
+    from html import escape
+    from flask import Response
+    import tender_brief as tb
+
+    def page(body, status=200):
+        return Response(
+            '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<meta name="robots" content="noindex,nofollow"><title>입찰동향 전체 목록</title>'
+            '<style>body{margin:0;background:#EEF1F3;font-family:"Malgun Gothic","Apple SD Gothic Neo",sans-serif;color:#17212B}'
+            '.wrap{max-width:720px;margin:0 auto;padding:24px 16px 48px}.card{background:#fff;border:1px solid #DDE3E8;border-radius:6px;padding:20px 22px}'
+            'h1{font-size:18px;margin:0 0 4px}.sub{font-size:12.5px;color:#5E6B77;line-height:1.6}'
+            '.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 6px}.tabs a{font-size:13px;padding:8px 12px;min-height:20px;border:1px solid #DDE3E8;border-radius:18px;'
+            'text-decoration:none;color:#17212B;background:#fff}.tabs a.on{background:#17212B;color:#fff;border-color:#17212B;font-weight:bold}'
+            '.row{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #EEF1F3}.row:last-child{border-bottom:0}'
+            '.n{flex:0 0 26px;text-align:right;font-size:12px;color:#8C99A5;padding-top:2px}.t{font-size:14px;line-height:1.55}'
+            '.t a{color:#17212B;text-decoration:none}.t a:hover{text-decoration:underline}.m{font-size:12px;color:#8C99A5;padding-top:2px}'
+            '</style></head><body><div class="wrap">' + body + '</div></body></html>',
+            status=status, mimetype='text/html')
+
+    gone = page('<div class="card"><h1>목록을 볼 수 없습니다</h1><p class="sub">이 날짜의 입찰동향 목록이 없거나 '
+                f'보관 기간({tb.ARCHIVE_DAYS}일)이 지났습니다.</p></div>', 404)
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', run_date or ''):
+        return gone
+    try:
+        d = datetime.strptime(run_date, '%Y-%m-%d')
+    except ValueError:
+        return gone
+    conn = _conn()
+    try:
+        data = tb.archived_brief(conn, run_date)
+    finally:
+        conn.close()
+    secs = [x for x in ((data or {}).get('sections') or []) if x.get('items')]
+    if not secs:
+        return gone
+
+    want = request.args.get('section') or ''
+    cur = next((x for x in secs if x.get('key') == want), secs[0])
+    tabs = ''.join(
+        f'<a class="{"on" if x is cur else ""}" href="?section={escape(str(x.get("key") or ""))}">'
+        f'{escape(str(x.get("label") or ""))} {len(x["items"])}건</a>' for x in secs)
+
+    def row(i, it):
+        title = escape(str(it.get('title') or ''))
+        url = str(it.get('url') or '')
+        if url.lower().startswith(('http://', 'https://')):       # 공고 원문 주소만 링크로 (javascript: 등은 버린다)
+            title = f'<a href="{escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">{title}</a>'
+        meta = [escape(str(it.get('agency') or ''))]
+        meta.append(f'{it["price"]}억' if it.get('price') else '금액 미공개')
+        if it.get('deadline'):
+            meta.append('마감 ' + escape(str(it['deadline'])))
+        return (f'<div class="row"><div class="n">{i}</div><div><div class="t">{title}</div>'
+                f'<div class="m">{" · ".join(m for m in meta if m)}</div></div></div>')
+
+    week = '월화수목금토일'[d.weekday()]
+    body = (f'<div class="card"><h1>입찰동향 전체 목록</h1>'
+            f'<div class="sub">{d.year}년 {d.month}월 {d.day}일 {week}요일 브리핑에 실린 조건 그대로의 목록입니다. '
+            f'관심 분야 적합도가 높은 순이며, 그 뒤 마감된 공고가 있을 수 있습니다. 이 페이지는 {tb.ARCHIVE_DAYS}일 동안 열립니다.</div>'
+            f'<div class="tabs">{tabs}</div>'
+            + ''.join(row(i, it) for i, it in enumerate(cur['items'], 1)) + '</div>')
+    return page(body)
 
 
 @bp.route('/newsletter/unsubscribe/<token>')

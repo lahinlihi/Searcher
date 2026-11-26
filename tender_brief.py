@@ -446,7 +446,7 @@ def classify(conn, rows, batch=40, api_key=None, quiet=False):
 
 # ════════════════════════════════════════════════════════════ 미리보기
 
-def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
+def preview(conn, preset=None, days=3, classify_missing=False, api_key=None, full=False):
     """
     조건 → 구분별 건수·목록.
 
@@ -459,6 +459,7 @@ def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
     '지금 몇 건이 걸리는지' 를 바로 보여주는 것이 이 화면의 핵심이므로
     분류는 기본적으로 이미 저장된 것만 쓴다(빠른 응답).
     classify_missing=True 면 미분류분을 그 자리에서 분류한다(느림).
+    full=True 면 구분마다 조건에 맞는 전체 목록(all)도 함께 돌려준다 — 메일의 '외 N건' 을 눌렀을 때 보여 줄 것.
     """
     preset = preset or get_preset(conn)
     ensure_schema(conn)
@@ -549,6 +550,8 @@ def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
             'available': len(buckets[k]),
             'items': take,
         })
+        if full:
+            sections[-1]['all'] = buckets[k]
 
     total_raw = conn.execute(
         "SELECT COUNT(*) FROM tenders WHERE date(created_at) >= date('now', ?)",
@@ -575,7 +578,7 @@ def preview(conn, preset=None, days=3, classify_missing=False, api_key=None):
 
 def build_section(conn, preset=None, days=3):
     """뉴스레터용 데이터 — 미리보기와 같은 조건, 메일에 실을 형태로"""
-    pv = preview(conn, preset, days=days)
+    pv = preview(conn, preset, days=days, full=True)
     return {'count': pv['items_all'],
             'items': pv['items'],
             'sections': pv['sections']}
@@ -600,6 +603,62 @@ CREATE TABLE IF NOT EXISTS brief_snapshots (
     created_at TEXT NOT NULL
 );
 """
+
+
+# ── 보낸 날의 전체 목록 보관 ─────────────────────────────────────────────────
+# 메일에는 구분마다 상위 몇 건만 싣고 "외 N건"이라고 적는다. 그 N건을 보고 싶을 때 여는 페이지가
+# 보여 줄 목록을, 메일을 보낸 날 그대로 보관한다. 자료가 쌓이지 않게 ARCHIVE_DAYS 일만 둔다.
+
+ARCHIVE_DAYS = 7
+ARCHIVE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS brief_archives (
+    run_date   TEXT PRIMARY KEY,     -- 발행일 YYYY-MM-DD
+    kind       TEXT NOT NULL,        -- real(정식 발송) / test / preview
+    payload    TEXT NOT NULL,        -- {"sections": [{"key", "label", "items": [전체 목록]}]}
+    created_at TEXT NOT NULL
+);
+"""
+_ARCHIVE_FIELDS = ('title', 'agency', 'price', 'deadline', 'url', 'score', 'type')
+
+
+def archive_brief(conn, run_date, tb, kind='real', now=None):
+    """발행일의 구분별 전체 목록을 보관한다.
+
+    정식 발송(real) 때의 목록이 그날의 목록이다 — 한 번 보관되면 뒤의 미리보기·테스트·재발송이 바꾸지 못한다.
+    정식 발송 전에는 미리보기·테스트가 서로 덮어쓴다. 저장할 때마다 ARCHIVE_DAYS 일이 지난 것을 지운다.
+    """
+    if not tb or not run_date:
+        return False
+    conn.executescript(ARCHIVE_SCHEMA)
+    now = now or datetime.now(KST)
+    row = conn.execute('SELECT kind FROM brief_archives WHERE run_date=?', (run_date,)).fetchone()
+    if row is not None and row[0] == 'real':
+        saved = False
+    else:
+        sections = [{'key': s.get('key'), 'label': s.get('label'),
+                     'items': [{k: it.get(k) for k in _ARCHIVE_FIELDS} for it in (s.get('all') or s.get('items') or [])]}
+                    for s in (tb.get('sections') or [])]
+        conn.execute(
+            """INSERT INTO brief_archives (run_date, kind, payload, created_at) VALUES (?,?,?,?)
+               ON CONFLICT(run_date) DO UPDATE SET kind=excluded.kind, payload=excluded.payload, created_at=excluded.created_at""",
+            (run_date, kind, json.dumps({'sections': sections}, ensure_ascii=False), now.isoformat(timespec='seconds')))
+        saved = True
+    conn.execute('DELETE FROM brief_archives WHERE created_at < ?',
+                 ((now - timedelta(days=ARCHIVE_DAYS)).isoformat(timespec='seconds'),))
+    conn.commit()
+    return saved
+
+
+def archived_brief(conn, run_date, now=None):
+    """보관해 둔 그날의 전체 목록. 없거나 ARCHIVE_DAYS 일이 지났으면 None."""
+    conn.executescript(ARCHIVE_SCHEMA)
+    now = now or datetime.now(KST)
+    row = conn.execute('SELECT kind, payload, created_at FROM brief_archives WHERE run_date=?', (run_date,)).fetchone()
+    if row is None or row[2] < (now - timedelta(days=ARCHIVE_DAYS)).isoformat(timespec='seconds'):
+        return None
+    d = json.loads(row[1])
+    d.update(run_date=run_date, kind=row[0], created_at=row[2])
+    return d
 
 
 def _last_crawl_done(conn):

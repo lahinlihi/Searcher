@@ -196,6 +196,24 @@ def unsubscribe(conn, token):
     return cur.rowcount > 0
 
 
+def remove_subscriber(conn, subscriber_id):
+    """잘못 등록한 구독자를 지운다. 반환: 'deleted' / 'not_found' / 'unsubscribed'.
+
+    수신거부한 주소는 지우지 않는다. 그 기록이 있어야 같은 주소를 재동의 확인 없이
+    다시 등록하는 것을 막을 수 있다 (add_subscriber 의 Unsubscribed).
+    """
+    ensure_schema(conn)
+    row = conn.execute('SELECT status FROM newsletter_subscribers WHERE id=?',
+                       (subscriber_id,)).fetchone()
+    if row is None:
+        return 'not_found'
+    if row['status'] == 'unsubscribed':
+        return 'unsubscribed'
+    conn.execute('DELETE FROM newsletter_subscribers WHERE id=?', (subscriber_id,))
+    conn.commit()
+    return 'deleted'
+
+
 def active_subscribers(conn):
     ensure_schema(conn)
     return conn.execute(
@@ -269,6 +287,10 @@ def build(conn, run_date=None, statuses=('approved',)):
         import tender_brief
         # 저장본을 쓴다 — 미리보기·테스트 발송·정식 발송이 같은 목록을 싣는다
         tb = tender_brief.build_section_cached(conn)
+        # '외 N건' 페이지에 보여 줄 구분별 전체 목록(all)이 없는 예전 저장본이면 다시 계산한다
+        if any(x.get('available', 0) > len(x.get('items') or []) and 'all' not in x
+               for x in (tb.get('sections') or [])):
+            tb = tender_brief.build_section_cached(conn, force=True)
         if tb['items']:
             tenders = tb
     except Exception as e:
@@ -447,7 +469,23 @@ _SECTION_NOTE = {
 }
 
 
-def _tenders_html(tb):
+def tenders_list_url(run_date):
+    """메일의 '외 N건' 이 가리키는 전체 목록 페이지 (로그인 없이 열린다, 7일 보관)."""
+    base = (_cfg('newsletter.base_url') or 'https://ht-search.com').rstrip('/')
+    return f'{base}/newsletter/tenders/{run_date}'
+
+
+def archive_tenders(conn, data, kind):
+    """보내는(또는 미리 보는) 메일의 입찰동향 전체 목록을 발행일로 보관한다. 실패해도 발송은 계속한다."""
+    try:
+        import tender_brief
+        if data and data.get('tenders'):
+            tender_brief.archive_brief(conn, data['run_date'], data['tenders'], kind=kind)
+    except Exception as e:
+        print(f'[뉴스레터] 입찰동향 전체 목록 보관 실패: {type(e).__name__}: {e}')
+
+
+def _tenders_html(tb, more_url=None):
     """입찰동향 — 사전규격 / 일반공고 / 지원사업 세 구분.
 
     구분을 나누는 이유는 받는 쪽의 행동이 다르기 때문이다. 사전규격은
@@ -471,8 +509,13 @@ def _tenders_html(tb):
         note = _SECTION_NOTE.get(sec.get('key'), '')
         more = ''
         if sec.get('available', 0) > len(sec['items']):
+            rest = f'외 {sec["available"] - len(sec["items"])}건'
+            if more_url and sec.get('key'):
+                # 누르면 그 구분의 전체 목록이 열린다 (보낸 날 그대로, 7일 보관)
+                rest = (f'<a href="{esc(more_url)}?section={esc(sec["key"])}" '
+                        f'style="color:{_BRAND};text-decoration:underline;">{rest} 모두 보기</a>')
             more = (f'<tr><td colspan="2" style="padding:7px 0 0;color:{_SUB};'
-                    f'font-size:11.5px;">외 {sec["available"] - len(sec["items"])}건</td></tr>')
+                    f'font-size:11.5px;">{rest}</td></tr>')
         blocks.append(f"""
   <div style="padding-top:14px;">
     <div style="color:{_INK};font-size:13px;font-weight:bold;padding-bottom:2px;">
@@ -504,7 +547,7 @@ def render_html(data, unsubscribe_url=None, is_test=False, consent_at=None):
 
     sections = ''.join(_section_html(i, s)
                        for i, s in enumerate(data['sections'], 1))
-    tenders_block = _tenders_html(data.get('tenders'))
+    tenders_block = _tenders_html(data.get('tenders'), more_url=tenders_list_url(data['run_date']))
 
     test_banner = ''
     if is_test:
@@ -637,6 +680,7 @@ def send_test(conn, to_email, run_date=None, sent_by=None):
         return {'error': 'SMTP 설정이 없습니다. settings.json 의 newsletter.smtp 를 채우세요.'}
 
     subject = '[테스트] ' + subject_for(data)
+    archive_tenders(conn, data, 'test')         # 테스트 메일의 '외 N건' 링크도 열리게
     html = render_html(data, is_test=True)
     try:
         _send_one(cfg, to_email, subject, html)
@@ -772,6 +816,8 @@ def send_all(conn, run_date=None, sent_by=None, mode=None):
     except Exception:
         conn.rollback()
         raise
+
+    archive_tenders(conn, data, 'real')         # 보낸 날의 전체 목록 — 메일의 '외 N건' 이 이것을 연다
 
     ok, fail = 0, 0
     for s in targets:
