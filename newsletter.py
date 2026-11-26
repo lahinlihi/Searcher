@@ -372,10 +372,15 @@ def _articles_for(conn, topic, hr_news, limit=4):
 
 # ════════════════════════════════════════════════════════════ 템플릿
 
-_BRAND = '#0B6E5F'
-_INK = '#17212B'
-_SUB = '#5B6874'
-_LINE = '#DDE3E8'
+# 사이트(static/css/hs-theme.css)와 같은 색 — 메일을 열면 하이서치가 보낸 것임이 보이게.
+_BRAND = '#FF5B14'          # 주황: 띠·선 같은 면에 쓴다
+_BRAND_INK = '#C2410C'      # 짙은 주황: 글자에 쓴다 (흰 바탕에서 읽히는 대비)
+_BRAND_SOFT = '#FFF1EA'     # 옅은 주황: 바탕
+_INK = '#1C1D21'
+_SUB = '#666C77'
+_LINE = '#E1E4E8'
+_SURFACE = '#F4F5F7'
+LOGO_W, LOGO_H = 220, 28    # 메일에 보이는 로고 크기 (파일은 2배 해상도)
 
 
 def _section_html(i, s):
@@ -391,9 +396,9 @@ def _section_html(i, s):
         synth = (
             f'<tr><td style="padding:12px 0 0;">'
             f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
-            f'<tr><td style="background:#F1F7F5;border-left:3px solid {_BRAND};'
+            f'<tr><td style="background:{_BRAND_SOFT};border-left:3px solid {_BRAND};'
             f'padding:11px 14px;color:{_INK};font-size:13.5px;line-height:1.75;">'
-            f'<strong style="color:{_BRAND};">시사점</strong><br>{esc(s["synthesis"])}'
+            f'<strong style="color:{_BRAND_INK};">시사점</strong><br>{esc(s["synthesis"])}'
             f'</td></tr></table></td></tr>')
 
     closing = ''
@@ -423,7 +428,7 @@ def _section_html(i, s):
 <tr><td style="padding:20px 24px;border-top:1px solid {_LINE};">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
     <tr><td style="padding-bottom:4px;">
-      <span style="display:inline-block;background:#EDF5F3;color:{_BRAND};
+      <span style="display:inline-block;background:{_BRAND_SOFT};color:{_BRAND_INK};
         font-size:11px;font-weight:bold;padding:2px 7px;border-radius:3px;">
         {esc(s['category'])}</span>
     </td></tr>
@@ -513,7 +518,7 @@ def _tenders_html(tb, more_url=None):
             if more_url and sec.get('key'):
                 # 누르면 그 구분의 전체 목록이 열린다 (보낸 날 그대로, 7일 보관)
                 rest = (f'<a href="{esc(more_url)}?section={esc(sec["key"])}" '
-                        f'style="color:{_BRAND};text-decoration:underline;">{rest} 모두 보기</a>')
+                        f'style="color:{_BRAND_INK};text-decoration:underline;">{rest} 모두 보기</a>')
             more = (f'<tr><td colspan="2" style="padding:7px 0 0;color:{_SUB};'
                     f'font-size:11.5px;">{rest}</td></tr>')
         blocks.append(f"""
@@ -531,7 +536,7 @@ def _tenders_html(tb, more_url=None):
     total = sum(len(x['items']) for x in secs)
     return f"""
 <tr><td style="padding:20px 24px;border-top:1px solid {_LINE};">
-  <div style="color:{_BRAND};font-size:11.5px;font-weight:bold;
+  <div style="color:{_BRAND_INK};font-size:11.5px;font-weight:bold;
     letter-spacing:0.08em;padding-bottom:3px;">오늘의 입찰동향</div>
   <div style="color:{_SUB};font-size:11.5px;">
     관심 분야 적합도가 높은 순으로 {total}건</div>
@@ -548,6 +553,8 @@ def render_html(data, unsubscribe_url=None, is_test=False, consent_at=None):
     sections = ''.join(_section_html(i, s)
                        for i, s in enumerate(data['sections'], 1))
     tenders_block = _tenders_html(data.get('tenders'), more_url=tenders_list_url(data['run_date']))
+    base = (_cfg('newsletter.base_url') or 'https://ht-search.com').rstrip('/')
+    carries = ' / '.join(x for x, on in (('HR 뉴스', sections), ('입찰동향', tenders_block)) if on) or '브리핑'
 
     test_banner = ''
     if is_test:
@@ -569,11 +576,11 @@ def render_html(data, unsubscribe_url=None, is_test=False, consent_at=None):
 <html lang="ko"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>오늘의 입찰동향 · HR뉴스 {esc(data['run_date'])}</title>
+<title>High-Search {esc(data['run_date'])} {esc(carries)}</title>
 </head>
-<body style="margin:0;padding:0;background:#EEF1F3;">
+<body style="margin:0;padding:0;background:{_SURFACE};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-       style="background:#EEF1F3;">
+       style="background:{_SURFACE};">
 <tr><td align="center" style="padding:20px 10px;">
 
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0"
@@ -583,11 +590,15 @@ def render_html(data, unsubscribe_url=None, is_test=False, consent_at=None):
 
   {test_banner}
 
-  <tr><td style="background:#EDF5F3;padding:18px 24px;border-bottom:1px solid {_LINE};">
-    <div style="color:{_BRAND};font-size:11.5px;font-weight:bold;
-      letter-spacing:0.08em;">{esc(date_label)}</div>
-    <div style="color:{_INK};font-size:19px;font-weight:bold;padding-top:5px;">
-      오늘의 입찰동향 &middot; HR뉴스</div>
+  <tr><td height="5" style="background:{_BRAND};height:5px;line-height:5px;font-size:0;">&nbsp;</td></tr>
+  <tr><td style="background:#ffffff;padding:20px 24px 16px;border-bottom:1px solid {_LINE};">
+    <a href="{esc(base)}" style="text-decoration:none;">
+      <img src="{esc(base)}/static/img/logo-mail.png" alt="HIGH-SEARCH" width="{LOGO_W}" height="{LOGO_H}"
+           style="display:block;border:0;outline:none;width:{LOGO_W}px;height:{LOGO_H}px;
+                  color:{_INK};font-size:22px;font-weight:bold;font-style:italic;letter-spacing:0.02em;"></a>
+    <div style="color:{_INK};font-size:14px;font-weight:bold;padding-top:12px;">
+      {esc(date_label)}
+      <span style="color:{_BRAND_INK};">&nbsp;{esc(carries)}</span></div>
     <div style="color:{_SUB};font-size:12.5px;padding-top:3px;">
       기업 인사담당자를 위한 일일 브리핑</div>
   </td></tr>
@@ -595,12 +606,12 @@ def render_html(data, unsubscribe_url=None, is_test=False, consent_at=None):
   {sections}
   {tenders_block}
 
-  <tr><td style="background:#F7F9FA;padding:16px 24px;border-top:1px solid {_LINE};">
+  <tr><td style="background:{_SURFACE};padding:16px 24px;border-top:1px solid {_LINE};">
     <div style="color:{_SUB};font-size:11.5px;line-height:1.75;">
       {esc(DISCLAIMER)}
     </div>
     <div style="color:#8C99A5;font-size:11px;line-height:1.7;padding-top:8px;">
-      이 메일은 수신을 신청하신 분께 발송됩니다{consent}{unsub}
+      이 메일은 <a href="{esc(base)}" style="color:#8C99A5;text-decoration:underline;">High-Search</a>가 수신을 신청하신 분께 보냅니다{consent}{unsub}
     </div>
   </td></tr>
 
@@ -610,11 +621,17 @@ def render_html(data, unsubscribe_url=None, is_test=False, consent_at=None):
 
 
 def subject_for(data):
-    n = len(data['sections'])
-    first = data['sections'][0]['headline'] if n else ''
+    """제목은 누가(High-Search) 언제 무엇을 보내는지만 적는다 — 받는 사람이 발신처를 바로 알아보게.
+
+    예: "[High-Search] 2026.11.26. HR 뉴스 / 입찰동향". 실리지 않은 것은 적지 않는다.
+    """
     d = datetime.strptime(data['run_date'], '%Y-%m-%d')
-    head = first[:28] + ('…' if len(first) > 28 else '')
-    return f'[오늘의 브리핑] {d.month}/{d.day} {head}'
+    parts = []
+    if data.get('sections'):
+        parts.append('HR 뉴스')
+    if (data.get('tenders') or {}).get('items'):
+        parts.append('입찰동향')
+    return f'[High-Search] {d.year}.{d.month:02d}.{d.day:02d}. ' + ' / '.join(parts or ['브리핑'])
 
 
 # ════════════════════════════════════════════════════════════ 발송
@@ -630,7 +647,7 @@ def smtp_config():
         'ssl': bool(_cfg('newsletter.smtp.ssl', preset['ssl'])),
         'user': _cfg('newsletter.smtp.user') or _cfg('email.sender'),
         'password': _cfg('newsletter.smtp.password') or _cfg('email.password'),
-        'from_name': _cfg('newsletter.from_name') or '오늘의 HR뉴스',
+        'from_name': _cfg('newsletter.from_name') or 'High-Search',
         'base_url': (_cfg('newsletter.base_url') or 'https://ht-search.com').rstrip('/'),
     }
 

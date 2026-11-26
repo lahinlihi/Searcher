@@ -462,15 +462,18 @@ def tenders_list_page(run_date):
             '<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             '<meta name="robots" content="noindex,nofollow"><title>입찰동향 전체 목록</title>'
-            '<style>body{margin:0;background:#EEF1F3;font-family:"Malgun Gothic","Apple SD Gothic Neo",sans-serif;color:#17212B}'
-            '.wrap{max-width:720px;margin:0 auto;padding:24px 16px 48px}.card{background:#fff;border:1px solid #DDE3E8;border-radius:6px;padding:20px 22px}'
-            'h1{font-size:18px;margin:0 0 4px}.sub{font-size:12.5px;color:#5E6B77;line-height:1.6}'
-            '.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 6px}.tabs a{font-size:13px;padding:8px 12px;min-height:20px;border:1px solid #DDE3E8;border-radius:18px;'
-            'text-decoration:none;color:#17212B;background:#fff}.tabs a.on{background:#17212B;color:#fff;border-color:#17212B;font-weight:bold}'
-            '.row{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #EEF1F3}.row:last-child{border-bottom:0}'
+            '<style>body{margin:0;background:#F4F5F7;border-top:5px solid #FF5B14;font-family:"Malgun Gothic","Apple SD Gothic Neo",sans-serif;color:#1C1D21}'
+            '.logo{display:block;width:200px;max-width:70%;height:auto;margin:0 0 14px}'
+            '.wrap{max-width:720px;margin:0 auto;padding:24px 16px 48px}.card{background:#fff;border:1px solid #E1E4E8;border-radius:6px;padding:20px 22px}'
+            'h1{font-size:18px;margin:0 0 4px}.sub{font-size:12.5px;color:#666C77;line-height:1.6}'
+            '.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 6px}.tabs a{font-size:13px;padding:8px 12px;min-height:20px;border:1px solid #E1E4E8;border-radius:18px;'
+            'text-decoration:none;color:#1C1D21;background:#fff}.tabs a.on{background:#FFF1EA;color:#C2410C;border-color:#FF5B14;font-weight:bold}'
+            '.row{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #EBEDF0}.row:last-child{border-bottom:0}'
             '.n{flex:0 0 26px;text-align:right;font-size:12px;color:#8C99A5;padding-top:2px}.t{font-size:14px;line-height:1.55}'
-            '.t a{color:#17212B;text-decoration:none}.t a:hover{text-decoration:underline}.m{font-size:12px;color:#8C99A5;padding-top:2px}'
-            '</style></head><body><div class="wrap">' + body + '</div></body></html>',
+            '.t a{color:#1C1D21;text-decoration:none}.t a:hover{text-decoration:underline}.m{font-size:12px;color:#8C99A5;padding-top:2px}'
+            '</style></head><body><div class="wrap">'
+            '<a href="/"><img class="logo" src="/static/img/logo-mail.png" alt="HIGH-SEARCH"></a>'
+            + body + '</div></body></html>',
             status=status, mimetype='text/html')
 
     gone = page('<div class="card"><h1>목록을 볼 수 없습니다</h1><p class="sub">이 날짜의 입찰동향 목록이 없거나 '
